@@ -1,6 +1,7 @@
 import { ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import heroImg from "@/assets/hero-warehouse.jpg";
+import boxesImg from "@/assets/marketplace-boxes.png";
 
 const Hero = () => {
   return (
@@ -21,6 +22,23 @@ const Hero = () => {
       {/* Glow blobs */}
       <div className="pointer-events-none absolute -top-40 left-1/2 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-accent/30 blur-[120px]" />
       <div className="pointer-events-none absolute bottom-0 right-0 h-[400px] w-[400px] rounded-full bg-accent/20 blur-[120px]" />
+
+      {/* Floating marketplace boxes */}
+      <img
+        src={boxesImg}
+        alt="Коробки Wildberries, Ozon и Яндекс.Маркет"
+        width={1280}
+        height={1024}
+        className="pointer-events-none absolute -right-20 top-24 hidden lg:block w-[520px] xl:w-[620px] opacity-90 animate-float drop-shadow-[0_30px_60px_rgba(59,130,246,0.25)]"
+      />
+      <img
+        src={boxesImg}
+        alt=""
+        aria-hidden="true"
+        width={1280}
+        height={1024}
+        className="pointer-events-none absolute -left-24 bottom-10 hidden xl:block w-[340px] opacity-50 -rotate-12 blur-[1px]"
+      />
 
       <div className="container relative z-10 flex flex-col items-center text-center">
         <div

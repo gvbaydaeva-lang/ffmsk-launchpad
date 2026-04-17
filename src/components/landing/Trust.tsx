@@ -1,4 +1,5 @@
 import { ShieldCheck, Camera, Monitor, Clock, Banknote, BadgeCheck } from "lucide-react";
+import warehouseImg from "@/assets/service-storage.jpg";
 
 const benefits = [
   {
@@ -49,6 +50,22 @@ const Trust = () => {
             <p className="mt-6 text-lg text-muted-foreground leading-relaxed">
               Мы не просто склад — мы технологичный партнёр, который берёт на себя всю операционку, чтобы вы росли быстрее.
             </p>
+
+            <div className="mt-8 relative overflow-hidden rounded-2xl border border-border aspect-[4/3]">
+              <img
+                src={warehouseImg}
+                alt="Современный фулфилмент-склад FF-MSK в Москве"
+                loading="lazy"
+                width={1024}
+                height={1024}
+                className="h-full w-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/20 to-transparent" />
+              <div className="absolute bottom-5 left-5 right-5">
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-accent-glow">Наш склад</div>
+                <div className="mt-1 font-display text-xl font-semibold text-foreground">2 000 м² · Москва</div>
+              </div>
+            </div>
           </div>
 
           <div className="lg:col-span-8 grid sm:grid-cols-2 gap-px bg-border rounded-2xl overflow-hidden border border-border">
