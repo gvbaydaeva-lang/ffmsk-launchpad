@@ -1,4 +1,5 @@
 import { ShieldCheck, Camera, Monitor, Clock, Banknote, BadgeCheck } from "lucide-react";
+import warehouseImg from "@/assets/service-storage.jpg";
 
 const benefits = [
   {
