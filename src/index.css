@@ -4,85 +4,87 @@
 @tailwind components;
 @tailwind utilities;
 
-/* FF-MSK Design System — Apple-style minimal, slate + electric blue */
+/* FF-MSK Design System — Warm marketplace palette: beige, brown, orange */
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    /* Warm beige background */
+    --background: 36 38% 96%;
+    --foreground: 24 30% 14%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 24 30% 14%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    --popover-foreground: 24 30% 14%;
 
-    /* Slate 800 */
-    --primary: 217 33% 17%;
-    --primary-foreground: 210 40% 98%;
+    /* Deep coffee brown */
+    --primary: 25 35% 18%;
+    --primary-foreground: 36 40% 96%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 217 33% 17%;
+    /* Soft cream beige */
+    --secondary: 34 35% 91%;
+    --secondary-foreground: 25 35% 18%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215 16% 47%;
+    --muted: 34 30% 92%;
+    --muted-foreground: 25 15% 42%;
 
-    /* Blue 500 */
-    --accent: 217 91% 60%;
+    /* Vibrant warm orange */
+    --accent: 22 92% 54%;
     --accent-foreground: 0 0% 100%;
-    --accent-glow: 217 91% 70%;
+    --accent-glow: 28 96% 64%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 36 40% 96%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 217 91% 60%;
+    --border: 32 25% 86%;
+    --input: 32 25% 86%;
+    --ring: 22 92% 54%;
 
     --radius: 0.875rem;
 
     /* Gradients */
-    --gradient-hero: radial-gradient(ellipse at top, hsl(217 91% 60% / 0.18), transparent 60%),
-                     linear-gradient(180deg, hsl(222 47% 6%) 0%, hsl(217 33% 12%) 100%);
-    --gradient-accent: linear-gradient(135deg, hsl(217 91% 60%), hsl(217 91% 70%));
-    --gradient-text: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(217 30% 75%) 100%);
+    --gradient-hero: radial-gradient(ellipse at top, hsl(22 92% 54% / 0.22), transparent 60%),
+                     linear-gradient(180deg, hsl(25 40% 8%) 0%, hsl(25 35% 14%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(22 92% 54%), hsl(32 96% 62%));
+    --gradient-text: linear-gradient(180deg, hsl(36 40% 98%) 0%, hsl(32 30% 75%) 100%);
 
     /* Shadows */
-    --shadow-glow: 0 20px 60px -20px hsl(217 91% 60% / 0.5);
-    --shadow-elegant: 0 10px 40px -10px hsl(222 47% 11% / 0.15);
-    --shadow-soft: 0 4px 20px -4px hsl(222 47% 11% / 0.08);
+    --shadow-glow: 0 20px 60px -20px hsl(22 92% 54% / 0.45);
+    --shadow-elegant: 0 10px 40px -10px hsl(25 35% 18% / 0.18);
+    --shadow-soft: 0 4px 20px -4px hsl(25 35% 18% / 0.1);
 
     /* Transitions */
     --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
 
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 36 38% 96%;
+    --sidebar-foreground: 24 30% 26%;
+    --sidebar-primary: 25 35% 18%;
+    --sidebar-primary-foreground: 36 40% 98%;
+    --sidebar-accent: 34 35% 91%;
+    --sidebar-accent-foreground: 25 35% 18%;
+    --sidebar-border: 32 25% 86%;
+    --sidebar-ring: 22 92% 54%;
   }
 
   .dark {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 98%;
-    --card: 217 33% 12%;
-    --card-foreground: 210 40% 98%;
-    --popover: 217 33% 12%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 217 33% 17%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 91% 60%;
+    --background: 25 40% 8%;
+    --foreground: 36 40% 96%;
+    --card: 25 30% 13%;
+    --card-foreground: 36 40% 96%;
+    --popover: 25 30% 13%;
+    --popover-foreground: 36 40% 96%;
+    --primary: 36 40% 96%;
+    --primary-foreground: 25 35% 18%;
+    --secondary: 25 25% 18%;
+    --secondary-foreground: 36 40% 96%;
+    --muted: 25 25% 18%;
+    --muted-foreground: 32 20% 70%;
+    --accent: 22 92% 54%;
     --accent-foreground: 0 0% 100%;
-    --border: 217 33% 20%;
-    --input: 217 33% 20%;
-    --ring: 217 91% 60%;
+    --border: 25 25% 22%;
+    --input: 25 25% 22%;
+    --ring: 22 92% 54%;
   }
 }
 
