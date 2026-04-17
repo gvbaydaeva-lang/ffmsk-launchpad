@@ -1,4 +1,6 @@
 import { Package, Warehouse, ShieldCheck, Clock } from "lucide-react";
+import boxWB from "@/assets/box-wb.png";
+import boxOzon from "@/assets/box-ozon.png";
 
 const stats = [
   {
