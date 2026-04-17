@@ -43,8 +43,8 @@ const Hero = () => {
           className="mt-6 max-w-2xl text-base sm:text-lg md:text-xl text-white/65 leading-relaxed animate-fade-up"
           style={{ animationDelay: "0.3s", opacity: 0 }}
         >
-          Обработка товара за{" "}
-          <span className="text-white font-medium">24 часа</span> для Wildberries,
+          Обработка товара от{" "}
+          <span className="text-white font-medium">24 часов</span> для Wildberries,
           Ozon и Яндекс.Маркета. Без брака. Без задержек. Без головной боли.
         </p>
 
@@ -67,7 +67,7 @@ const Hero = () => {
         >
           <div className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-            Работаем 24/7
+            Работаем без выходных
           </div>
           <div className="hidden sm:block h-3 w-px bg-white/20" />
           <div>Договор за 1 день</div>

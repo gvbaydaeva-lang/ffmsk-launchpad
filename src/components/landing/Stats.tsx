@@ -25,7 +25,7 @@ const stats = [
     icon: Clock,
     value: "24",
     unit: "ч",
-    label: "приём товара",
+    label: "время отгрузки",
     sub: "От поставки до отгрузки",
   },
 ];
@@ -48,7 +48,7 @@ const Stats = () => {
           </h2>
         </div>
 
-        <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px rounded-2xl overflow-hidden bg-border/70 shadow-elegant">
+        <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px rounded-2xl overflow-hidden bg-border/70 shadow-none">
           {stats.map((s, i) => {
             const Icon = s.icon;
             return (
