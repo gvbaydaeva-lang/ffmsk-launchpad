@@ -25,21 +25,30 @@ const Hero = () => {
       <div className="pointer-events-none absolute -top-40 left-1/2 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-accent/30 blur-[120px]" />
       <div className="pointer-events-none absolute bottom-0 right-0 h-[400px] w-[400px] rounded-full bg-accent/20 blur-[120px]" />
 
-      {/* Floating marketplace boxes */}
+      {/* Floating marketplace boxes — scattered across the hero */}
       <img
-        src={boxesImg}
-        alt="Коробки Wildberries, Ozon и Яндекс.Маркет"
-        width={1280}
+        src={boxWB}
+        alt="Коробка Wildberries"
+        width={1024}
         height={1024}
-        className="pointer-events-none absolute -right-20 top-24 hidden lg:block w-[520px] xl:w-[620px] opacity-90 animate-float drop-shadow-[0_30px_60px_rgba(59,130,246,0.25)]"
+        className="pointer-events-none absolute right-[6%] top-[18%] hidden md:block w-40 lg:w-56 xl:w-64 opacity-95 animate-float drop-shadow-[0_30px_60px_hsl(22_92%_54%/0.35)]"
+        style={{ animationDelay: "0s" }}
       />
       <img
-        src={boxesImg}
-        alt=""
-        aria-hidden="true"
-        width={1280}
+        src={boxOzon}
+        alt="Коробка Ozon"
+        width={1024}
         height={1024}
-        className="pointer-events-none absolute -left-24 bottom-10 hidden xl:block w-[340px] opacity-50 -rotate-12 blur-[1px]"
+        className="pointer-events-none absolute left-[5%] top-[28%] hidden md:block w-32 lg:w-44 xl:w-52 opacity-95 animate-float drop-shadow-[0_30px_60px_hsl(22_92%_54%/0.3)]"
+        style={{ animationDelay: "1.5s" }}
+      />
+      <img
+        src={boxYM}
+        alt="Коробка Яндекс.Маркет"
+        width={1024}
+        height={1024}
+        className="pointer-events-none absolute right-[14%] bottom-[12%] hidden lg:block w-36 xl:w-44 opacity-90 animate-float drop-shadow-[0_30px_60px_hsl(48_96%_54%/0.35)]"
+        style={{ animationDelay: "3s" }}
       />
 
       <div className="container relative z-10 flex flex-col items-center text-center">
