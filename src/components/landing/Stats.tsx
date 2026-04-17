@@ -1,4 +1,6 @@
 import { Package, Warehouse, ShieldCheck, Clock } from "lucide-react";
+import boxWB from "@/assets/box-wb.png";
+import boxOzon from "@/assets/box-ozon.png";
 
 const stats = [
   {
@@ -36,7 +38,28 @@ const Stats = () => {
       id="stats"
       className="relative bg-background py-24 md:py-32 overflow-hidden"
     >
-      <div className="container">
+      {/* Decorative marketplace boxes */}
+      <img
+        src={boxOzon}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        width={1024}
+        height={1024}
+        className="pointer-events-none absolute -right-16 top-10 hidden lg:block w-56 xl:w-64 opacity-80 animate-float drop-shadow-[0_25px_50px_hsl(25_35%_18%/0.18)] -rotate-6"
+      />
+      <img
+        src={boxWB}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        width={1024}
+        height={1024}
+        className="pointer-events-none absolute -left-12 bottom-16 hidden lg:block w-44 xl:w-52 opacity-70 animate-float drop-shadow-[0_25px_50px_hsl(25_35%_18%/0.15)] rotate-12"
+        style={{ animationDelay: "2s" }}
+      />
+
+      <div className="container relative">
         <div className="max-w-2xl">
           <span className="inline-block text-xs font-medium uppercase tracking-[0.2em] text-accent">
             Цифры

@@ -1,6 +1,8 @@
 import { Check, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import boxYM from "@/assets/box-ym.png";
+import boxOzon from "@/assets/box-ozon.png";
 
 const plans = [
   {
@@ -54,8 +56,29 @@ const plans = [
 
 const Pricing = () => {
   return (
-    <section id="pricing" className="relative py-28 md:py-36 bg-secondary/40">
-      <div className="container">
+    <section id="pricing" className="relative py-28 md:py-36 bg-secondary/40 overflow-hidden">
+      {/* Floating marketplace boxes */}
+      <img
+        src={boxYM}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        width={1024}
+        height={1024}
+        className="pointer-events-none absolute -left-16 top-20 hidden lg:block w-48 xl:w-56 opacity-70 animate-float -rotate-12 drop-shadow-[0_25px_50px_hsl(25_35%_18%/0.18)]"
+      />
+      <img
+        src={boxOzon}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        width={1024}
+        height={1024}
+        className="pointer-events-none absolute -right-12 bottom-24 hidden lg:block w-44 xl:w-52 opacity-70 animate-float rotate-6 drop-shadow-[0_25px_50px_hsl(25_35%_18%/0.18)]"
+        style={{ animationDelay: "2.5s" }}
+      />
+
+      <div className="container relative">
         <div className="max-w-2xl mx-auto text-center mb-16 md:mb-20">
           <span className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-accent">
             <span className="h-px w-8 bg-accent" /> Тарифы <span className="h-px w-8 bg-accent" />
