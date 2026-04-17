@@ -1,7 +1,9 @@
 import { ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import heroImg from "@/assets/hero-warehouse.jpg";
-import boxesImg from "@/assets/marketplace-boxes.png";
+import boxWB from "@/assets/box-wb.png";
+import boxOzon from "@/assets/box-ozon.png";
+import boxYM from "@/assets/box-ym.png";
 
 const Hero = () => {
   return (
