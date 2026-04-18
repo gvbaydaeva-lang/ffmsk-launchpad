@@ -101,7 +101,7 @@ const Footer = () => {
 
         <div className="mt-10 rounded-2xl overflow-hidden border border-white/10 h-64">
           <iframe
-            title="Карта склада FF-MSK"
+            title="Карта склада Full-24Msk"
             src="https://yandex.ru/map-widget/v1/?ll=37.617635%2C55.755814&z=10&pt=37.617635,55.755814,pm2rdm"
             width="100%"
             height="100%"

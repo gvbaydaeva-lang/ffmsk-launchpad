@@ -54,7 +54,7 @@ const Trust = () => {
             <div className="mt-8 relative overflow-hidden rounded-2xl border border-border aspect-[4/3]">
               <img
                 src={warehouseImg}
-                alt="Современный фулфилмент-склад FF-MSK в Москве"
+                alt="Современный фулфилмент-склад Full-24Msk в Москве"
                 loading="lazy"
                 width={1024}
                 height={1024}
