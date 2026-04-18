@@ -45,7 +45,7 @@ const Trust = () => {
             </span>
             <h2 className="mt-5 font-display text-4xl md:text-5xl font-semibold tracking-tight text-foreground leading-[1.05]">
               Почему селлеры <br />
-              выбирают <span className="text-accent">FF·MSK</span>
+              выбирают <span className="text-accent">Full-24Msk</span>
             </h2>
             <p className="mt-6 text-lg text-muted-foreground leading-relaxed">
               Мы не просто склад — мы технологичный партнёр, который берёт на себя всю операционку, чтобы вы росли быстрее.

@@ -35,7 +35,7 @@ const Navbar = () => {
             <span className="font-display text-sm font-bold text-accent-foreground">F</span>
           </span>
           <span className="font-display text-lg font-semibold tracking-tight">
-            FF<span className="text-accent">·</span>MSK
+            Full-24Msk
           </span>
         </a>
 
