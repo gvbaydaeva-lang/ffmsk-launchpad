@@ -77,13 +77,13 @@ const Contact = () => {
                   <div className="font-medium">+7 (495) 123-45-67</div>
                 </div>
               </a>
-              <a href="mailto:hello@ff-msk.ru" className="group flex items-center gap-4 text-white hover:text-accent-glow transition-colors">
+              <a href="mailto:hello@Full-24Msk.ru" className="group flex items-center gap-4 text-white hover:text-accent-glow transition-colors">
                 <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 border border-white/10 group-hover:border-accent/40 transition-colors">
                   <Mail className="h-4 w-4" />
                 </span>
                 <div>
                   <div className="text-xs uppercase tracking-wider text-white/50">Email</div>
-                  <div className="font-medium">hello@ff-msk.ru</div>
+                  <div className="font-medium">hello@Full-24Msk.ru</div>
                 </div>
               </a>
               <div className="flex items-center gap-4 text-white">

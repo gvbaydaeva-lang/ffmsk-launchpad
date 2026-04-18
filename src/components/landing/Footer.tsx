@@ -32,7 +32,7 @@ const Footer = () => {
                 <span className="font-display text-sm font-bold text-accent-foreground">F</span>
               </span>
               <span className="font-display text-xl font-semibold tracking-tight">
-                FF<span className="text-accent-glow">·</span>MSK
+                Full-24Msk
               </span>
             </a>
             <p className="mt-5 text-sm text-primary-foreground/60 max-w-sm leading-relaxed">
@@ -87,8 +87,8 @@ const Footer = () => {
               </li>
               <li className="flex items-start gap-3 text-primary-foreground/70">
                 <Mail className="h-4 w-4 mt-0.5 text-accent-glow shrink-0" />
-                <a href="mailto:hello@ff-msk.ru" className="hover:text-primary-foreground transition-colors">
-                  hello@ff-msk.ru
+                <a href="mailto:hello@Full-24Msk.ru" className="hover:text-primary-foreground transition-colors">
+                  hello@Full-24Msk.ru
                 </a>
               </li>
               <li className="flex items-start gap-3 text-primary-foreground/70">
@@ -101,7 +101,7 @@ const Footer = () => {
 
         <div className="mt-10 rounded-2xl overflow-hidden border border-white/10 h-64">
           <iframe
-            title="Карта склада FF-MSK"
+            title="Карта склада Full-24Msk"
             src="https://yandex.ru/map-widget/v1/?ll=37.617635%2C55.755814&z=10&pt=37.617635,55.755814,pm2rdm"
             width="100%"
             height="100%"
@@ -112,7 +112,7 @@ const Footer = () => {
         </div>
 
         <div className="mt-10 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-primary-foreground/40">
-          <span>© {new Date().getFullYear()} FF·MSK. Все права защищены.</span>
+          <span>© {new Date().getFullYear()} Full-24Msk. Все права защищены.</span>
           <div className="flex items-center gap-6">
             <a href="#" className="hover:text-primary-foreground transition-colors">Политика конфиденциальности</a>
             <a href="#" className="hover:text-primary-foreground transition-colors">Реквизиты</a>

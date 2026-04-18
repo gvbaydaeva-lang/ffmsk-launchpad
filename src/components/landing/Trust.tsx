@@ -45,7 +45,7 @@ const Trust = () => {
             </span>
             <h2 className="mt-5 font-display text-4xl md:text-5xl font-semibold tracking-tight text-foreground leading-[1.05]">
               Почему селлеры <br />
-              выбирают <span className="text-accent">FF·MSK</span>
+              выбирают <span className="text-accent">Full-24Msk</span>
             </h2>
             <p className="mt-6 text-lg text-muted-foreground leading-relaxed">
               Мы не просто склад — мы технологичный партнёр, который берёт на себя всю операционку, чтобы вы росли быстрее.
@@ -54,7 +54,7 @@ const Trust = () => {
             <div className="mt-8 relative overflow-hidden rounded-2xl border border-border aspect-[4/3]">
               <img
                 src={warehouseImg}
-                alt="Современный фулфилмент-склад FF-MSK в Москве"
+                alt="Современный фулфилмент-склад Full-24Msk в Москве"
                 loading="lazy"
                 width={1024}
                 height={1024}

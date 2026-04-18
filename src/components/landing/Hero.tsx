@@ -12,7 +12,7 @@ const Hero = () => {
       <div className="absolute inset-0">
         <img
           src={heroImg}
-          alt="Современный фулфилмент-склад FF-MSK в Москве"
+          alt="Современный фулфилмент-склад Full-24Msk в Москве"
           width={1920}
           height={1080}
           className="h-full w-full object-cover opacity-25"
