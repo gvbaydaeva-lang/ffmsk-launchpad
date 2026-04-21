@@ -81,7 +81,7 @@ const Hero = () => {
           className="mt-10 flex flex-col sm:flex-row items-center gap-4 animate-fade-up"
           style={{ animationDelay: "0.45s", opacity: 0 }}
         >
-          <Button variant="hero" size="xl" className="group">
+          <Button variant="hero" size="xl" className="group bg-[hsl(350_70%_28%)] bg-none text-white shadow-[0_20px_60px_-20px_hsl(350_70%_28%/0.6)] hover:bg-[hsl(350_75%_34%)] hover:shadow-[0_25px_70px_-15px_hsl(350_75%_34%/0.7)]">
             Получить расчёт
             <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
           </Button>
