@@ -28,6 +28,16 @@ export async function fetchMockInboundSupplies(): Promise<InboundSupply[]> {
       eta: "2026-04-22",
     },
     {
+      id: "in-2b",
+      documentNo: "ПТ-2026-0899",
+      supplier: "ООО «Логистик Про»",
+      marketplace: "wb",
+      expectedUnits: 320,
+      receivedUnits: null,
+      status: "в обработке",
+      eta: "2026-04-23",
+    },
+    {
       id: "in-3",
       documentNo: "ПТ-2026-0855",
       supplier: "ООО «ГаджетСервис»",

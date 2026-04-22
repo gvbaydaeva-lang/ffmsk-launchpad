@@ -200,7 +200,18 @@ const ReceivingPage = () => {
                         {row.receivedUnits ?? "—"}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={row.status === "принято" ? "default" : "secondary"}>{row.status}</Badge>
+                        <Badge
+                          variant={
+                            row.status === "принято"
+                              ? "default"
+                              : row.status === "в обработке"
+                                ? "default"
+                                : "secondary"
+                          }
+                          className={row.status === "в обработке" ? "bg-accent text-accent-foreground" : undefined}
+                        >
+                          {row.status}
+                        </Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground text-xs sm:text-sm">
                         {format(parseISO(row.eta), "d MMM yyyy", { locale: ru })}

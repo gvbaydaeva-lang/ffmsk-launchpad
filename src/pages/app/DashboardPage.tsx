@@ -1,59 +1,35 @@
-import * as React from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Box, PackageOpen } from "lucide-react";
-import { CartesianGrid, Line, LineChart, Pie, PieChart, XAxis, YAxis, Cell } from "recharts";
+import {
+  ArrowRight,
+  Box,
+  Building2,
+  Coins,
+  Gauge,
+  Layers,
+  PackageOpen,
+  Truck,
+  Wallet,
+} from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  ChartLegend,
-  ChartLegendContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
-import { useShipmentTrend, useMarketplaceOrdersShare } from "@/hooks/useDashboardAnalytics";
-import { MARKETPLACE_CHART_COLORS, MARKETPLACE_LABELS } from "@/lib/marketplace";
-import type { ShipmentTrendPeriod } from "@/types/domain";
+import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-
-const lineChartConfig = {
-  wb: { label: MARKETPLACE_LABELS.wb, color: MARKETPLACE_CHART_COLORS.wb },
-  ozon: { label: MARKETPLACE_LABELS.ozon, color: MARKETPLACE_CHART_COLORS.ozon },
-  yandex: { label: MARKETPLACE_LABELS.yandex, color: MARKETPLACE_CHART_COLORS.yandex },
-} satisfies ChartConfig;
-
-const pieChartConfig = {
-  wb: { label: MARKETPLACE_LABELS.wb, color: MARKETPLACE_CHART_COLORS.wb },
-  ozon: { label: MARKETPLACE_LABELS.ozon, color: MARKETPLACE_CHART_COLORS.ozon },
-  yandex: { label: MARKETPLACE_LABELS.yandex, color: MARKETPLACE_CHART_COLORS.yandex },
-} satisfies ChartConfig;
+import { useFfDashboardSnapshot } from "@/hooks/useDashboardAnalytics";
 
 const DashboardPage = () => {
-  const [period, setPeriod] = React.useState<ShipmentTrendPeriod>("week");
-  const trend = useShipmentTrend(period);
-  const share = useMarketplaceOrdersShare();
-
-  const pieRows = React.useMemo(() => {
-    if (!share.data) return [];
-    return share.data.map((row) => ({
-      ...row,
-      fill: `var(--color-${row.marketplace})`,
-    }));
-  }, [share.data]);
+  const { data, isLoading, error } = useFfDashboardSnapshot();
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Обзор</h2>
+          <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Операции FF</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Отгрузки и заказы по WB, Ozon и Яндекс.Маркет (демо до подключения API).
+            Складская логистика и услуги фулфилмента. Без аналитики продаж и кабинета селлера.
           </p>
         </div>
-        <Badge variant="secondary" className="w-fit shrink-0">
-          Mock-данные
+        <Badge variant="outline" className="w-fit shrink-0 border-accent/40 text-accent">
+          Демо-данные
         </Badge>
       </div>
 
@@ -64,11 +40,11 @@ const DashboardPage = () => {
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/15 text-accent">
                 <PackageOpen className="h-5 w-5" />
               </div>
-              <CardTitle className="font-display text-base">Создать приёмку</CardTitle>
-              <CardDescription>Входящая поставка</CardDescription>
+              <CardTitle className="font-display text-base">Приёмка</CardTitle>
+              <CardDescription>Входящие поставки</CardDescription>
             </CardHeader>
             <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
-              Перейти
+              Открыть
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </CardContent>
           </Card>
@@ -79,11 +55,11 @@ const DashboardPage = () => {
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <Box className="h-5 w-5" />
               </div>
-              <CardTitle className="font-display text-base">Сформировать короб</CardTitle>
-              <CardDescription>Отгрузка на МП</CardDescription>
+              <CardTitle className="font-display text-base">Отгрузка</CardTitle>
+              <CardDescription>Коробы / паллеты на маршрут</CardDescription>
             </CardHeader>
             <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
-              Перейти
+              Открыть
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </CardContent>
           </Card>
@@ -91,8 +67,11 @@ const DashboardPage = () => {
         <Link to="/warehouse" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
             <CardHeader className="pb-2">
-              <CardTitle className="font-display text-base">Склад и FIFO</CardTitle>
-              <CardDescription>Остатки по партиям</CardDescription>
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
+                <Layers className="h-5 w-5" />
+              </div>
+              <CardTitle className="font-display text-base">Склад</CardTitle>
+              <CardDescription>FIFO и остатки</CardDescription>
             </CardHeader>
             <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
               Открыть
@@ -103,8 +82,11 @@ const DashboardPage = () => {
         <Link to="/finance" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
             <CardHeader className="pb-2">
-              <CardTitle className="font-display text-base">Финансы</CardTitle>
-              <CardDescription>Взаиморасчёты с МП</CardDescription>
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-foreground">
+                <Wallet className="h-5 w-5" />
+              </div>
+              <CardTitle className="font-display text-base">Финансы FF</CardTitle>
+              <CardDescription>Услуги и дебиторка</CardDescription>
             </CardHeader>
             <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
               Открыть
@@ -114,104 +96,121 @@ const DashboardPage = () => {
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <Card className="border-border/80 shadow-elegant xl:col-span-2">
-          <CardHeader className="flex flex-col gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1.5">
-              <CardTitle className="font-display text-lg tracking-tight">Отчёт по отгрузкам</CardTitle>
-              <CardDescription>Суммарные отгрузки по Wildberries, Ozon и Яндекс.Маркет</CardDescription>
-            </div>
-            <ToggleGroup
-              type="single"
-              value={period}
-              onValueChange={(v) => {
-                if (v === "week" || v === "month") setPeriod(v);
-              }}
-              variant="outline"
-              size="sm"
-              className="shrink-0 self-start rounded-lg bg-muted/40 p-0.5"
-            >
-              <ToggleGroupItem value="week" aria-label="Неделя" className="rounded-md px-3 text-xs sm:text-sm">
-                Неделя
-              </ToggleGroupItem>
-              <ToggleGroupItem value="month" aria-label="Месяц" className="rounded-md px-3 text-xs sm:text-sm">
-                Месяц
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </CardHeader>
-          <CardContent className="pt-0">
-            {trend.isLoading ? (
-              <Skeleton className="h-[min(280px,55vw)] w-full rounded-lg" />
-            ) : trend.error ? (
-              <p className="text-sm text-destructive">Не удалось загрузить график. Попробуйте обновить страницу.</p>
-            ) : (
-              <ChartContainer
-                config={lineChartConfig}
-                className="aspect-auto h-[min(280px,52vw)] w-full min-h-[220px] max-h-[320px] sm:h-[300px] sm:max-h-none"
-              >
-                <LineChart accessibilityLayer data={trend.data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
-                  <CartesianGrid vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    interval={period === "month" ? 5 : 0}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    width={40}
-                    tick={{ fontSize: 11 }}
-                    tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))}
-                  />
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                  <ChartLegend content={<ChartLegendContent />} />
-                  <Line type="monotone" dataKey="wb" stroke="var(--color-wb)" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="ozon" stroke="var(--color-ozon)" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="yandex" stroke="var(--color-yandex)" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ChartContainer>
-            )}
-          </CardContent>
-        </Card>
+      {isLoading ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Skeleton className="h-40 rounded-xl" />
+          <Skeleton className="h-40 rounded-xl" />
+          <Skeleton className="h-40 rounded-xl" />
+          <Skeleton className="h-40 rounded-xl" />
+        </div>
+      ) : error ? (
+        <p className="text-sm text-destructive">Не удалось загрузить сводку.</p>
+      ) : data ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card className="border-border/80 shadow-elegant">
+            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                <Truck className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="font-display text-lg">Операционная загрузка</CardTitle>
+                <CardDescription>Приёмки и исходящая отгрузка на сегодня</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Приёмки в обработке</p>
+                <p className="mt-1 font-display text-3xl font-semibold tabular-nums">{data.receivingsInProcessing}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Статусы «в обработке» и «частично»</p>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">К отгрузке сегодня</p>
+                <p className="mt-1 font-display text-3xl font-semibold tabular-nums">
+                  {data.boxesPendingShipmentToday}
+                  <span className="text-lg font-normal text-muted-foreground"> коробов</span>
+                </p>
+                <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-muted-foreground">
+                  {data.palletsPendingShipmentToday}{" "}
+                  <span className="text-base font-normal">паллет</span>
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card className="border-border/80 shadow-elegant">
-          <CardHeader>
-            <CardTitle className="font-display text-lg tracking-tight">Заказы по площадкам</CardTitle>
-            <CardDescription>Распределение количества заказов</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center pt-0">
-            {share.isLoading ? (
-              <Skeleton className="mx-auto aspect-square w-full max-w-[280px] rounded-full" />
-            ) : share.error ? (
-              <p className="text-sm text-destructive">Ошибка загрузки диаграммы.</p>
-            ) : (
-              <ChartContainer config={pieChartConfig} className="mx-auto aspect-square w-full max-w-[280px] min-h-[220px]">
-                <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                  <Pie
-                    data={pieRows}
-                    dataKey="orders"
-                    nameKey="marketplace"
-                    innerRadius={48}
-                    outerRadius={88}
-                    strokeWidth={2}
-                    stroke="hsl(var(--card))"
-                  >
-                    {pieRows.map((row) => (
-                      <Cell key={row.marketplace} fill={row.fill} />
-                    ))}
-                  </Pie>
-                  <ChartLegend content={<ChartLegendContent nameKey="marketplace" />} />
-                </PieChart>
-              </ChartContainer>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          <Card className="border-border/80 shadow-elegant">
+            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Gauge className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="font-display text-lg">Складская мощность</CardTitle>
+                <CardDescription>Заполненность стеллажей</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-display text-4xl font-semibold tabular-nums">{data.rackOccupancyPercent}%</span>
+                <span className="text-sm text-muted-foreground">занято</span>
+              </div>
+              <Progress value={data.rackOccupancyPercent} className="h-2" />
+              <p className="text-xs text-muted-foreground">Плановая вместимость зоны хранения; не продажи.</p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/80 shadow-elegant">
+            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+                <Coins className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="font-display text-lg">Финансы фулфилмента</CardTitle>
+                <CardDescription>Дебиторка и оборот по услугам (не товары)</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Дебиторская задолженность</p>
+                <p className="mt-1 font-display text-2xl font-semibold tabular-nums">
+                  {data.clientsReceivablesRub.toLocaleString("ru-RU")} ₽
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Клиенты должны нам</p>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Оборот услуг (месяц)</p>
+                <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-accent">
+                  {data.servicesRevenueMonthRub.toLocaleString("ru-RU")} ₽
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Хранение, упаковка, логистика FF</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/80 shadow-elegant">
+            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                <Building2 className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="font-display text-lg">Клиентская база</CardTitle>
+                <CardDescription>Юрлица на обслуживании</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="font-display text-4xl font-semibold tabular-nums">{data.activeLegalEntitiesCount}</p>
+                <p className="text-sm text-muted-foreground">активных организаций</p>
+              </div>
+              <Link
+                to="/legal-entities"
+                className="inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline"
+              >
+                Карточки юрлиц
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
     </div>
   );
 };

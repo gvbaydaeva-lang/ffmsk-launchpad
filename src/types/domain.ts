@@ -1,23 +1,5 @@
-/** Маркетплейс для заказов, приёмки, отгрузок и аналитики */
+/** Маркетплейс: направление отгрузки / маршрут (не метрики продаж) */
 export type Marketplace = "wb" | "ozon" | "yandex";
-
-/** Период агрегации для линейного графика отгрузок */
-export type ShipmentTrendPeriod = "week" | "month";
-
-/** Точка временного ряда: объёмы отгрузок по площадкам */
-export type ShipmentTrendPoint = {
-  /** Подпись на оси X */
-  label: string;
-  wb: number;
-  ozon: number;
-  yandex: number;
-};
-
-/** Доля заказов по площадке (для круговой диаграммы) */
-export type MarketplaceOrdersSlice = {
-  marketplace: Marketplace;
-  orders: number;
-};
 
 /** Строка остатков с партией (FIFO) */
 export type StockFifoRow = {
@@ -32,14 +14,34 @@ export type StockFifoRow = {
   marketplace: Marketplace;
 };
 
-/** Финансовая операция по площадке */
+/** Услуги фулфилмента и взаиморасчёты с клиентами (не продажи товаров на МП) */
+export type FfFinanceOperationKind =
+  | "хранение"
+  | "упаковка"
+  | "логистика"
+  | "начисление услуг"
+  | "оплата от клиента";
+
+/** Операция в журнале финансов FF */
 export type FinanceOperation = {
   id: string;
   date: string;
-  kind: "начисление" | "комиссия МП" | "логистика" | "выплата";
-  marketplace: Marketplace;
+  kind: FfFinanceOperationKind;
+  /** Направление отгрузки / тип маршрута; null — без привязки к МП */
+  marketplace: Marketplace | null;
   amountRub: number;
   comment: string;
+};
+
+/** Сводка для операционного Dashboard владельца FF */
+export type FfDashboardSnapshot = {
+  receivingsInProcessing: number;
+  boxesPendingShipmentToday: number;
+  palletsPendingShipmentToday: number;
+  rackOccupancyPercent: number;
+  clientsReceivablesRub: number;
+  servicesRevenueMonthRub: number;
+  activeLegalEntitiesCount: number;
 };
 
 /** Короб отгрузки */
@@ -60,7 +62,7 @@ export type InboundSupply = {
   marketplace: Marketplace;
   expectedUnits: number;
   receivedUnits: number | null;
-  status: "ожидается" | "частично" | "принято";
+  status: "ожидается" | "в обработке" | "частично" | "принято";
   eta: string;
 };
 

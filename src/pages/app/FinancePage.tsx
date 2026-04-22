@@ -15,14 +15,14 @@ const FinancePage = () => {
       <div>
         <h2 className="font-display text-2xl font-semibold tracking-tight md:text-3xl">Финансы</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Операции по маркетплейсам: выплаты, комиссии, логистика (демо-реестр).
+          Начисления за услуги FF, оплаты от клиентов. Маркетплейс — только направление отгрузки, не продажи.
         </p>
       </div>
 
       <Card className="border-border/80 shadow-elegant">
         <CardHeader>
           <CardTitle className="font-display text-lg">Журнал операций</CardTitle>
-          <CardDescription>WB · Ozon · Яндекс.Маркет</CardDescription>
+          <CardDescription>Услуги склада и взаиморасчёты с клиентами</CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6">
           {isLoading ? (
@@ -39,7 +39,7 @@ const FinancePage = () => {
                   <TableRow>
                     <TableHead>Дата</TableHead>
                     <TableHead>Тип</TableHead>
-                    <TableHead>Площадка</TableHead>
+                    <TableHead>Направление</TableHead>
                     <TableHead className="text-right">Сумма, ₽</TableHead>
                     <TableHead className="min-w-[180px]">Комментарий</TableHead>
                   </TableRow>
@@ -52,7 +52,11 @@ const FinancePage = () => {
                       </TableCell>
                       <TableCell>{op.kind}</TableCell>
                       <TableCell>
-                        <MarketplaceBadge marketplace={op.marketplace} />
+                        {op.marketplace ? (
+                          <MarketplaceBadge marketplace={op.marketplace} />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell
                         className={cn(
