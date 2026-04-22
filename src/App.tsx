@@ -5,13 +5,13 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppShellLayout from "./layouts/AppShellLayout.tsx";
 import DashboardPage from "./pages/app/DashboardPage.tsx";
-import PlaceholderPage from "./pages/app/PlaceholderPage.tsx";
-import Index from "./pages/Index.tsx";
+import WarehousePage from "./pages/app/WarehousePage.tsx";
+import FinancePage from "./pages/app/FinancePage.tsx";
+import ShippingPage from "./pages/app/ShippingPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
 
-/** Корень GitHub Pages — подпапка репозитория (см. vite.config base) */
 const routerBasename =
   import.meta.env.BASE_URL.length > 1 ? import.meta.env.BASE_URL.replace(/\/$/, "") : undefined;
 
@@ -22,14 +22,12 @@ const App = () => (
       <Sonner />
       <BrowserRouter basename={routerBasename}>
         <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/dashboard" element={<AppShellLayout />}>
+          <Route path="/" element={<AppShellLayout />}>
             <Route index element={<DashboardPage />} />
-            <Route path="warehouse" element={<PlaceholderPage title="Склад" />} />
-            <Route path="receiving" element={<PlaceholderPage title="Приёмка" />} />
-            <Route path="shipping" element={<PlaceholderPage title="Отгрузка" />} />
+            <Route path="warehouse" element={<WarehousePage />} />
+            <Route path="finance" element={<FinancePage />} />
+            <Route path="shipping" element={<ShippingPage />} />
           </Route>
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

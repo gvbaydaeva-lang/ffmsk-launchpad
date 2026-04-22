@@ -35,6 +35,8 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          BASE_PATH: /ffmsk-launchpad/
 
       - name: SPA fallback (React Router на GitHub Pages)
         run: cp dist/index.html dist/404.html

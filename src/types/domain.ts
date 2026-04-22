@@ -18,3 +18,36 @@ export type MarketplaceOrdersSlice = {
   marketplace: Marketplace;
   orders: number;
 };
+
+/** Строка остатков с партией (FIFO) */
+export type StockFifoRow = {
+  id: string;
+  sku: string;
+  productName: string;
+  batchCode: string;
+  receivedAt: string;
+  quantity: number;
+  /** 1 = снимается первой при отгрузке */
+  fifoRank: number;
+  marketplace: Marketplace;
+};
+
+/** Финансовая операция по площадке */
+export type FinanceOperation = {
+  id: string;
+  date: string;
+  kind: "начисление" | "комиссия МП" | "логистика" | "выплата";
+  marketplace: Marketplace;
+  amountRub: number;
+  comment: string;
+};
+
+/** Короб отгрузки */
+export type ShipmentBox = {
+  id: string;
+  marketplace: Marketplace;
+  boxBarcode: string;
+  itemsCount: number;
+  weightKg: number;
+  createdAt: string;
+};

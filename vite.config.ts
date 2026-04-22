@@ -3,8 +3,14 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
-// GitHub Pages: репозиторий project site → base должен совпадать с именем репо
-const BASE = "/ffmsk-launchpad/";
+/** Локально: `/`. Для GitHub Pages в CI: `BASE_PATH=/ffmsk-launchpad/ npm run build` */
+function normalizeBase(raw: string | undefined): string {
+  if (!raw || raw === "/") return "/";
+  const withSlash = raw.startsWith("/") ? raw : `/${raw}`;
+  return withSlash.endsWith("/") ? withSlash : `${withSlash}/`;
+}
+
+const BASE = normalizeBase(process.env.BASE_PATH);
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({

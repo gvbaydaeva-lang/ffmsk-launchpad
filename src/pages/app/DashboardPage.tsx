@@ -46,7 +46,9 @@ const DashboardPage = () => {
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Обзор</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Демо-данные по трём маркетплейсам до подключения API.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Отгрузки и заказы по WB, Ozon и Яндекс.Маркет (демо до подключения API).
+          </p>
         </div>
         <Badge variant="secondary" className="w-fit shrink-0">
           Mock-данные
