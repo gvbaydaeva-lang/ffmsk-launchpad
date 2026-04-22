@@ -1,4 +1,6 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
+import { ArrowRight, Box, PackageOpen } from "lucide-react";
 import { CartesianGrid, Line, LineChart, Pie, PieChart, XAxis, YAxis, Cell } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,6 +55,63 @@ const DashboardPage = () => {
         <Badge variant="secondary" className="w-fit shrink-0">
           Mock-данные
         </Badge>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Link to="/receiving" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
+            <CardHeader className="pb-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                <PackageOpen className="h-5 w-5" />
+              </div>
+              <CardTitle className="font-display text-base">Создать приёмку</CardTitle>
+              <CardDescription>Входящая поставка</CardDescription>
+            </CardHeader>
+            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
+              Перейти
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link to="/shipping" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
+            <CardHeader className="pb-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Box className="h-5 w-5" />
+              </div>
+              <CardTitle className="font-display text-base">Сформировать короб</CardTitle>
+              <CardDescription>Отгрузка на МП</CardDescription>
+            </CardHeader>
+            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
+              Перейти
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link to="/warehouse" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-base">Склад и FIFO</CardTitle>
+              <CardDescription>Остатки по партиям</CardDescription>
+            </CardHeader>
+            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
+              Открыть
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link to="/finance" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-base">Финансы</CardTitle>
+              <CardDescription>Взаиморасчёты с МП</CardDescription>
+            </CardHeader>
+            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
+              Открыть
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">

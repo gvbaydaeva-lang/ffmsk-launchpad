@@ -5,7 +5,6 @@ import type {
   OrgUser,
   ShipmentBox,
   StockFifoRow,
-  StockMarketplaceSummary,
 } from "@/types/domain";
 
 function delay(ms: number) {
@@ -169,4 +168,65 @@ export async function generateMockShipmentBoxes(
     createdAt: new Date().toISOString(),
   };
   return [newBox, ...current];
+}
+
+export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
+  await delay(110);
+  return [
+    {
+      id: "le-1",
+      shortName: "ООО «Ритейл Про»",
+      fullName: "Общество с ограниченной ответственностью «Ритейл Про»",
+      inn: "7701234567",
+      kpp: "770101001",
+      ogrn: "1027700132195",
+      isActive: true,
+    },
+    {
+      id: "le-2",
+      shortName: "ИП Байдаева Г.В.",
+      fullName: "Индивидуальный предприниматель Байдаева Галина Викторовна",
+      inn: "500123456789",
+      kpp: "",
+      ogrn: "320500100012345",
+      isActive: true,
+    },
+  ];
+}
+
+export async function fetchMockOrgUsers(): Promise<OrgUser[]> {
+  await delay(100);
+  return [
+    {
+      id: "u-1",
+      email: "admin@example.ru",
+      displayName: "Администратор",
+      role: "Администратор",
+      legalEntityId: "le-1",
+    },
+    {
+      id: "u-2",
+      email: "sklad@example.ru",
+      displayName: "Складской оператор",
+      role: "Склад",
+      legalEntityId: "le-1",
+    },
+    {
+      id: "u-3",
+      email: "finance@example.ru",
+      displayName: "Бухгалтерия",
+      role: "Финансы",
+      legalEntityId: "le-2",
+    },
+  ];
+}
+
+export function appendMockLegalEntity(current: LegalEntity[], draft: Omit<LegalEntity, "id">): LegalEntity[] {
+  const id = `le-${Date.now()}`;
+  return [...current, { ...draft, id }];
+}
+
+export function appendMockOrgUser(current: OrgUser[], draft: Omit<OrgUser, "id">): OrgUser[] {
+  const id = `u-${Date.now()}`;
+  return [...current, { ...draft, id }];
 }

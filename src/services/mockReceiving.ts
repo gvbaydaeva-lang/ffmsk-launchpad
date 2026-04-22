@@ -54,3 +54,11 @@ export function filterInboundByMarketplace(rows: InboundSupply[], mp: Marketplac
   if (mp === "all") return rows;
   return rows.filter((r) => r.marketplace === mp);
 }
+
+export function appendMockInbound(
+  current: InboundSupply[],
+  draft: Omit<InboundSupply, "id">,
+): InboundSupply[] {
+  const id = `in-${Date.now()}`;
+  return [{ ...draft, id }, ...current];
+}

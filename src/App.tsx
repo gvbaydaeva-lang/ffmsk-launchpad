@@ -4,9 +4,13 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppShellLayout from "./layouts/AppShellLayout.tsx";
-import SectionPlaceholderPage from "./pages/app/SectionPlaceholderPage.tsx";
-import WarehousePage from "./pages/app/WarehousePage.tsx";
+import DashboardPage from "./pages/app/DashboardPage.tsx";
+import ReceivingPage from "./pages/app/ReceivingPage.tsx";
 import ShippingPage from "./pages/app/ShippingPage.tsx";
+import WarehousePage from "./pages/app/WarehousePage.tsx";
+import FinancePage from "./pages/app/FinancePage.tsx";
+import LegalEntitiesPage from "./pages/app/LegalEntitiesPage.tsx";
+import UsersPage from "./pages/app/UsersPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -22,12 +26,14 @@ const App = () => (
       <BrowserRouter basename={routerBasename}>
         <Routes>
           <Route path="/" element={<AppShellLayout />}>
-            <Route index element={<Navigate to="/receiving" replace />} />
-            <Route path="receiving" element={<SectionPlaceholderPage title="Приёмка" />} />
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="receiving" element={<ReceivingPage />} />
             <Route path="shipping" element={<ShippingPage />} />
             <Route path="warehouse" element={<WarehousePage />} />
-            <Route path="legal-entities" element={<SectionPlaceholderPage title="Юридические лица" />} />
-            <Route path="users" element={<SectionPlaceholderPage title="Пользователи" />} />
+            <Route path="finance" element={<FinancePage />} />
+            <Route path="legal-entities" element={<LegalEntitiesPage />} />
+            <Route path="users" element={<UsersPage />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

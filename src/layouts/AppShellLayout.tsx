@@ -1,5 +1,13 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { Building2, Package, PackageOpen, Truck, Users } from "lucide-react";
+import {
+  Building2,
+  LayoutDashboard,
+  Package,
+  PackageOpen,
+  Truck,
+  Users,
+  Wallet,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -19,9 +27,11 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { to: "/receiving", label: "Приёмка", icon: PackageOpen, end: true },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/receiving", label: "Приёмка", icon: PackageOpen },
   { to: "/shipping", label: "Отгрузка", icon: Truck },
   { to: "/warehouse", label: "Склад", icon: Package },
+  { to: "/finance", label: "Финансы", icon: Wallet },
   { to: "/legal-entities", label: "Юрлица", icon: Building2 },
   { to: "/users", label: "Пользователи", icon: Users },
 ] as const;

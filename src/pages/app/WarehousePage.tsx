@@ -1,22 +1,49 @@
+import * as React from "react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useStockFifo } from "@/hooks/useWmsMock";
+import type { Marketplace } from "@/types/domain";
 
 const WarehousePage = () => {
   const { data, isLoading, error } = useStockFifo();
+  const [mp, setMp] = React.useState<Marketplace | "all">("all");
+
+  const rows = React.useMemo(() => {
+    if (!data) return [];
+    if (mp === "all") return data;
+    return data.filter((r) => r.marketplace === mp);
+  }, [data, mp]);
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-display text-2xl font-semibold tracking-tight md:text-3xl">Склад</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Остатки по партиям. Порядок FIFO определяет, какая партия уйдёт в отгрузку первой.
-        </p>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <h2 className="font-display text-2xl font-semibold tracking-tight md:text-3xl">Складской учёт</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Партии и FIFO; фильтр по маркетплейсу не меняет глобальный порядок партий.
+          </p>
+        </div>
+        <div className="grid gap-1.5 sm:w-[220px]">
+          <Label htmlFor="wh-mp">Маркетплейс</Label>
+          <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
+            <SelectTrigger id="wh-mp">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все</SelectItem>
+              <SelectItem value="wb">Wildberries</SelectItem>
+              <SelectItem value="ozon">Ozon</SelectItem>
+              <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Card className="border-border/80 shadow-elegant">
@@ -48,7 +75,7 @@ const WarehousePage = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data?.map((row) => (
+                  {rows.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell>
                         <Badge variant="secondary">{row.fifoRank}</Badge>

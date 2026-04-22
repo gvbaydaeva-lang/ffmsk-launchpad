@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Marketplace } from "@/types/domain";
+import type { InboundSupply, LegalEntity, Marketplace, OrgUser } from "@/types/domain";
+import { appendMockInbound, fetchMockInboundSupplies } from "@/services/mockReceiving";
 import {
+  appendMockLegalEntity,
+  appendMockOrgUser,
   fetchMockFinanceOperations,
+  fetchMockLegalEntities,
+  fetchMockOrgUsers,
   fetchMockShipmentBoxes,
   fetchMockStockFifo,
   generateMockShipmentBoxes,
@@ -31,4 +36,49 @@ export function useShipmentBoxes() {
   });
 
   return { ...query, generateBoxes: generate.mutateAsync, isGenerating: generate.isPending };
+}
+
+export function useInboundSupplies() {
+  const qc = useQueryClient();
+  const query = useQuery({ queryKey: ["wms", "inbound"], queryFn: fetchMockInboundSupplies });
+
+  const create = useMutation({
+    mutationFn: async (draft: Omit<InboundSupply, "id">) => {
+      const cur = qc.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? (await fetchMockInboundSupplies());
+      return appendMockInbound(cur, draft);
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "inbound"], data),
+  });
+
+  return { ...query, createInbound: create.mutateAsync, isCreating: create.isPending };
+}
+
+export function useLegalEntities() {
+  const qc = useQueryClient();
+  const query = useQuery({ queryKey: ["wms", "legal"], queryFn: fetchMockLegalEntities });
+
+  const add = useMutation({
+    mutationFn: async (draft: Omit<LegalEntity, "id">) => {
+      const cur = qc.getQueryData<LegalEntity[]>(["wms", "legal"]) ?? (await fetchMockLegalEntities());
+      return appendMockLegalEntity(cur, draft);
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "legal"], data),
+  });
+
+  return { ...query, addEntity: add.mutateAsync, isAdding: add.isPending };
+}
+
+export function useOrgUsers() {
+  const qc = useQueryClient();
+  const query = useQuery({ queryKey: ["wms", "org-users"], queryFn: fetchMockOrgUsers });
+
+  const add = useMutation({
+    mutationFn: async (draft: Omit<OrgUser, "id">) => {
+      const cur = qc.getQueryData<OrgUser[]>(["wms", "org-users"]) ?? (await fetchMockOrgUsers());
+      return appendMockOrgUser(cur, draft);
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "org-users"], data),
+  });
+
+  return { ...query, addUser: add.mutateAsync, isAdding: add.isPending };
 }
