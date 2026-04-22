@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { LayoutDashboard, Package, Truck, Wallet } from "lucide-react";
+import { Building2, Package, PackageOpen, Truck, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -19,10 +19,11 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/warehouse", label: "Склад", icon: Package },
-  { to: "/finance", label: "Финансы", icon: Wallet },
+  { to: "/receiving", label: "Приёмка", icon: PackageOpen, end: true },
   { to: "/shipping", label: "Отгрузка", icon: Truck },
+  { to: "/warehouse", label: "Склад", icon: Package },
+  { to: "/legal-entities", label: "Юрлица", icon: Building2 },
+  { to: "/users", label: "Пользователи", icon: Users },
 ] as const;
 
 function matchNav(pathname: string, to: string, end?: boolean) {
@@ -44,7 +45,7 @@ const AppShellLayout = () => {
             </span>
             <div className="min-w-0 group-data-[collapsible=icon]:hidden">
               <div className="truncate font-display text-sm font-semibold tracking-tight">FFMSK</div>
-              <div className="truncate text-xs text-muted-foreground">Склад · Финансы · Отгрузки</div>
+              <div className="truncate text-xs text-muted-foreground">WMS / ERP</div>
             </div>
           </div>
         </SidebarHeader>
@@ -81,9 +82,7 @@ const AppShellLayout = () => {
             <h1 className="truncate text-sm font-semibold text-foreground md:text-base">
               {current?.label ?? "Кабинет"}
             </h1>
-            <p className="hidden text-xs text-muted-foreground sm:block">
-              Остатки FIFO · операции по маркетплейсам · коробы и экспорт
-            </p>
+            <p className="hidden text-xs text-muted-foreground sm:block">Операционный кабинет</p>
           </div>
         </header>
         <div className={cn("flex flex-1 flex-col gap-6 p-4 pb-10 md:p-6")}>

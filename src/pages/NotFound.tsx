@@ -15,7 +15,7 @@ const NotFound = () => {
         <h1 className="mb-2 font-display text-4xl font-bold tracking-tight">404</h1>
         <p className="mb-6 text-muted-foreground">Страница не существует</p>
         <Button asChild>
-          <Link to="/">На Dashboard</Link>
+          <Link to="/receiving">В кабинет</Link>
         </Button>
       </div>
     </div>
