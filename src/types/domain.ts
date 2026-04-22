@@ -4,6 +4,7 @@ export type Marketplace = "wb" | "ozon" | "yandex";
 /** Строка остатков с партией (FIFO) */
 export type StockFifoRow = {
   id: string;
+  legalEntityId: string;
   sku: string;
   productName: string;
   batchCode: string;
@@ -25,6 +26,7 @@ export type FfFinanceOperationKind =
 /** Операция в журнале финансов FF */
 export type FinanceOperation = {
   id: string;
+  legalEntityId: string;
   date: string;
   kind: FfFinanceOperationKind;
   /** Направление отгрузки / тип маршрута; null — без привязки к МП */
@@ -33,20 +35,57 @@ export type FinanceOperation = {
   comment: string;
 };
 
-/** Сводка для операционного Dashboard владельца FF */
-export type FfDashboardSnapshot = {
-  receivingsInProcessing: number;
-  boxesPendingShipmentToday: number;
-  palletsPendingShipmentToday: number;
-  rackOccupancyPercent: number;
-  clientsReceivablesRub: number;
-  servicesRevenueMonthRub: number;
-  activeLegalEntitiesCount: number;
+/** Метрики дашборда (B2B FF) */
+export type DashboardMetrics = {
+  inStorageUnits: number;
+  inStorageSkuCount: number;
+  assemblyQueueShipments: number;
+  assemblyQueueUnits: number;
+  shippedTotalCount: number;
+  revenueServicesRub: number;
+  revenueServicesOps: number;
+  revenueStorageRub: number;
+  revenueStorageClosedDays: number;
+  revenueTotalRub: number;
+};
+
+export type StorageHistoryPoint = { date: string; valueRub: number };
+
+export type RevenueByClientChartRow = {
+  legalEntityId: string;
+  shortName: string;
+  servicesRub: number;
+  storageRub: number;
+};
+
+export type StorageByClientTableRow = {
+  legalEntityId: string;
+  shortName: string;
+  quantityUnits: number;
+  tariffPerUnitRub: number;
+  totalPerDayRub: number;
+};
+
+export type RecentWarehouseOperation = {
+  id: string;
+  date: string;
+  kind: string;
+  legalEntityId: string;
+  detail: string;
+};
+
+export type DashboardBundle = {
+  metrics: DashboardMetrics;
+  storageHistory: StorageHistoryPoint[];
+  revenueByClient: RevenueByClientChartRow[];
+  storageByClient: StorageByClientTableRow[];
+  recentOperations: RecentWarehouseOperation[];
 };
 
 /** Короб отгрузки */
 export type ShipmentBox = {
   id: string;
+  legalEntityId: string;
   marketplace: Marketplace;
   boxBarcode: string;
   itemsCount: number;
@@ -57,6 +96,7 @@ export type ShipmentBox = {
 /** Входящая поставка (приёмка) */
 export type InboundSupply = {
   id: string;
+  legalEntityId: string;
   documentNo: string;
   supplier: string;
   marketplace: Marketplace;

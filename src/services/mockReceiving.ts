@@ -9,6 +9,7 @@ export async function fetchMockInboundSupplies(): Promise<InboundSupply[]> {
   return [
     {
       id: "in-1",
+      legalEntityId: "le-2",
       documentNo: "ПТ-2026-0892",
       supplier: "ООО «Косметик Плюс»",
       marketplace: "wb",
@@ -19,6 +20,7 @@ export async function fetchMockInboundSupplies(): Promise<InboundSupply[]> {
     },
     {
       id: "in-2",
+      legalEntityId: "le-3",
       documentNo: "ПТ-2026-0881",
       supplier: "ИП Смирнов А.В.",
       marketplace: "ozon",
@@ -29,6 +31,7 @@ export async function fetchMockInboundSupplies(): Promise<InboundSupply[]> {
     },
     {
       id: "in-2b",
+      legalEntityId: "le-1",
       documentNo: "ПТ-2026-0899",
       supplier: "ООО «Логистик Про»",
       marketplace: "wb",
@@ -39,6 +42,7 @@ export async function fetchMockInboundSupplies(): Promise<InboundSupply[]> {
     },
     {
       id: "in-3",
+      legalEntityId: "le-4",
       documentNo: "ПТ-2026-0855",
       supplier: "ООО «ГаджетСервис»",
       marketplace: "yandex",
@@ -49,6 +53,7 @@ export async function fetchMockInboundSupplies(): Promise<InboundSupply[]> {
     },
     {
       id: "in-4",
+      legalEntityId: "le-5",
       documentNo: "ПТ-2026-0901",
       supplier: "ООО «Косметик Плюс»",
       marketplace: "wb",

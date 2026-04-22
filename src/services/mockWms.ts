@@ -15,6 +15,7 @@ export async function fetchMockStockFifo(): Promise<StockFifoRow[]> {
   await delay(140);
   const bases: Omit<StockFifoRow, "id" | "fifoRank">[] = [
     {
+      legalEntityId: "le-2",
       sku: "SKU-10042",
       productName: "Крем увлажняющий 50 мл",
       batchCode: "B-2026-041",
@@ -23,6 +24,7 @@ export async function fetchMockStockFifo(): Promise<StockFifoRow[]> {
       marketplace: "wb",
     },
     {
+      legalEntityId: "le-2",
       sku: "SKU-10042",
       productName: "Крем увлажняющий 50 мл",
       batchCode: "B-2026-078",
@@ -31,6 +33,7 @@ export async function fetchMockStockFifo(): Promise<StockFifoRow[]> {
       marketplace: "wb",
     },
     {
+      legalEntityId: "le-4",
       sku: "SKU-88401",
       productName: "Набор кистей 12 шт",
       batchCode: "B-2026-012",
@@ -39,6 +42,7 @@ export async function fetchMockStockFifo(): Promise<StockFifoRow[]> {
       marketplace: "ozon",
     },
     {
+      legalEntityId: "le-3",
       sku: "SKU-22011",
       productName: "Чехол силикон прозрачный",
       batchCode: "B-2026-055",
@@ -47,6 +51,7 @@ export async function fetchMockStockFifo(): Promise<StockFifoRow[]> {
       marketplace: "yandex",
     },
     {
+      legalEntityId: "le-3",
       sku: "SKU-22011",
       productName: "Чехол силикон прозрачный",
       batchCode: "B-2026-089",
@@ -67,6 +72,7 @@ export async function fetchMockFinanceOperations(): Promise<FinanceOperation[]> 
   return [
     {
       id: "f-1",
+      legalEntityId: "le-2",
       date: "2026-04-20",
       kind: "начисление услуг",
       marketplace: "wb",
@@ -75,14 +81,16 @@ export async function fetchMockFinanceOperations(): Promise<FinanceOperation[]> 
     },
     {
       id: "f-2",
+      legalEntityId: "le-1",
       date: "2026-04-20",
       kind: "оплата от клиента",
       marketplace: null,
       amountRub: 95_000,
-      comment: "Поступление по счёту №184 от ООО «Ритейл Про»",
+      comment: "Поступление по счёту №184",
     },
     {
       id: "f-3",
+      legalEntityId: "le-4",
       date: "2026-04-19",
       kind: "упаковка",
       marketplace: "ozon",
@@ -91,6 +99,7 @@ export async function fetchMockFinanceOperations(): Promise<FinanceOperation[]> 
     },
     {
       id: "f-4",
+      legalEntityId: "le-3",
       date: "2026-04-19",
       kind: "логистика",
       marketplace: "yandex",
@@ -99,6 +108,7 @@ export async function fetchMockFinanceOperations(): Promise<FinanceOperation[]> 
     },
     {
       id: "f-5",
+      legalEntityId: "le-1",
       date: "2026-04-18",
       kind: "хранение",
       marketplace: null,
@@ -107,6 +117,7 @@ export async function fetchMockFinanceOperations(): Promise<FinanceOperation[]> 
     },
     {
       id: "f-6",
+      legalEntityId: "le-2",
       date: "2026-04-18",
       kind: "начисление услуг",
       marketplace: "wb",
@@ -123,6 +134,7 @@ export async function fetchMockShipmentBoxes(): Promise<ShipmentBox[]> {
   return [
     {
       id: "bx-1",
+      legalEntityId: "le-2",
       marketplace: "wb",
       boxBarcode: "WBTR-7782910042",
       itemsCount: 42,
@@ -131,6 +143,7 @@ export async function fetchMockShipmentBoxes(): Promise<ShipmentBox[]> {
     },
     {
       id: "bx-2",
+      legalEntityId: "le-2",
       marketplace: "wb",
       boxBarcode: "WBTR-7782910043",
       itemsCount: 36,
@@ -139,6 +152,7 @@ export async function fetchMockShipmentBoxes(): Promise<ShipmentBox[]> {
     },
     {
       id: "bx-3",
+      legalEntityId: "le-4",
       marketplace: "ozon",
       boxBarcode: "OZ-BOX-992100887",
       itemsCount: 24,
@@ -150,12 +164,14 @@ export async function fetchMockShipmentBoxes(): Promise<ShipmentBox[]> {
 
 export async function generateMockShipmentBoxes(
   marketplace: Marketplace,
+  legalEntityId: string,
   current: ShipmentBox[],
 ): Promise<ShipmentBox[]> {
   await delay(220);
   const n = ++boxSeq;
   const newBox: ShipmentBox = {
     id: `bx-gen-${n}`,
+    legalEntityId,
     marketplace,
     boxBarcode:
       marketplace === "wb"
@@ -175,20 +191,47 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
   return [
     {
       id: "le-1",
-      shortName: "ООО «Ритейл Про»",
-      fullName: "Общество с ограниченной ответственностью «Ритейл Про»",
-      inn: "7701234567",
+      shortName: '[DEMO] ООО «Аврора»',
+      fullName: 'ООО «Аврора» (демо-клиент)',
+      inn: "7701001001",
       kpp: "770101001",
-      ogrn: "1027700132195",
+      ogrn: "1027700100111",
       isActive: true,
     },
     {
       id: "le-2",
-      shortName: "ИП Байдаева Г.В.",
-      fullName: "Индивидуальный предприниматель Байдаева Галина Викторовна",
-      inn: "500123456789",
+      shortName: "ООО «БьютиМаркет»",
+      fullName: "Общество с ограниченной ответственностью «БьютиМаркет»",
+      inn: "7702002002",
+      kpp: "770201001",
+      ogrn: "1027700200222",
+      isActive: true,
+    },
+    {
+      id: "le-3",
+      shortName: "ООО «ТекстильПро»",
+      fullName: "Общество с ограниченной ответственностью «ТекстильПро»",
+      inn: "7703003003",
+      kpp: "770301001",
+      ogrn: "1027700300333",
+      isActive: true,
+    },
+    {
+      id: "le-4",
+      shortName: "ООО «СпортЛайн»",
+      fullName: "Общество с ограниченной ответственностью «СпортЛайн»",
+      inn: "7704004004",
+      kpp: "770401001",
+      ogrn: "1027700400444",
+      isActive: true,
+    },
+    {
+      id: "le-5",
+      shortName: "ИП Иванова А.С.",
+      fullName: "Индивидуальный предприниматель Иванова Анна Сергеевна",
+      inn: "500500500500",
       kpp: "",
-      ogrn: "320500100012345",
+      ogrn: "320500500055555",
       isActive: true,
     },
   ];

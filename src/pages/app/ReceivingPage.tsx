@@ -19,16 +19,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
-import { useInboundSupplies } from "@/hooks/useWmsMock";
+import { useAppFilters } from "@/contexts/AppFiltersContext";
+import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace } from "@/types/domain";
 
 const ReceivingPage = () => {
   const { data, isLoading, error, createInbound, isCreating } = useInboundSupplies();
+  const { data: entities } = useLegalEntities();
+  const { legalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState({
+    legalEntityId: "le-2" as string,
     documentNo: "",
     supplier: "",
     marketplace: "wb" as Marketplace,
@@ -36,10 +41,26 @@ const ReceivingPage = () => {
     eta: "",
   });
 
-  const rows = React.useMemo(() => filterInboundByMarketplace(data ?? [], mp), [data, mp]);
+  const entityName = React.useCallback(
+    (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
+    [entities],
+  );
+
+  const rows = React.useMemo(() => {
+    const base = filterInboundByMarketplace(data ?? [], mp);
+    if (legalEntityId === "all") return base;
+    return base.filter((r) => r.legalEntityId === legalEntityId);
+  }, [data, mp, legalEntityId]);
 
   const resetForm = () => {
-    setForm({ documentNo: "", supplier: "", marketplace: "wb", expectedUnits: "", eta: "" });
+    setForm({
+      legalEntityId: "le-2",
+      documentNo: "",
+      supplier: "",
+      marketplace: "wb",
+      expectedUnits: "",
+      eta: "",
+    });
   };
 
   const onCreate = async () => {
@@ -49,6 +70,7 @@ const ReceivingPage = () => {
       return;
     }
     const draft: Omit<InboundSupply, "id"> = {
+      legalEntityId: form.legalEntityId,
       documentNo: form.documentNo.trim(),
       supplier: form.supplier.trim(),
       marketplace: form.marketplace,
@@ -71,12 +93,12 @@ const ReceivingPage = () => {
     <div className="space-y-4">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <h2 className="font-display text-2xl font-semibold tracking-tight md:text-3xl">Приёмка</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Входящие поставки по маркетплейсам.</p>
+          <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Приёмка</h2>
+          <p className="mt-1 text-sm text-slate-600">Входящие поставки по маркетплейсам и юрлицам.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
-            <SelectTrigger className="w-full sm:w-[200px]">
+            <SelectTrigger className="w-full border-slate-200 bg-white sm:w-[200px]">
               <SelectValue placeholder="Площадка" />
             </SelectTrigger>
             <SelectContent>
@@ -88,7 +110,7 @@ const ReceivingPage = () => {
           </Select>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
+              <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
                 <Plus className="h-4 w-4" />
                 Создать приёмку
               </Button>
@@ -98,6 +120,21 @@ const ReceivingPage = () => {
                 <DialogTitle>Новая приёмка</DialogTitle>
               </DialogHeader>
               <div className="grid gap-3 py-2">
+                <div className="grid gap-1.5">
+                  <Label>Юрлицо</Label>
+                  <Select value={form.legalEntityId} onValueChange={(v) => setForm((f) => ({ ...f, legalEntityId: v }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {entities?.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.shortName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="doc">Номер документа</Label>
                   <Input
@@ -160,10 +197,12 @@ const ReceivingPage = () => {
         </div>
       </div>
 
-      <Card className="border-border/80 shadow-elegant">
+      <GlobalFiltersBar />
+
+      <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader>
-          <CardTitle className="font-display text-lg">Поставки</CardTitle>
-          <CardDescription>Статусы: ожидается · частично · принято</CardDescription>
+          <CardTitle className="font-display text-lg text-slate-900">Поставки</CardTitle>
+          <CardDescription className="text-slate-500">Статусы: ожидается · частично · принято</CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6">
           {isLoading ? (
@@ -174,53 +213,55 @@ const ReceivingPage = () => {
           ) : error ? (
             <p className="p-6 text-sm text-destructive">Не удалось загрузить список.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Документ</TableHead>
-                    <TableHead>Поставщик</TableHead>
-                    <TableHead>Площадка</TableHead>
-                    <TableHead className="text-right">Ожид.</TableHead>
-                    <TableHead className="text-right">Принято</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>ETA</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-mono text-xs sm:text-sm">{row.documentNo}</TableCell>
-                      <TableCell className="max-w-[200px] truncate">{row.supplier}</TableCell>
-                      <TableCell>
-                        <MarketplaceBadge marketplace={row.marketplace} />
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{row.expectedUnits}</TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {row.receivedUnits ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            row.status === "принято"
+            <Table>
+              <TableHeader>
+                <TableRow className="border-slate-200 hover:bg-transparent">
+                  <TableHead className="text-slate-600">Документ</TableHead>
+                  <TableHead className="text-slate-600">Юрлицо</TableHead>
+                  <TableHead className="text-slate-600">Поставщик</TableHead>
+                  <TableHead className="text-slate-600">Площадка</TableHead>
+                  <TableHead className="text-right text-slate-600">Ожид.</TableHead>
+                  <TableHead className="text-right text-slate-600">Принято</TableHead>
+                  <TableHead className="text-slate-600">Статус</TableHead>
+                  <TableHead className="text-slate-600">ETA</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row) => (
+                  <TableRow key={row.id} className="border-slate-100">
+                    <TableCell className="font-mono text-xs text-slate-900 sm:text-sm">{row.documentNo}</TableCell>
+                    <TableCell className="max-w-[160px] truncate text-slate-700 text-sm">{entityName(row.legalEntityId)}</TableCell>
+                    <TableCell className="max-w-[200px] truncate text-slate-800">{row.supplier}</TableCell>
+                    <TableCell>
+                      <MarketplaceBadge marketplace={row.marketplace} />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-900">{row.expectedUnits}</TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-500">{row.receivedUnits ?? "—"}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          row.status === "принято"
+                            ? "default"
+                            : row.status === "в обработке"
                               ? "default"
-                              : row.status === "в обработке"
-                                ? "default"
-                                : "secondary"
-                          }
-                          className={row.status === "в обработке" ? "bg-accent text-accent-foreground" : undefined}
-                        >
-                          {row.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-muted-foreground text-xs sm:text-sm">
-                        {format(parseISO(row.eta), "d MMM yyyy", { locale: ru })}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                              : "secondary"
+                        }
+                        className={
+                          row.status === "в обработке"
+                            ? "border-emerald-200 bg-emerald-600 text-white hover:bg-emerald-600"
+                            : "border-slate-200"
+                        }
+                      >
+                        {row.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-slate-500 text-xs sm:text-sm">
+                      {format(parseISO(row.eta), "d MMM yyyy", { locale: ru })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>

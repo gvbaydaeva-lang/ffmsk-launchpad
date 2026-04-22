@@ -25,10 +25,10 @@ export function useShipmentBoxes() {
   const query = useQuery({ queryKey: ["wms", "shipment-boxes"], queryFn: fetchMockShipmentBoxes });
 
   const generate = useMutation({
-    mutationFn: async (marketplace: Marketplace) => {
+    mutationFn: async (args: { marketplace: Marketplace; legalEntityId: string }) => {
       const current = qc.getQueryData<Awaited<ReturnType<typeof fetchMockShipmentBoxes>>>(["wms", "shipment-boxes"]);
       const list = current ?? (await fetchMockShipmentBoxes());
-      return generateMockShipmentBoxes(marketplace, list);
+      return generateMockShipmentBoxes(args.marketplace, args.legalEntityId, list);
     },
     onSuccess: (data) => {
       qc.setQueryData(["wms", "shipment-boxes"], data);

@@ -1,216 +1,274 @@
-import { Link } from "react-router-dom";
+import { format, parseISO } from "date-fns";
+import { ru } from "date-fns/locale/ru";
 import {
-  ArrowRight,
-  Box,
-  Building2,
-  Coins,
-  Gauge,
-  Layers,
-  PackageOpen,
+  Boxes,
+  Package,
   Truck,
   Wallet,
+  TrendingUp,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Progress } from "@/components/ui/progress";
-import { Badge } from "@/components/ui/badge";
-import { useFfDashboardSnapshot } from "@/hooks/useDashboardAnalytics";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
+import { useDashboardBundleQuery } from "@/hooks/useDashboardAnalytics";
+import { sumStorageDay } from "@/services/mockDashboardBundle";
 
 const DashboardPage = () => {
-  const { data, isLoading, error } = useFfDashboardSnapshot();
+  const { data, isLoading, error } = useDashboardBundleQuery();
+
+  const storageTotal = data ? sumStorageDay(data.storageByClient) : 0;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Операции FF</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Складская логистика и услуги фулфилмента. Без аналитики продаж и кабинета селлера.
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Дашборд</h2>
+            <Badge variant="secondary" className="border border-slate-200 bg-slate-100 font-normal text-slate-600">
+              Global
+            </Badge>
+          </div>
+          <p className="mt-1 text-sm text-slate-600">Сводная аналитика по всем юрлицам</p>
         </div>
-        <Badge variant="outline" className="w-fit shrink-0 border-accent/40 text-accent">
-          Демо-данные
-        </Badge>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Link to="/receiving" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
-            <CardHeader className="pb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/15 text-accent">
-                <PackageOpen className="h-5 w-5" />
-              </div>
-              <CardTitle className="font-display text-base">Приёмка</CardTitle>
-              <CardDescription>Входящие поставки</CardDescription>
-            </CardHeader>
-            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
-              Открыть
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </CardContent>
-          </Card>
-        </Link>
-        <Link to="/shipping" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
-            <CardHeader className="pb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Box className="h-5 w-5" />
-              </div>
-              <CardTitle className="font-display text-base">Отгрузка</CardTitle>
-              <CardDescription>Коробы / паллеты на маршрут</CardDescription>
-            </CardHeader>
-            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
-              Открыть
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </CardContent>
-          </Card>
-        </Link>
-        <Link to="/warehouse" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
-            <CardHeader className="pb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
-                <Layers className="h-5 w-5" />
-              </div>
-              <CardTitle className="font-display text-base">Склад</CardTitle>
-              <CardDescription>FIFO и остатки</CardDescription>
-            </CardHeader>
-            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
-              Открыть
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </CardContent>
-          </Card>
-        </Link>
-        <Link to="/finance" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Card className="h-full border-border/80 shadow-elegant transition-colors hover:bg-secondary/50">
-            <CardHeader className="pb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-foreground">
-                <Wallet className="h-5 w-5" />
-              </div>
-              <CardTitle className="font-display text-base">Финансы FF</CardTitle>
-              <CardDescription>Услуги и дебиторка</CardDescription>
-            </CardHeader>
-            <CardContent className="flex items-center gap-1 text-sm font-medium text-accent">
-              Открыть
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </CardContent>
-          </Card>
-        </Link>
-      </div>
+      <GlobalFiltersBar />
 
       {isLoading ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <Skeleton className="h-40 rounded-xl" />
-          <Skeleton className="h-40 rounded-xl" />
-          <Skeleton className="h-40 rounded-xl" />
-          <Skeleton className="h-40 rounded-xl" />
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-28 rounded-xl border border-slate-200" />
+            ))}
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Skeleton className="h-[320px] rounded-xl border border-slate-200" />
+            <Skeleton className="h-[320px] rounded-xl border border-slate-200" />
+          </div>
         </div>
-      ) : error ? (
-        <p className="text-sm text-destructive">Не удалось загрузить сводку.</p>
-      ) : data ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card className="border-border/80 shadow-elegant">
-            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
-                <Truck className="h-5 w-5" />
-              </div>
+      ) : error || !data ? (
+        <p className="text-sm text-destructive">Не удалось загрузить дашборд.</p>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-600">На хранении</CardTitle>
+                <Boxes className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="font-display text-2xl font-semibold tabular-nums text-slate-900">
+                  {data.metrics.inStorageUnits.toLocaleString("ru-RU")}
+                </p>
+                <p className="text-xs text-slate-500">{data.metrics.inStorageSkuCount} SKU</p>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-600">Очередь на сборку</CardTitle>
+                <Package className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="font-display text-2xl font-semibold tabular-nums text-slate-900">
+                  {data.metrics.assemblyQueueShipments}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {data.metrics.assemblyQueueShipments} отгрузок · {data.metrics.assemblyQueueUnits} ед.
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-600">Отгружено всего</CardTitle>
+                <Truck className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="font-display text-2xl font-semibold tabular-nums text-slate-900">
+                  {data.metrics.shippedTotalCount}
+                </p>
+                <p className="text-xs text-slate-500">отгрузок</p>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-600">Выручка: услуги</CardTitle>
+                <Wallet className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="font-display text-2xl font-semibold tabular-nums text-slate-900">
+                  {data.metrics.revenueServicesRub.toLocaleString("ru-RU")} ₽
+                </p>
+                <p className="text-xs text-slate-500">{data.metrics.revenueServicesOps} операций</p>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-600">Выручка: хранение</CardTitle>
+                <TrendingUp className="h-4 w-4 text-slate-400" />
+              </CardHeader>
+              <CardContent>
+                <p className="font-display text-2xl font-semibold tabular-nums text-slate-900">
+                  {data.metrics.revenueStorageRub.toLocaleString("ru-RU")} ₽
+                </p>
+                <p className="text-xs text-slate-500">{data.metrics.revenueStorageClosedDays} закрытых дней</p>
+              </CardContent>
+            </Card>
+            <Card className="border-emerald-200 bg-emerald-100 shadow-sm">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-slate-900">Итого выручка</CardTitle>
+                <TrendingUp className="h-4 w-4 text-emerald-700" />
+              </CardHeader>
+              <CardContent>
+                <p className="font-display text-2xl font-semibold tabular-nums text-slate-900">
+                  {data.metrics.revenueTotalRub.toLocaleString("ru-RU")} ₽
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader>
+                <CardTitle className="font-display text-base text-slate-900">История хранения, ₽/день</CardTitle>
+                <CardDescription className="text-slate-500">По выбранному периоду</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[300px] pt-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={data.storageHistory} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: 8,
+                        border: "1px solid #e2e8f0",
+                        fontSize: 12,
+                      }}
+                    />
+                    <Line type="monotone" dataKey="valueRub" name="₽/день" stroke="#10b981" strokeWidth={2} dot={{ r: 4, fill: "#10b981" }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader>
+                <CardTitle className="font-display text-base text-slate-900">Выручка по клиентам</CardTitle>
+                <CardDescription className="text-slate-500">Услуги и хранение</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[300px] pt-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.revenueByClient} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200" vertical={false} />
+                    <XAxis dataKey="shortName" tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} interval={0} angle={-12} textAnchor="end" height={56} />
+                    <YAxis tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: 8,
+                        border: "1px solid #e2e8f0",
+                        fontSize: 12,
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="servicesRub" name="Услуги" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="storageRub" name="Хранение" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="flex flex-col gap-1 space-y-0 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <CardTitle className="font-display text-lg">Операционная загрузка</CardTitle>
-                <CardDescription>Приёмки и исходящая отгрузка на сегодня</CardDescription>
+                <CardTitle className="font-display text-base text-slate-900">
+                  Текущее хранение по юрлицам · ₽/сутки
+                </CardTitle>
+                <CardDescription className="text-slate-500">Тарификация демо-остатков</CardDescription>
               </div>
+              <p className="text-sm font-medium tabular-nums text-slate-900">
+                Итого: {storageTotal.toLocaleString("ru-RU")} ₽
+              </p>
             </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Приёмки в обработке</p>
-                <p className="mt-1 font-display text-3xl font-semibold tabular-nums">{data.receivingsInProcessing}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Статусы «в обработке» и «частично»</p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">К отгрузке сегодня</p>
-                <p className="mt-1 font-display text-3xl font-semibold tabular-nums">
-                  {data.boxesPendingShipmentToday}
-                  <span className="text-lg font-normal text-muted-foreground"> коробов</span>
-                </p>
-                <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-muted-foreground">
-                  {data.palletsPendingShipmentToday}{" "}
-                  <span className="text-base font-normal">паллет</span>
-                </p>
-              </div>
+            <CardContent className="px-0 pb-4 pt-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 hover:bg-transparent">
+                    <TableHead className="text-slate-600">Юрлицо</TableHead>
+                    <TableHead className="text-right text-slate-600">Кол-во (шт)</TableHead>
+                    <TableHead className="text-right text-slate-600">Тариф (₽/ед)</TableHead>
+                    <TableHead className="text-right text-slate-600">Итого (₽/сутки)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.storageByClient.map((row) => (
+                    <TableRow key={row.legalEntityId} className="border-slate-100">
+                      <TableCell className="font-medium text-slate-900">{row.shortName}</TableCell>
+                      <TableCell className="text-right tabular-nums text-slate-700">{row.quantityUnits.toLocaleString("ru-RU")}</TableCell>
+                      <TableCell className="text-right tabular-nums text-slate-700">
+                        {Number.isInteger(row.tariffPerUnitRub)
+                          ? `${row.tariffPerUnitRub} ₽`
+                          : `${row.tariffPerUnitRub.toLocaleString("ru-RU")} ₽`}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-medium text-slate-900">
+                        {row.totalPerDayRub.toLocaleString("ru-RU")} ₽
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
 
-          <Card className="border-border/80 shadow-elegant">
-            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Gauge className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle className="font-display text-lg">Складская мощность</CardTitle>
-                <CardDescription>Заполненность стеллажей</CardDescription>
-              </div>
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="font-display text-base text-slate-900">Последние операции</CardTitle>
+              <CardDescription className="text-slate-500">Склад и биллинг</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="font-display text-4xl font-semibold tabular-nums">{data.rackOccupancyPercent}%</span>
-                <span className="text-sm text-muted-foreground">занято</span>
-              </div>
-              <Progress value={data.rackOccupancyPercent} className="h-2" />
-              <p className="text-xs text-muted-foreground">Плановая вместимость зоны хранения; не продажи.</p>
+            <CardContent className="px-0 pb-4 pt-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 hover:bg-transparent">
+                    <TableHead className="text-slate-600">Тип</TableHead>
+                    <TableHead className="text-slate-600">Юрлицо</TableHead>
+                    <TableHead className="text-slate-600">Детали</TableHead>
+                    <TableHead className="text-right text-slate-600">Время</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.recentOperations.map((op) => (
+                    <TableRow key={op.id} className="border-slate-100">
+                      <TableCell className="font-medium text-slate-900">{op.kind}</TableCell>
+                      <TableCell className="text-slate-700">
+                        {data.storageByClient.find((r) => r.legalEntityId === op.legalEntityId)?.shortName ??
+                          data.revenueByClient.find((r) => r.legalEntityId === op.legalEntityId)?.shortName ??
+                          op.legalEntityId}
+                      </TableCell>
+                      <TableCell className="max-w-[280px] truncate text-slate-600 text-sm">{op.detail}</TableCell>
+                      <TableCell className="text-right whitespace-nowrap text-slate-500 text-sm">
+                        {format(parseISO(op.date), "d MMM HH:mm", { locale: ru })}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
-
-          <Card className="border-border/80 shadow-elegant">
-            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-                <Coins className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle className="font-display text-lg">Финансы фулфилмента</CardTitle>
-                <CardDescription>Дебиторка и оборот по услугам (не товары)</CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Дебиторская задолженность</p>
-                <p className="mt-1 font-display text-2xl font-semibold tabular-nums">
-                  {data.clientsReceivablesRub.toLocaleString("ru-RU")} ₽
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">Клиенты должны нам</p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Оборот услуг (месяц)</p>
-                <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-accent">
-                  {data.servicesRevenueMonthRub.toLocaleString("ru-RU")} ₽
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">Хранение, упаковка, логистика FF</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/80 shadow-elegant">
-            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
-                <Building2 className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle className="font-display text-lg">Клиентская база</CardTitle>
-                <CardDescription>Юрлица на обслуживании</CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="font-display text-4xl font-semibold tabular-nums">{data.activeLegalEntitiesCount}</p>
-                <p className="text-sm text-muted-foreground">активных организаций</p>
-              </div>
-              <Link
-                to="/legal-entities"
-                className="inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline"
-              >
-                Карточки юрлиц
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
+        </>
+      )}
     </div>
   );
 };
