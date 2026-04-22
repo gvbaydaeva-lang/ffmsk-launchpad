@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -50,13 +51,26 @@ const Navbar = () => {
               </a>
             </li>
           ))}
+          <li>
+            <Link
+              to="/dashboard"
+              className="text-sm font-medium text-accent hover:text-accent/90 transition-colors"
+            >
+              Кабинет
+            </Link>
+          </li>
         </ul>
 
-        <Button variant="hero" size="sm" className="h-10 px-5">
-          <Phone className="h-4 w-4" />
-          <span className="hidden sm:inline">Заказать звонок</span>
-          <span className="sm:hidden">Звонок</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="hidden h-10 px-3 sm:inline-flex md:hidden" asChild>
+            <Link to="/dashboard">Кабинет</Link>
+          </Button>
+          <Button variant="hero" size="sm" className="h-10 px-5">
+            <Phone className="h-4 w-4" />
+            <span className="hidden sm:inline">Заказать звонок</span>
+            <span className="sm:hidden">Звонок</span>
+          </Button>
+        </div>
       </nav>
     </header>
   );
