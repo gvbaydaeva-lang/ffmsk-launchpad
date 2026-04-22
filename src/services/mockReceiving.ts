@@ -1,0 +1,56 @@
+import type { InboundSupply, Marketplace } from "@/types/domain";
+
+function delay(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function fetchMockInboundSupplies(): Promise<InboundSupply[]> {
+  await delay(130);
+  return [
+    {
+      id: "in-1",
+      documentNo: "ПТ-2026-0892",
+      supplier: "ООО «Косметик Плюс»",
+      marketplace: "wb",
+      expectedUnits: 1200,
+      receivedUnits: null,
+      status: "ожидается",
+      eta: "2026-04-24",
+    },
+    {
+      id: "in-2",
+      documentNo: "ПТ-2026-0881",
+      supplier: "ИП Смирнов А.В.",
+      marketplace: "ozon",
+      expectedUnits: 480,
+      receivedUnits: 200,
+      status: "частично",
+      eta: "2026-04-22",
+    },
+    {
+      id: "in-3",
+      documentNo: "ПТ-2026-0855",
+      supplier: "ООО «ГаджетСервис»",
+      marketplace: "yandex",
+      expectedUnits: 640,
+      receivedUnits: 640,
+      status: "принято",
+      eta: "2026-04-18",
+    },
+    {
+      id: "in-4",
+      documentNo: "ПТ-2026-0901",
+      supplier: "ООО «Косметик Плюс»",
+      marketplace: "wb",
+      expectedUnits: 900,
+      receivedUnits: null,
+      status: "ожидается",
+      eta: "2026-04-25",
+    },
+  ];
+}
+
+export function filterInboundByMarketplace(rows: InboundSupply[], mp: Marketplace | "all"): InboundSupply[] {
+  if (mp === "all") return rows;
+  return rows.filter((r) => r.marketplace === mp);
+}

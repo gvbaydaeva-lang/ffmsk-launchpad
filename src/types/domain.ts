@@ -51,3 +51,43 @@ export type ShipmentBox = {
   weightKg: number;
   createdAt: string;
 };
+
+/** Входящая поставка (приёмка) */
+export type InboundSupply = {
+  id: string;
+  documentNo: string;
+  supplier: string;
+  marketplace: Marketplace;
+  expectedUnits: number;
+  receivedUnits: number | null;
+  status: "ожидается" | "частично" | "принято";
+  eta: string;
+};
+
+/** Юридическое лицо */
+export type LegalEntity = {
+  id: string;
+  shortName: string;
+  fullName: string;
+  inn: string;
+  kpp: string;
+  ogrn: string;
+  isActive: boolean;
+};
+
+/** Пользователь организации */
+export type OrgUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  role: "Администратор" | "Склад" | "Финансы" | "Только чтение";
+  legalEntityId: string;
+};
+
+/** Сводка остатков по маркетплейсу (для аналитики склада) */
+export type StockMarketplaceSummary = {
+  marketplace: Marketplace;
+  skuCount: number;
+  batchCount: number;
+  totalUnits: number;
+};

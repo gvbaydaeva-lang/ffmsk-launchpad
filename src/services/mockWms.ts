@@ -1,4 +1,12 @@
-import type { FinanceOperation, Marketplace, ShipmentBox, StockFifoRow } from "@/types/domain";
+import type {
+  FinanceOperation,
+  LegalEntity,
+  Marketplace,
+  OrgUser,
+  ShipmentBox,
+  StockFifoRow,
+  StockMarketplaceSummary,
+} from "@/types/domain";
 
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
