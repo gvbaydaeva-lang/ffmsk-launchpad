@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Package,
   PackageOpen,
+  ScanLine,
   Truck,
   Users,
   Wallet,
@@ -24,7 +25,9 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { useScanner } from "@/contexts/ScannerContext";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -45,6 +48,7 @@ function matchNav(pathname: string, to: string, end?: boolean) {
 const AppShellLayout = () => {
   const { pathname } = useLocation();
   const current = nav.find((item) => matchNav(pathname, item.to, item.end));
+  const { openScanner } = useScanner();
 
   return (
     <SidebarProvider
@@ -104,6 +108,19 @@ const AppShellLayout = () => {
             <h1 className="truncate text-sm font-semibold text-slate-900 md:text-base">{current?.label ?? "Кабинет"}</h1>
             <p className="hidden text-xs text-slate-500 sm:block">Операционный кабинет</p>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="inline-flex shrink-0 gap-2 border-slate-200 bg-white shadow-none"
+            onClick={() => openScanner()}
+          >
+            <ScanLine className="h-4 w-4 text-slate-600" />
+            Сканер
+            <kbd className="pointer-events-none rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-600">
+              /
+            </kbd>
+          </Button>
         </header>
         <div className={cn("flex flex-1 flex-col gap-6 p-4 pb-10 md:p-6")}>
           <Outlet />

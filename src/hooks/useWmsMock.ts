@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { InboundSupply, LegalEntity, Marketplace, OrgUser } from "@/types/domain";
+import type { FulfillmentTariffs, InboundSupply, LegalEntity, Marketplace, OrgUser, WarehouseInventoryRow } from "@/types/domain";
 import { appendMockInbound, fetchMockInboundSupplies } from "@/services/mockReceiving";
 import {
   appendMockLegalEntity,
@@ -11,6 +11,8 @@ import {
   fetchMockStockFifo,
   generateMockShipmentBoxes,
 } from "@/services/mockWms";
+import { fetchMockWarehouseInventory } from "@/services/mockWarehouseInventory";
+import { mergeLegalWarehouseCounts } from "@/services/scanWorkflow";
 
 export function useStockFifo() {
   return useQuery({ queryKey: ["wms", "stock-fifo"], queryFn: fetchMockStockFifo });
@@ -66,6 +68,37 @@ export function useLegalEntities() {
   });
 
   return { ...query, addEntity: add.mutateAsync, isAdding: add.isPending };
+}
+
+export function useWarehouseInventory() {
+  return useQuery({ queryKey: ["wms", "warehouse-inventory"], queryFn: fetchMockWarehouseInventory });
+}
+
+export function useUpdateLegalTariffs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, tariffs }: { id: string; tariffs: FulfillmentTariffs }) => {
+      const cur = qc.getQueryData<LegalEntity[]>(["wms", "legal"]) ?? (await fetchMockLegalEntities());
+      const nextLeg = cur.map((e) => (e.id === id ? { ...e, tariffs } : e));
+      let inv = qc.getQueryData<WarehouseInventoryRow[]>(["wms", "warehouse-inventory"]);
+      if (!inv) inv = await fetchMockWarehouseInventory();
+      const t = tariffs.storagePerUnitDayRub;
+      const nextInv = inv.map((r) =>
+        r.legalEntityId === id
+          ? {
+              ...r,
+              tariffPerUnitDayRub: t,
+              storagePerDayRub: Math.round(r.quantity * t * 100) / 100,
+            }
+          : r,
+      );
+      return { nextLeg, nextInv };
+    },
+    onSuccess: ({ nextLeg, nextInv }) => {
+      qc.setQueryData(["wms", "warehouse-inventory"], nextInv);
+      qc.setQueryData(["wms", "legal"], mergeLegalWarehouseCounts(nextLeg, nextInv));
+    },
+  });
 }
 
 export function useOrgUsers() {

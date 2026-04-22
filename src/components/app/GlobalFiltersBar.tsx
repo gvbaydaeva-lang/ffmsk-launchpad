@@ -1,8 +1,8 @@
 import * as React from "react";
-import { format, subDays } from "date-fns";
+import { format } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import type { DateRange } from "react-day-picker";
-import { CalendarCheck, CalendarDays, Globe, ScanLine } from "lucide-react";
+import { CalendarCheck, CalendarDays, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -25,18 +25,6 @@ const GlobalFiltersBar = ({ className }: { className?: string }) => {
   React.useEffect(() => {
     setRangeDraft({ from: dateFrom, to: dateTo });
   }, [dateFrom, dateTo]);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      e.preventDefault();
-      toast.message("Сканер", { description: "Режим сканирования (демо)." });
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
 
   const d = daysInclusive(dateFrom, dateTo);
   const isLast7 = d === 7 && format(dateTo, "yyyy-MM-dd") === format(new Date(), "yyyy-MM-dd");
@@ -129,18 +117,6 @@ const GlobalFiltersBar = ({ className }: { className?: string }) => {
         >
           <CalendarCheck className="h-4 w-4" />
           Закрыть день
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-10 gap-2 border-slate-200 bg-white shadow-none"
-          onClick={() => toast.message("Сканер", { description: "Горячая клавиша: /" })}
-        >
-          <ScanLine className="h-4 w-4 text-slate-600" />
-          Сканер
-          <kbd className="pointer-events-none hidden rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-600 sm:inline">
-            /
-          </kbd>
         </Button>
       </div>
 

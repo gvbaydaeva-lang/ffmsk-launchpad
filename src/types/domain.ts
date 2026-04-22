@@ -106,6 +106,18 @@ export type InboundSupply = {
   eta: string;
 };
 
+/** Тарифы фулфилмента по клиенту (договорные ставки) */
+export type FulfillmentTariffs = {
+  /** Хранение, ₽ за единицу в сутки */
+  storagePerUnitDayRub: number;
+  /** Приёмка, ₽ за операцию */
+  receivingPerOperationRub: number;
+  /** Маркировка, ₽ за единицу */
+  labelingPerUnitRub: number;
+  /** Упаковка, ₽ за единицу */
+  packagingPerUnitRub: number;
+};
+
 /** Юридическое лицо */
 export type LegalEntity = {
   id: string;
@@ -115,6 +127,34 @@ export type LegalEntity = {
   kpp: string;
   ogrn: string;
   isActive: boolean;
+  tariffs: FulfillmentTariffs;
+  /** Уникальные SKU (группы товаров) на складе — из оперативного инвентаря */
+  warehouseSkuCount: number;
+  /** Суммарные единицы товара на складе */
+  warehouseUnitsTotal: number;
+};
+
+/** Строка детального складского инвентаря (вариант: цвет / размер / баркод) */
+export type WarehouseInventoryRow = {
+  id: string;
+  /** Группировка строк в UI «товар → варианты» */
+  productGroupId: string;
+  legalEntityId: string;
+  brand: string;
+  productName: string;
+  color: string;
+  size: string;
+  /** Подпись размера в UI, напр. «1 разм.» */
+  sizeNote: string;
+  barcode: string;
+  cellCode: string;
+  quantity: number;
+  /** Тариф хранения ₽/ед/сут (по договору клиента) */
+  tariffPerUnitDayRub: number;
+  /** Расчёт: quantity * tariffPerUnitDayRub */
+  storagePerDayRub: number;
+  status: "на складе" | "отобран" | "брак" | "зарезервирован";
+  marketplace: Marketplace;
 };
 
 /** Пользователь организации */

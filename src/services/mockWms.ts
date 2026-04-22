@@ -1,11 +1,13 @@
 import type {
   FinanceOperation,
+  FulfillmentTariffs,
   LegalEntity,
   Marketplace,
   OrgUser,
   ShipmentBox,
   StockFifoRow,
 } from "@/types/domain";
+import { aggregateByLegalEntity, WAREHOUSE_INVENTORY_SEED } from "@/services/mockWarehouseInventory";
 
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -186,9 +188,33 @@ export async function generateMockShipmentBoxes(
   return [newBox, ...current];
 }
 
+const DEFAULT_TARIFFS_NEW: FulfillmentTariffs = {
+  storagePerUnitDayRub: 5,
+  receivingPerOperationRub: 8,
+  labelingPerUnitRub: 12,
+  packagingPerUnitRub: 25,
+};
+
+export function getDefaultNewTariffs(): FulfillmentTariffs {
+  return { ...DEFAULT_TARIFFS_NEW };
+}
+
+const TARIFFS_BY_ID: Record<string, FulfillmentTariffs> = {
+  "le-1": { storagePerUnitDayRub: 5, receivingPerOperationRub: 9, labelingPerUnitRub: 14, packagingPerUnitRub: 28 },
+  "le-2": { storagePerUnitDayRub: 6, receivingPerOperationRub: 10, labelingPerUnitRub: 15, packagingPerUnitRub: 30 },
+  "le-3": { storagePerUnitDayRub: 5, receivingPerOperationRub: 8, labelingPerUnitRub: 12, packagingPerUnitRub: 25 },
+  "le-4": { storagePerUnitDayRub: 5.5, receivingPerOperationRub: 8, labelingPerUnitRub: 12, packagingPerUnitRub: 25 },
+  "le-5": { storagePerUnitDayRub: 4.75, receivingPerOperationRub: 7, labelingPerUnitRub: 11, packagingPerUnitRub: 22 },
+};
+
+function rollupsFromSeed() {
+  return aggregateByLegalEntity(WAREHOUSE_INVENTORY_SEED);
+}
+
 export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
   await delay(110);
-  return [
+  const roll = rollupsFromSeed();
+  const bases: Omit<LegalEntity, "warehouseSkuCount" | "warehouseUnitsTotal">[] = [
     {
       id: "le-1",
       shortName: '[DEMO] ООО «Аврора»',
@@ -197,6 +223,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       kpp: "770101001",
       ogrn: "1027700100111",
       isActive: true,
+      tariffs: TARIFFS_BY_ID["le-1"],
     },
     {
       id: "le-2",
@@ -206,6 +233,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       kpp: "770201001",
       ogrn: "1027700200222",
       isActive: true,
+      tariffs: TARIFFS_BY_ID["le-2"],
     },
     {
       id: "le-3",
@@ -215,6 +243,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       kpp: "770301001",
       ogrn: "1027700300333",
       isActive: true,
+      tariffs: TARIFFS_BY_ID["le-3"],
     },
     {
       id: "le-4",
@@ -224,6 +253,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       kpp: "770401001",
       ogrn: "1027700400444",
       isActive: true,
+      tariffs: TARIFFS_BY_ID["le-4"],
     },
     {
       id: "le-5",
@@ -233,8 +263,14 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       kpp: "",
       ogrn: "320500500055555",
       isActive: true,
+      tariffs: TARIFFS_BY_ID["le-5"],
     },
   ];
+  return bases.map((b) => ({
+    ...b,
+    warehouseSkuCount: roll[b.id]?.warehouseSkuCount ?? 0,
+    warehouseUnitsTotal: roll[b.id]?.warehouseUnitsTotal ?? 0,
+  }));
 }
 
 export async function fetchMockOrgUsers(): Promise<OrgUser[]> {
@@ -266,7 +302,15 @@ export async function fetchMockOrgUsers(): Promise<OrgUser[]> {
 
 export function appendMockLegalEntity(current: LegalEntity[], draft: Omit<LegalEntity, "id">): LegalEntity[] {
   const id = `le-${Date.now()}`;
-  return [...current, { ...draft, id }];
+  const tariffs = draft.tariffs ?? DEFAULT_TARIFFS_NEW;
+  const row: LegalEntity = {
+    ...draft,
+    id,
+    tariffs,
+    warehouseSkuCount: draft.warehouseSkuCount ?? 0,
+    warehouseUnitsTotal: draft.warehouseUnitsTotal ?? 0,
+  };
+  return [...current, row];
 }
 
 export function appendMockOrgUser(current: OrgUser[], draft: Omit<OrgUser, "id">): OrgUser[] {
