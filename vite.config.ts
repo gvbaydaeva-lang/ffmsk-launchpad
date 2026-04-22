@@ -3,8 +3,12 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
+// GitHub Pages: репозиторий project site → base должен совпадать с именем репо
+const BASE = "/ffmsk-launchpad/";
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  base: BASE,
   server: {
     host: "::",
     port: 8080,
