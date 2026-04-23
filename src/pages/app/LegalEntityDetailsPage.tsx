@@ -14,6 +14,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
+  canChangeInboundStatus,
+  canChangeOutboundStatus,
+  canCreateInbound,
+  canCreateOutbound,
+  canEditCatalog,
+  canEditTariffs,
+  useUserRole,
+} from "@/contexts/UserRoleContext";
+import {
   useInboundSupplies,
   useLegalEntities,
   useOperationHistory,
@@ -105,17 +114,37 @@ function paramsLabel(item: ProductCatalogItem) {
 const LegalEntityDetailsPage = () => {
   const { id = "" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { role } = useUserRole();
   const { data: legal } = useLegalEntities();
   const { data: history } = useOperationHistory();
-  const { data: inbound } = useInboundSupplies();
-  const { data: outbound } = useOutboundShipments();
+  const { data: inbound, createInbound, setInboundStatus, isCreating, isUpdatingInbound } = useInboundSupplies();
+  const { data: outbound, createOutbound, setOutboundStatus, isCreatingOutbound, isUpdatingOutbound } = useOutboundShipments();
   const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
 
   const [open, setOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
+  const [createInboundOpen, setCreateInboundOpen] = React.useState(false);
+  const [createOutboundOpen, setCreateOutboundOpen] = React.useState(false);
   const [excelRows, setExcelRows] = React.useState<Record<string, unknown>[]>([]);
+  const [productSearch, setProductSearch] = React.useState("");
+  const [selectedInboundProductId, setSelectedInboundProductId] = React.useState("");
+  const [selectedOutboundProductId, setSelectedOutboundProductId] = React.useState("");
+  const [inboundDraft, setInboundDraft] = React.useState({
+    documentNo: "",
+    supplier: "",
+    quantity: "",
+    marketplace: "wb" as "wb" | "ozon" | "yandex",
+    warehouse: "Склад Коледино",
+    eta: "",
+  });
+  const [outboundDraft, setOutboundDraft] = React.useState({
+    quantity: "",
+    marketplace: "wb" as "wb" | "ozon" | "yandex",
+    warehouse: "Склад Коледино",
+    shippingMethod: "fbo" as "fbo" | "fbs" | "self",
+  });
   const [quickBarcode, setQuickBarcode] = React.useState("");
   const [printCopies, setPrintCopies] = React.useState("1");
   const [rowDrafts, setRowDrafts] = React.useState<Record<string, RowDraft>>({});
@@ -165,6 +194,11 @@ const LegalEntityDetailsPage = () => {
   const ops = React.useMemo(() => (history ?? []).filter((x) => x.legalEntityId === id), [history, id]);
   const inboundRows = React.useMemo(() => (inbound ?? []).filter((x) => x.legalEntityId === id), [inbound, id]);
   const outboundRows = React.useMemo(() => (outbound ?? []).filter((x) => x.legalEntityId === id), [outbound, id]);
+  const filteredProducts = React.useMemo(() => {
+    const s = productSearch.trim().toLowerCase();
+    if (!s) return rows;
+    return rows.filter((p) => p.name.toLowerCase().includes(s) || p.barcode.toLowerCase().includes(s));
+  }, [rows, productSearch]);
   const copies = Math.max(1, Number(printCopies) || 1);
   const currentTab = searchParams.get("tab") ?? "catalog";
   const kpi = React.useMemo(
@@ -385,6 +419,50 @@ const LegalEntityDetailsPage = () => {
     toast.success("Фото загружено");
   };
 
+  const onCreateInbound = async () => {
+    if (!entity || !selectedInboundProductId) return toast.error("Выберите товар");
+    const qty = Number(inboundDraft.quantity);
+    if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
+    await createInbound({
+      legalEntityId: entity.id,
+      documentNo: inboundDraft.documentNo.trim() || `ПТ-${Date.now().toString().slice(-6)}`,
+      supplier: inboundDraft.supplier.trim() || "Клиент",
+      items: [{ productId: selectedInboundProductId, quantity: qty }],
+      destinationWarehouse: inboundDraft.warehouse.trim() || "Склад Коледино",
+      marketplace: inboundDraft.marketplace,
+      expectedUnits: qty,
+      receivedUnits: null,
+      status: "ожидается",
+      eta: inboundDraft.eta || new Date().toISOString().slice(0, 10),
+    });
+    toast.success("Задание на приёмку создано");
+    setCreateInboundOpen(false);
+    setInboundDraft({ documentNo: "", supplier: "", quantity: "", marketplace: "wb", warehouse: "Склад Коледино", eta: "" });
+    setSelectedInboundProductId("");
+  };
+
+  const onCreateOutbound = async () => {
+    if (!entity || !selectedOutboundProductId) return toast.error("Выберите товар");
+    const qty = Number(outboundDraft.quantity);
+    const product = rows.find((p) => p.id === selectedOutboundProductId);
+    if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
+    if (!product || qty > product.stockOnHand) return toast.error("Количество превышает остаток");
+    await createOutbound({
+      legalEntityId: entity.id,
+      productId: selectedOutboundProductId,
+      marketplace: outboundDraft.marketplace,
+      sourceWarehouse: outboundDraft.warehouse.trim() || "Склад Коледино",
+      shippingMethod: outboundDraft.shippingMethod,
+      plannedUnits: qty,
+      shippedUnits: null,
+      status: "создано",
+    });
+    toast.success("Задание на отгрузку создано");
+    setCreateOutboundOpen(false);
+    setOutboundDraft({ quantity: "", marketplace: "wb", warehouse: "Склад Коледино", shippingMethod: "fbo" });
+    setSelectedOutboundProductId("");
+  };
+
   if (!entity) return <p className="text-sm text-slate-600">Юрлицо не найдено.</p>;
 
   return (
@@ -426,18 +504,20 @@ const LegalEntityDetailsPage = () => {
           <TabsTrigger value="receiving">Приёмки</TabsTrigger>
           <TabsTrigger value="shipping">Отгрузки</TabsTrigger>
           <TabsTrigger value="history">История операций</TabsTrigger>
-          <TabsTrigger value="tariffs">Тарифы</TabsTrigger>
+          {canEditTariffs(role) && <TabsTrigger value="tariffs">Тарифы</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="catalog" className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <Dialog open={open} onOpenChange={setOpen}>
-              <DialogTrigger asChild>
-                <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
-                  <Plus className="h-4 w-4" />
-                  Добавить товар
-                </Button>
-              </DialogTrigger>
+              {canEditCatalog(role) && (
+                <DialogTrigger asChild>
+                  <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                    <Plus className="h-4 w-4" />
+                    Добавить товар
+                  </Button>
+                </DialogTrigger>
+              )}
               <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>Новый товар</DialogTitle>
@@ -468,7 +548,9 @@ const LegalEntityDetailsPage = () => {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-            <Button variant="outline" className="gap-2" onClick={() => setImportOpen(true)}><FileSpreadsheet className="h-4 w-4" />Импорт Excel</Button>
+            {canEditCatalog(role) && (
+              <Button variant="outline" className="gap-2" onClick={() => setImportOpen(true)}><FileSpreadsheet className="h-4 w-4" />Импорт Excel</Button>
+            )}
             <Button variant="outline" className="gap-2" onClick={downloadTemplate}><Download className="h-4 w-4" />Скачать шаблон</Button>
           </div>
 
@@ -527,20 +609,20 @@ const LegalEntityDetailsPage = () => {
                         <TableCell>{item.photoUrl ? <img src={item.photoUrl} alt={item.name} className="h-10 w-10 rounded-md border object-cover" /> : <div className="h-10 w-10 rounded-md border border-dashed bg-slate-50" />}</TableCell>
                         <TableCell className="max-w-[220px] space-y-1">
                           <button type="button" className="block truncate text-left font-medium hover:underline" onClick={() => openPrintDialog(item)}>{item.name}</button>
-                          <Input className="h-7 text-xs" value={draft?.name ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), name: e.target.value } }))} />
+                          <Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.name ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), name: e.target.value } }))} />
                         </TableCell>
                         <TableCell className="font-mono text-xs"><button type="button" className="hover:underline" onClick={() => openPrintDialog(item)}>{item.barcode}</button></TableCell>
-                        <TableCell><Input className="h-7 text-xs" value={draft?.color ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), color: e.target.value } }))} /></TableCell>
-                        <TableCell><Input className="h-7 text-xs" value={draft?.size ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value } }))} /></TableCell>
-                        <TableCell><Input className="h-7 text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} /></TableCell>
-                        <TableCell><Input className="h-7 text-xs" value={draft?.composition ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value } }))} /></TableCell>
+                        <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.color ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), color: e.target.value } }))} /></TableCell>
+                        <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.size ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value } }))} /></TableCell>
+                        <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} /></TableCell>
+                        <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.composition ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value } }))} /></TableCell>
                         <TableCell className="min-w-[240px] space-y-1 text-xs">
                           <p className="text-slate-600">{paramsLabel(item)}</p>
                           <div className="grid grid-cols-4 gap-1">
-                            <Input className="h-7 px-2 text-xs" placeholder="L" value={draft?.lengthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), lengthCm: e.target.value } }))} />
-                            <Input className="h-7 px-2 text-xs" placeholder="W" value={draft?.widthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), widthCm: e.target.value } }))} />
-                            <Input className="h-7 px-2 text-xs" placeholder="H" value={draft?.heightCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), heightCm: e.target.value } }))} />
-                            <Input className="h-7 px-2 text-xs" placeholder="кг (0.35)" type="number" step="0.01" value={draft?.weightKg ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), weightKg: e.target.value } }))} />
+                            <Input disabled={!canEditCatalog(role)} className="h-7 px-2 text-xs" placeholder="L" value={draft?.lengthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), lengthCm: e.target.value } }))} />
+                            <Input disabled={!canEditCatalog(role)} className="h-7 px-2 text-xs" placeholder="W" value={draft?.widthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), widthCm: e.target.value } }))} />
+                            <Input disabled={!canEditCatalog(role)} className="h-7 px-2 text-xs" placeholder="H" value={draft?.heightCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), heightCm: e.target.value } }))} />
+                            <Input disabled={!canEditCatalog(role)} className="h-7 px-2 text-xs" placeholder="кг (0.35)" type="number" step="0.01" value={draft?.weightKg ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), weightKg: e.target.value } }))} />
                           </div>
                           <p className="text-[11px] text-slate-500">Вес в кг (напр. 0.35)</p>
                         </TableCell>
@@ -548,14 +630,14 @@ const LegalEntityDetailsPage = () => {
                           <Label className="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-xs">
                             <Upload className="h-3.5 w-3.5" />
                             Загрузить
-                            <Input className="hidden" type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && void onUploadPhoto(item.id, e.target.files[0])} />
+                            <Input disabled={!canEditCatalog(role)} className="hidden" type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && void onUploadPhoto(item.id, e.target.files[0])} />
                           </Label>
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
                             size="sm"
                             className={dirty ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-200 text-slate-700 hover:bg-slate-300"}
-                            disabled={!dirty || isUpdatingProduct}
+                            disabled={!canEditCatalog(role) || !dirty || isUpdatingProduct}
                             onClick={() => void onRowAction(item)}
                           >
                             {dirty ? "Сохранить" : "Редактировать"}
@@ -634,6 +716,46 @@ const LegalEntityDetailsPage = () => {
         </TabsContent>
 
         <TabsContent value="receiving">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm text-slate-600">Задания на приёмку по клиенту</p>
+            {canCreateInbound(role) && (
+              <Dialog open={createInboundOpen} onOpenChange={setCreateInboundOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                    <Plus className="h-4 w-4" />
+                    Создать задание на приход
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Новое задание на приёмку</DialogTitle></DialogHeader>
+                  <div className="grid gap-3 py-2">
+                    <div className="grid gap-1.5">
+                      <Label>Поиск товара (название/баркод)</Label>
+                      <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label>Товар</Label>
+                      <Select value={selectedInboundProductId} onValueChange={setSelectedInboundProductId}>
+                        <SelectTrigger><SelectValue placeholder="Выберите товар" /></SelectTrigger>
+                        <SelectContent>
+                          {filteredProducts.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>{p.name} · {p.barcode}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={inboundDraft.quantity} onChange={(e) => setInboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
+                    <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={inboundDraft.marketplace} onValueChange={(v) => setInboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
+                    <div className="grid gap-1.5"><Label>Склад</Label><Input value={inboundDraft.warehouse} onChange={(e) => setInboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setCreateInboundOpen(false)}>Отмена</Button>
+                    <Button onClick={() => void onCreateInbound()} disabled={isCreating}>{isCreating ? "Сохранение..." : "Сохранить"}</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
           <Card className="border-slate-200">
             <CardContent className="p-0 sm:p-4">
               <Table>
@@ -645,6 +767,7 @@ const LegalEntityDetailsPage = () => {
                     <TableHead className="text-right">План</TableHead>
                     <TableHead className="text-right">Факт</TableHead>
                     <TableHead>Статус</TableHead>
+                    <TableHead className="text-right">Действие</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -656,6 +779,26 @@ const LegalEntityDetailsPage = () => {
                       <TableCell className="text-right tabular-nums">{x.expectedUnits}</TableCell>
                       <TableCell className="text-right tabular-nums">{x.receivedUnits ?? "—"}</TableCell>
                       <TableCell>{x.status}</TableCell>
+                      <TableCell className="text-right">
+                        {canChangeInboundStatus(role) && x.status !== "принято" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              void setInboundStatus({
+                                id: x.id,
+                                status: x.status === "ожидается" ? "на приёмке" : "принято",
+                                receivedUnits: x.expectedUnits,
+                              })
+                            }
+                            disabled={isUpdatingInbound}
+                          >
+                            {x.status === "ожидается" ? "На приёмке" : "Принять"}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-slate-500">{x.status === "принято" ? "Завершено" : "Без доступа"}</span>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -665,6 +808,47 @@ const LegalEntityDetailsPage = () => {
         </TabsContent>
 
         <TabsContent value="shipping">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm text-slate-600">Задания на отгрузку по клиенту</p>
+            {canCreateOutbound(role) && (
+              <Dialog open={createOutboundOpen} onOpenChange={setCreateOutboundOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                    <Plus className="h-4 w-4" />
+                    Создать задание на отгрузку
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
+                  <div className="grid gap-3 py-2">
+                    <div className="grid gap-1.5">
+                      <Label>Поиск товара (название/баркод)</Label>
+                      <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label>Товар</Label>
+                      <Select value={selectedOutboundProductId} onValueChange={setSelectedOutboundProductId}>
+                        <SelectTrigger><SelectValue placeholder="Выберите товар из остатков" /></SelectTrigger>
+                        <SelectContent>
+                          {filteredProducts.filter((p) => p.stockOnHand > 0).map((p) => (
+                            <SelectItem key={p.id} value={p.id}>{p.name} · {p.barcode} · остаток {p.stockOnHand}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={outboundDraft.quantity} onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
+                    <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
+                    <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
+                    <div className="grid gap-1.5"><Label>Способ отгрузки</Label><Select value={outboundDraft.shippingMethod} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, shippingMethod: v as "fbo" | "fbs" | "self" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fbo">FBO</SelectItem><SelectItem value="fbs">FBS</SelectItem><SelectItem value="self">Самовывоз</SelectItem></SelectContent></Select></div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setCreateOutboundOpen(false)}>Отмена</Button>
+                    <Button onClick={() => void onCreateOutbound()} disabled={isCreatingOutbound}>{isCreatingOutbound ? "Сохранение..." : "Сохранить"}</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
           <Card className="border-slate-200">
             <CardContent className="p-0 sm:p-4">
               <Table>
@@ -676,6 +860,7 @@ const LegalEntityDetailsPage = () => {
                     <TableHead>Метод</TableHead>
                     <TableHead className="text-right">Кол-во</TableHead>
                     <TableHead>Статус</TableHead>
+                    <TableHead className="text-right">Действие</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -687,6 +872,26 @@ const LegalEntityDetailsPage = () => {
                       <TableCell className="uppercase text-xs">{x.shippingMethod}</TableCell>
                       <TableCell className="text-right tabular-nums">{x.plannedUnits}</TableCell>
                       <TableCell>{x.status}</TableCell>
+                      <TableCell className="text-right">
+                        {canChangeOutboundStatus(role) && x.status !== "отгружено" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              void setOutboundStatus({
+                                id: x.id,
+                                status: x.status === "создано" ? "к отгрузке" : "отгружено",
+                                shippedUnits: x.plannedUnits,
+                              })
+                            }
+                            disabled={isUpdatingOutbound}
+                          >
+                            {x.status === "создано" ? "К отгрузке" : "Отгружено"}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-slate-500">{x.status === "отгружено" ? "Завершено" : "Без доступа"}</span>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppFiltersProvider } from "./contexts/AppFiltersContext.tsx";
 import { ScannerProvider } from "./contexts/ScannerContext.tsx";
+import { UserRoleProvider } from "./contexts/UserRoleContext.tsx";
 import AppShellLayout from "./layouts/AppShellLayout.tsx";
 import DashboardPage from "./pages/app/DashboardPage.tsx";
 import ReceivingPage from "./pages/app/ReceivingPage.tsx";
@@ -26,26 +27,28 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <AppFiltersProvider>
-        <BrowserRouter basename={routerBasename}>
-          <ScannerProvider>
-            <Routes>
-              <Route path="/" element={<AppShellLayout />}>
-                <Route index element={<Navigate to="/dashboard" replace />} />
-                <Route path="dashboard" element={<DashboardPage />} />
-                <Route path="receiving" element={<ReceivingPage />} />
-                <Route path="shipping" element={<ShippingPage />} />
-                <Route path="warehouse" element={<WarehousePage />} />
-                <Route path="finance" element={<FinancePage />} />
-                <Route path="legal-entities" element={<LegalEntitiesPage />} />
-                <Route path="legal-entities/:id" element={<LegalEntityDetailsPage />} />
-                <Route path="users" element={<UsersPage />} />
-              </Route>
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </ScannerProvider>
-        </BrowserRouter>
-      </AppFiltersProvider>
+      <UserRoleProvider>
+        <AppFiltersProvider>
+          <BrowserRouter basename={routerBasename}>
+            <ScannerProvider>
+              <Routes>
+                <Route path="/" element={<AppShellLayout />}>
+                  <Route index element={<Navigate to="/dashboard" replace />} />
+                  <Route path="dashboard" element={<DashboardPage />} />
+                  <Route path="receiving" element={<ReceivingPage />} />
+                  <Route path="shipping" element={<ShippingPage />} />
+                  <Route path="warehouse" element={<WarehousePage />} />
+                  <Route path="finance" element={<FinancePage />} />
+                  <Route path="legal-entities" element={<LegalEntitiesPage />} />
+                  <Route path="legal-entities/:id" element={<LegalEntityDetailsPage />} />
+                  <Route path="users" element={<UsersPage />} />
+                </Route>
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </ScannerProvider>
+          </BrowserRouter>
+        </AppFiltersProvider>
+      </UserRoleProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
+import { canChangeInboundStatus, canCreateInbound, useUserRole } from "@/contexts/UserRoleContext";
 import { useInboundSupplies, useLegalEntities, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace } from "@/types/domain";
@@ -32,6 +33,7 @@ const ReceivingPage = () => {
   const { data: entities } = useLegalEntities();
   const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
+  const { role } = useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState({
@@ -140,12 +142,14 @@ const ReceivingPage = () => {
             </SelectContent>
           </Select>
           <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
-                <Plus className="h-4 w-4" />
-                Создать приёмку
-              </Button>
-            </DialogTrigger>
+            {canCreateInbound(role) && (
+              <DialogTrigger asChild>
+                <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                  <Plus className="h-4 w-4" />
+                  Создать приёмку
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>Новая приёмка</DialogTitle>
@@ -321,12 +325,12 @@ const ReceivingPage = () => {
                       {format(parseISO(row.eta), "d MMM yyyy", { locale: ru })}
                     </TableCell>
                     <TableCell className="text-right">
-                      {row.status !== "принято" ? (
+                      {row.status !== "принято" && canChangeInboundStatus(role) ? (
                         <Button size="sm" variant="outline" onClick={() => void advanceStatus(row)} disabled={isUpdatingInbound}>
                           {row.status === "ожидается" ? "На приёмке" : "Принять"}
                         </Button>
                       ) : (
-                        <span className="text-xs text-emerald-700">Завершено</span>
+                        <span className="text-xs text-slate-500">{row.status === "принято" ? "Завершено" : "Без доступа"}</span>
                       )}
                     </TableCell>
                   </TableRow>

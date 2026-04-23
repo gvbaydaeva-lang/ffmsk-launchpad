@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
+import { canChangeOutboundStatus, canCreateOutbound, useUserRole } from "@/contexts/UserRoleContext";
 import { useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace } from "@/types/domain";
@@ -25,6 +26,7 @@ const ShippingPage = () => {
   const { data: entities } = useLegalEntities();
   const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
+  const { role } = useUserRole();
   const [open, setOpen] = React.useState(false);
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [form, setForm] = React.useState({
@@ -99,12 +101,14 @@ const ShippingPage = () => {
             </SelectContent>
           </Select>
           <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
-                <PackagePlus className="h-4 w-4" />
-                Новая отгрузка
-              </Button>
-            </DialogTrigger>
+            {canCreateOutbound(role) && (
+              <DialogTrigger asChild>
+                <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                  <PackagePlus className="h-4 w-4" />
+                  Новая отгрузка
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent>
               <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
               <div className="grid gap-3 py-2">
@@ -211,12 +215,12 @@ const ShippingPage = () => {
                     <TableCell><Badge variant={row.status === "отгружено" ? "default" : "secondary"}>{row.status}</Badge></TableCell>
                     <TableCell>{format(parseISO(row.createdAt), "d MMM yyyy HH:mm", { locale: ru })}</TableCell>
                     <TableCell className="text-right">
-                      {row.status !== "отгружено" ? (
+                      {row.status !== "отгружено" && canChangeOutboundStatus(role) ? (
                         <Button size="sm" variant="outline" onClick={() => void advanceStatus(row.id, row.status, row.plannedUnits)} disabled={isUpdatingOutbound}>
                           {row.status === "создано" ? "К отгрузке" : "Отгружено"}
                         </Button>
                       ) : (
-                        <span className="text-xs text-emerald-700">Завершено</span>
+                        <span className="text-xs text-slate-500">{row.status === "отгружено" ? "Завершено" : "Без доступа"}</span>
                       )}
                     </TableCell>
                   </TableRow>

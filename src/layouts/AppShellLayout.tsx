@@ -26,8 +26,10 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useScanner } from "@/contexts/ScannerContext";
+import { useUserRole } from "@/contexts/UserRoleContext";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -49,6 +51,7 @@ const AppShellLayout = () => {
   const { pathname } = useLocation();
   const current = nav.find((item) => matchNav(pathname, item.to, item.end));
   const { openScanner } = useScanner();
+  const { role, setRole } = useUserRole();
 
   return (
     <SidebarProvider
@@ -108,6 +111,16 @@ const AppShellLayout = () => {
             <h1 className="truncate text-sm font-semibold text-slate-900 md:text-base">{current?.label ?? "Кабинет"}</h1>
             <p className="hidden text-xs text-slate-500 sm:block">Операционный кабинет</p>
           </div>
+          <Select value={role} onValueChange={(v) => setRole(v as typeof role)}>
+            <SelectTrigger className="h-9 w-[160px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ADMIN">ADMIN</SelectItem>
+              <SelectItem value="WAREHOUSE">WAREHOUSE</SelectItem>
+              <SelectItem value="CLIENT">CLIENT</SelectItem>
+            </SelectContent>
+          </Select>
           <Button
             type="button"
             variant="outline"
