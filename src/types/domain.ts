@@ -99,6 +99,7 @@ export type InboundSupply = {
   legalEntityId: string;
   documentNo: string;
   supplier: string;
+  items: InboundLineItem[];
   marketplace: Marketplace;
   expectedUnits: number;
   receivedUnits: number | null;
@@ -106,10 +107,19 @@ export type InboundSupply = {
   eta: string;
 };
 
+export type InboundLineItem = {
+  productId: string;
+  quantity: number;
+};
+
 /** Тарифы фулфилмента по клиенту (договорные ставки) */
 export type FulfillmentTariffs = {
   /** Хранение, ₽ за единицу в сутки */
   storagePerUnitDayRub: number;
+  /** Хранение, ₽ за м3 в сутки (модель by_volume) */
+  storagePerM3DayRub: number;
+  /** Хранение, ₽ за паллету в сутки (модель by_pallets) */
+  storagePerPalletDayRub: number;
   /** Приёмка, ₽ за операцию */
   receivingPerOperationRub: number;
   /** Маркировка, ₽ за единицу */
@@ -128,6 +138,7 @@ export type LegalEntity = {
   ogrn: string;
   isActive: boolean;
   tariffs: FulfillmentTariffs;
+  storageModel: "by_volume" | "by_pallets";
   /** Уникальные SKU (группы товаров) на складе — из оперативного инвентаря */
   warehouseSkuCount: number;
   /** Суммарные единицы товара на складе */
@@ -139,6 +150,7 @@ export type WarehouseInventoryRow = {
   id: string;
   /** Группировка строк в UI «товар → варианты» */
   productGroupId: string;
+  productId: string;
   legalEntityId: string;
   brand: string;
   productName: string;
@@ -149,12 +161,31 @@ export type WarehouseInventoryRow = {
   barcode: string;
   cellCode: string;
   quantity: number;
+  occupiedVolumeM3: number;
+  occupiedPallets: number;
   /** Тариф хранения ₽/ед/сут (по договору клиента) */
   tariffPerUnitDayRub: number;
   /** Расчёт: quantity * tariffPerUnitDayRub */
   storagePerDayRub: number;
   status: "на складе" | "отобран" | "брак" | "зарезервирован";
   marketplace: Marketplace;
+};
+
+export type ProductCatalogItem = {
+  id: string;
+  legalEntityId: string;
+  photoUrl: string | null;
+  name: string;
+  brand: string;
+  supplierArticle: string;
+  manufacturer: string;
+  country: string;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+  weightKg: number;
+  barcode: string;
+  unitsPerPallet: number;
 };
 
 /** История операций склада и финансовых событий */

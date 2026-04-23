@@ -5,12 +5,14 @@ import type {
   LegalEntity,
   Marketplace,
   OperationHistoryEvent,
+  ProductCatalogItem,
   OrgUser,
   WarehouseInventoryRow,
 } from "@/types/domain";
 import { appendMockInbound, fetchMockInboundSupplies } from "@/services/mockReceiving";
 import { closeOperationalDay } from "@/services/financeCloseDay";
 import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
+import { appendMockProductCatalogItem, fetchMockProductCatalog } from "@/services/mockProductCatalog";
 import {
   appendMockLegalEntity,
   appendMockOrgUser,
@@ -112,6 +114,19 @@ export function useWarehouseInventory() {
   return useQuery({ queryKey: ["wms", "warehouse-inventory"], queryFn: fetchMockWarehouseInventory });
 }
 
+export function useProductCatalog() {
+  const qc = useQueryClient();
+  const query = useQuery({ queryKey: ["wms", "product-catalog"], queryFn: fetchMockProductCatalog });
+  const add = useMutation({
+    mutationFn: async (draft: Omit<ProductCatalogItem, "id" | "barcode"> & { barcode?: string }) => {
+      const cur = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
+      return appendMockProductCatalogItem(cur, draft);
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "product-catalog"], data),
+  });
+  return { ...query, addProduct: add.mutateAsync, isAddingProduct: add.isPending };
+}
+
 export function useOperationHistory() {
   return useQuery({ queryKey: ["wms", "operation-history"], queryFn: fetchMockOperationHistory });
 }
@@ -140,6 +155,17 @@ export function useUpdateLegalTariffs() {
       qc.setQueryData(["wms", "warehouse-inventory"], nextInv);
       qc.setQueryData(["wms", "legal"], mergeLegalWarehouseCounts(nextLeg, nextInv));
     },
+  });
+}
+
+export function useUpdateLegalEntitySettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { id: string; patch: Partial<Pick<LegalEntity, "storageModel" | "tariffs">> }) => {
+      const cur = qc.getQueryData<LegalEntity[]>(["wms", "legal"]) ?? (await fetchMockLegalEntities());
+      return cur.map((e) => (e.id === args.id ? { ...e, ...args.patch } : e));
+    },
+    onSuccess: (next) => qc.setQueryData(["wms", "legal"], next),
   });
 }
 

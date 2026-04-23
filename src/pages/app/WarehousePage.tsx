@@ -59,6 +59,21 @@ const WarehousePage = () => {
     [data, search, mp, legalEntityId],
   );
   const groups = React.useMemo(() => groupInventoryRows(filtered), [filtered]);
+  const occupancySummary = React.useMemo(() => {
+    const map = new Map<string, { volume: number; pallets: number }>();
+    for (const row of filtered) {
+      const cur = map.get(row.legalEntityId) ?? { volume: 0, pallets: 0 };
+      cur.volume += row.occupiedVolumeM3;
+      cur.pallets += row.occupiedPallets;
+      map.set(row.legalEntityId, cur);
+    }
+    return [...map.entries()].map(([id, v]) => ({
+      legalEntityId: id,
+      legalEntityName: entities?.find((e) => e.id === id)?.shortName ?? id,
+      volume: v.volume,
+      pallets: v.pallets,
+    }));
+  }, [filtered, entities]);
 
   React.useEffect(() => {
     setExpanded(new Set());
@@ -119,6 +134,16 @@ const WarehousePage = () => {
               />
             </div>
           </div>
+
+          {occupancySummary.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {occupancySummary.map((x) => (
+                <Badge key={x.legalEntityId} variant="secondary" className="border-slate-200 bg-slate-50 text-slate-700">
+                  {x.legalEntityName}: {x.volume.toFixed(2)} м3 · {x.pallets.toFixed(2)} паллет
+                </Badge>
+              ))}
+            </div>
+          )}
 
           {isLoading ? (
             <div className="space-y-2 py-4">

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 import { Building2, Pencil, Plus } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,7 @@ const LegalEntitiesPage = () => {
         ogrn: form.ogrn.trim(),
         isActive: form.isActive,
         tariffs: def,
+        storageModel: "by_volume",
         warehouseSkuCount: 0,
         warehouseUnitsTotal: 0,
       });
@@ -262,10 +264,15 @@ const LegalEntitiesPage = () => {
                       {e.warehouseUnitsTotal.toLocaleString("ru-RU")}
                     </TableCell>
                     <TableCell>
-                      <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-slate-700" onClick={() => openTariffs(e)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                        Тарифы
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button asChild type="button" variant="ghost" size="sm" className="h-8 gap-1 text-slate-700">
+                          <Link to={`/legal-entities/${e.id}`}>Открыть</Link>
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-slate-700" onClick={() => openTariffs(e)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                          Тарифы
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -46,6 +46,7 @@ const FinancePage = () => {
   const [accrualFilter, setAccrualFilter] = React.useState<"all" | "storage" | "services">("all");
 
   const periodLabel = `${format(dateFrom, "d MMM yyyy", { locale: ru })} — ${format(dateTo, "d MMM yyyy", { locale: ru })}`;
+  const periodDays = Math.max(1, Math.floor((dateTo.getTime() - dateFrom.getTime()) / 86_400_000) + 1);
 
   const filteredOps = React.useMemo(() => {
     if (!data) return [];
@@ -73,14 +74,23 @@ const FinancePage = () => {
         paymentStatus: "Нет начислений",
       };
     }
+    const inv = inventory ?? [];
+    for (const row of inv) {
+      const legal = entities.find((e) => e.id === row.legalEntityId);
+      const target = map[row.legalEntityId];
+      if (!legal || !target) continue;
+      const perDay =
+        legal.storageModel === "by_volume"
+          ? row.occupiedVolumeM3 * legal.tariffs.storagePerM3DayRub
+          : row.occupiedPallets * legal.tariffs.storagePerPalletDayRub;
+      target.storageAccruedRub += Math.round(perDay * periodDays);
+    }
     for (const op of filteredOps) {
       const row = map[op.legalEntityId];
       if (!row) continue;
       if (op.kind === "оплата от клиента") {
         row.paidRub += op.amountRub;
-      } else if (op.kind === "хранение") {
-        row.storageAccruedRub += op.amountRub;
-      } else {
+      } else if (op.kind !== "хранение") {
         row.serviceAccruedRub += op.amountRub;
       }
     }
@@ -93,7 +103,7 @@ const FinancePage = () => {
       else if (row.paidRub > 0) status = "Частично оплачено";
       return { ...row, chargesTotalRub: charges, totalDueRub: due, paymentStatus: status };
     });
-  }, [entities, filteredOps, legalEntityId]);
+  }, [entities, filteredOps, legalEntityId, inventory, periodDays]);
 
   const debtRows = React.useMemo(
     () => summaryRows.filter((r) => r.totalDueRub > 0).sort((a, b) => b.totalDueRub - a.totalDueRub),

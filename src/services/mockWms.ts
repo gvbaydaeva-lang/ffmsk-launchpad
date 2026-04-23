@@ -190,6 +190,8 @@ export async function generateMockShipmentBoxes(
 
 const DEFAULT_TARIFFS_NEW: FulfillmentTariffs = {
   storagePerUnitDayRub: 5,
+  storagePerM3DayRub: 180,
+  storagePerPalletDayRub: 420,
   receivingPerOperationRub: 8,
   labelingPerUnitRub: 12,
   packagingPerUnitRub: 25,
@@ -200,11 +202,46 @@ export function getDefaultNewTariffs(): FulfillmentTariffs {
 }
 
 const TARIFFS_BY_ID: Record<string, FulfillmentTariffs> = {
-  "le-1": { storagePerUnitDayRub: 5, receivingPerOperationRub: 9, labelingPerUnitRub: 14, packagingPerUnitRub: 28 },
-  "le-2": { storagePerUnitDayRub: 6, receivingPerOperationRub: 10, labelingPerUnitRub: 15, packagingPerUnitRub: 30 },
-  "le-3": { storagePerUnitDayRub: 5, receivingPerOperationRub: 8, labelingPerUnitRub: 12, packagingPerUnitRub: 25 },
-  "le-4": { storagePerUnitDayRub: 5.5, receivingPerOperationRub: 8, labelingPerUnitRub: 12, packagingPerUnitRub: 25 },
-  "le-5": { storagePerUnitDayRub: 4.75, receivingPerOperationRub: 7, labelingPerUnitRub: 11, packagingPerUnitRub: 22 },
+  "le-1": {
+    storagePerUnitDayRub: 5,
+    storagePerM3DayRub: 170,
+    storagePerPalletDayRub: 390,
+    receivingPerOperationRub: 9,
+    labelingPerUnitRub: 14,
+    packagingPerUnitRub: 28,
+  },
+  "le-2": {
+    storagePerUnitDayRub: 6,
+    storagePerM3DayRub: 220,
+    storagePerPalletDayRub: 470,
+    receivingPerOperationRub: 10,
+    labelingPerUnitRub: 15,
+    packagingPerUnitRub: 30,
+  },
+  "le-3": {
+    storagePerUnitDayRub: 5,
+    storagePerM3DayRub: 185,
+    storagePerPalletDayRub: 430,
+    receivingPerOperationRub: 8,
+    labelingPerUnitRub: 12,
+    packagingPerUnitRub: 25,
+  },
+  "le-4": {
+    storagePerUnitDayRub: 5.5,
+    storagePerM3DayRub: 200,
+    storagePerPalletDayRub: 450,
+    receivingPerOperationRub: 8,
+    labelingPerUnitRub: 12,
+    packagingPerUnitRub: 25,
+  },
+  "le-5": {
+    storagePerUnitDayRub: 4.75,
+    storagePerM3DayRub: 160,
+    storagePerPalletDayRub: 360,
+    receivingPerOperationRub: 7,
+    labelingPerUnitRub: 11,
+    packagingPerUnitRub: 22,
+  },
 };
 
 function rollupsFromSeed() {
@@ -224,6 +261,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       ogrn: "1027700100111",
       isActive: true,
       tariffs: TARIFFS_BY_ID["le-1"],
+      storageModel: "by_volume",
     },
     {
       id: "le-2",
@@ -234,6 +272,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       ogrn: "1027700200222",
       isActive: true,
       tariffs: TARIFFS_BY_ID["le-2"],
+      storageModel: "by_pallets",
     },
     {
       id: "le-3",
@@ -244,6 +283,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       ogrn: "1027700300333",
       isActive: true,
       tariffs: TARIFFS_BY_ID["le-3"],
+      storageModel: "by_volume",
     },
     {
       id: "le-4",
@@ -254,6 +294,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       ogrn: "1027700400444",
       isActive: true,
       tariffs: TARIFFS_BY_ID["le-4"],
+      storageModel: "by_pallets",
     },
     {
       id: "le-5",
@@ -264,6 +305,7 @@ export async function fetchMockLegalEntities(): Promise<LegalEntity[]> {
       ogrn: "320500500055555",
       isActive: true,
       tariffs: TARIFFS_BY_ID["le-5"],
+      storageModel: "by_volume",
     },
   ];
   return bases.map((b) => ({
@@ -307,6 +349,7 @@ export function appendMockLegalEntity(current: LegalEntity[], draft: Omit<LegalE
     ...draft,
     id,
     tariffs,
+    storageModel: draft.storageModel ?? "by_volume",
     warehouseSkuCount: draft.warehouseSkuCount ?? 0,
     warehouseUnitsTotal: draft.warehouseUnitsTotal ?? 0,
   };

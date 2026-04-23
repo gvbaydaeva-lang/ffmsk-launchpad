@@ -12,6 +12,7 @@ import ShippingPage from "./pages/app/ShippingPage.tsx";
 import WarehousePage from "./pages/app/WarehousePage.tsx";
 import FinancePage from "./pages/app/FinancePage.tsx";
 import LegalEntitiesPage from "./pages/app/LegalEntitiesPage.tsx";
+import LegalEntityDetailsPage from "./pages/app/LegalEntityDetailsPage.tsx";
 import UsersPage from "./pages/app/UsersPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
@@ -37,6 +38,7 @@ const App = () => (
                 <Route path="warehouse" element={<WarehousePage />} />
                 <Route path="finance" element={<FinancePage />} />
                 <Route path="legal-entities" element={<LegalEntitiesPage />} />
+                <Route path="legal-entities/:id" element={<LegalEntityDetailsPage />} />
                 <Route path="users" element={<UsersPage />} />
               </Route>
               <Route path="*" element={<NotFound />} />

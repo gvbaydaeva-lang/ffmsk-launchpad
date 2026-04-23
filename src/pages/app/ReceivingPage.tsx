@@ -22,13 +22,14 @@ import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
+import { useInboundSupplies, useLegalEntities, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace } from "@/types/domain";
 
 const ReceivingPage = () => {
   const { data, isLoading, error, createInbound, isCreating } = useInboundSupplies();
   const { data: entities } = useLegalEntities();
+  const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [open, setOpen] = React.useState(false);
@@ -36,6 +37,7 @@ const ReceivingPage = () => {
     legalEntityId: "le-2" as string,
     documentNo: "",
     supplier: "",
+    productId: "",
     marketplace: "wb" as Marketplace,
     expectedUnits: "",
     eta: "",
@@ -52,11 +54,17 @@ const ReceivingPage = () => {
     return base.filter((r) => r.legalEntityId === legalEntityId);
   }, [data, mp, legalEntityId]);
 
+  const clientProducts = React.useMemo(
+    () => (catalog ?? []).filter((x) => x.legalEntityId === form.legalEntityId),
+    [catalog, form.legalEntityId],
+  );
+
   const resetForm = () => {
     setForm({
       legalEntityId: "le-2",
       documentNo: "",
       supplier: "",
+      productId: "",
       marketplace: "wb",
       expectedUnits: "",
       eta: "",
@@ -69,10 +77,16 @@ const ReceivingPage = () => {
       toast.error("Заполните все поля корректно");
       return;
     }
+    const selectedProductId = form.productId || clientProducts[0]?.id;
+    if (!selectedProductId) {
+      toast.error("Выберите товар из каталога клиента");
+      return;
+    }
     const draft: Omit<InboundSupply, "id"> = {
       legalEntityId: form.legalEntityId,
       documentNo: form.documentNo.trim(),
       supplier: form.supplier.trim(),
+      items: [{ productId: selectedProductId, quantity: units }],
       marketplace: form.marketplace,
       expectedUnits: units,
       receivedUnits: null,
@@ -152,6 +166,21 @@ const ReceivingPage = () => {
                     onChange={(e) => setForm((f) => ({ ...f, supplier: e.target.value }))}
                     placeholder="ООО «…»"
                   />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Товар из каталога</Label>
+                  <Select value={form.productId} onValueChange={(v) => setForm((f) => ({ ...f, productId: v }))}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите товар" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clientProducts.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.brand} · {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid gap-1.5">
                   <Label>Маркетплейс</Label>
