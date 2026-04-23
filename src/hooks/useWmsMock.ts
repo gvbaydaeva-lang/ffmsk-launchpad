@@ -1,6 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FulfillmentTariffs, InboundSupply, LegalEntity, Marketplace, OrgUser, WarehouseInventoryRow } from "@/types/domain";
+import type {
+  FulfillmentTariffs,
+  InboundSupply,
+  LegalEntity,
+  Marketplace,
+  OperationHistoryEvent,
+  OrgUser,
+  WarehouseInventoryRow,
+} from "@/types/domain";
 import { appendMockInbound, fetchMockInboundSupplies } from "@/services/mockReceiving";
+import { closeOperationalDay } from "@/services/financeCloseDay";
+import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
 import {
   appendMockLegalEntity,
   appendMockOrgUser,
@@ -32,8 +42,21 @@ export function useShipmentBoxes() {
       const list = current ?? (await fetchMockShipmentBoxes());
       return generateMockShipmentBoxes(args.marketplace, args.legalEntityId, list);
     },
-    onSuccess: (data) => {
+    onSuccess: async (data, vars) => {
       qc.setQueryData(["wms", "shipment-boxes"], data);
+      const history = qc.getQueryData<OperationHistoryEvent[]>(["wms", "operation-history"]) ?? (await fetchMockOperationHistory());
+      qc.setQueryData(
+        ["wms", "operation-history"],
+        prependOperationEvent(history, {
+          dateIso: new Date().toISOString(),
+          legalEntityId: vars.legalEntityId,
+          actor: "Оператор отгрузки",
+          action: "отгрузка",
+          productLabel: `Короб ${vars.marketplace.toUpperCase()}`,
+          quantity: data[0]?.itemsCount ?? 0,
+          comment: data[0] ? `Сформирован ${data[0].boxBarcode}` : "Сформирован короб",
+        }),
+      );
     },
   });
 
@@ -49,7 +72,22 @@ export function useInboundSupplies() {
       const cur = qc.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? (await fetchMockInboundSupplies());
       return appendMockInbound(cur, draft);
     },
-    onSuccess: (data) => qc.setQueryData(["wms", "inbound"], data),
+    onSuccess: async (data, vars) => {
+      qc.setQueryData(["wms", "inbound"], data);
+      const history = qc.getQueryData<OperationHistoryEvent[]>(["wms", "operation-history"]) ?? (await fetchMockOperationHistory());
+      qc.setQueryData(
+        ["wms", "operation-history"],
+        prependOperationEvent(history, {
+          dateIso: new Date().toISOString(),
+          legalEntityId: vars.legalEntityId,
+          actor: "Оператор приёмки",
+          action: "приёмка",
+          productLabel: vars.documentNo,
+          quantity: vars.expectedUnits,
+          comment: `Создана приёмка ${vars.documentNo}`,
+        }),
+      );
+    },
   });
 
   return { ...query, createInbound: create.mutateAsync, isCreating: create.isPending };
@@ -72,6 +110,10 @@ export function useLegalEntities() {
 
 export function useWarehouseInventory() {
   return useQuery({ queryKey: ["wms", "warehouse-inventory"], queryFn: fetchMockWarehouseInventory });
+}
+
+export function useOperationHistory() {
+  return useQuery({ queryKey: ["wms", "operation-history"], queryFn: fetchMockOperationHistory });
 }
 
 export function useUpdateLegalTariffs() {
@@ -97,6 +139,35 @@ export function useUpdateLegalTariffs() {
     onSuccess: ({ nextLeg, nextInv }) => {
       qc.setQueryData(["wms", "warehouse-inventory"], nextInv);
       qc.setQueryData(["wms", "legal"], mergeLegalWarehouseCounts(nextLeg, nextInv));
+    },
+  });
+}
+
+export function useCloseOperationalDay() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const finance = qc.getQueryData(["wms", "finance"]) as Awaited<ReturnType<typeof fetchMockFinanceOperations>> | undefined;
+      const legal = qc.getQueryData(["wms", "legal"]) as LegalEntity[] | undefined;
+      const inv = qc.getQueryData(["wms", "warehouse-inventory"]) as WarehouseInventoryRow[] | undefined;
+      const currentFinance = finance ?? (await fetchMockFinanceOperations());
+      const currentLegal = legal ?? (await fetchMockLegalEntities());
+      const currentInv = inv ?? (await fetchMockWarehouseInventory());
+      return closeOperationalDay(currentFinance, currentInv, currentLegal);
+    },
+    onSuccess: async (result) => {
+      qc.setQueryData(["wms", "finance"], result.operations);
+      const history = qc.getQueryData<OperationHistoryEvent[]>(["wms", "operation-history"]) ?? (await fetchMockOperationHistory());
+      const next = prependOperationEvent(history, {
+        dateIso: new Date().toISOString(),
+        legalEntityId: "all",
+        actor: "Система",
+        action: "закрытие дня",
+        productLabel: "Все остатки склада",
+        quantity: result.totalUnits,
+        comment: `Начислено ${result.totalAccruedRub.toLocaleString("ru-RU")} ₽`,
+      });
+      qc.setQueryData(["wms", "operation-history"], next);
     },
   });
 }

@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useLegalEntities } from "@/hooks/useWmsMock";
+import { useCloseOperationalDay, useLegalEntities } from "@/hooks/useWmsMock";
 import { toast } from "sonner";
 
 function daysInclusive(from: Date, to: Date) {
@@ -19,6 +19,7 @@ function daysInclusive(from: Date, to: Date) {
 const GlobalFiltersBar = ({ className }: { className?: string }) => {
   const { dateFrom, dateTo, setDateRange, applyPresetDays, legalEntityId, setLegalEntityId } = useAppFilters();
   const { data: entities, isLoading: entitiesLoading } = useLegalEntities();
+  const closeDay = useCloseOperationalDay();
   const [calendarOpen, setCalendarOpen] = React.useState(false);
   const [rangeDraft, setRangeDraft] = React.useState<DateRange | undefined>(() => ({ from: dateFrom, to: dateTo }));
 
@@ -113,10 +114,20 @@ const GlobalFiltersBar = ({ className }: { className?: string }) => {
         <Button
           type="button"
           className="h-10 gap-2 bg-slate-900 text-white hover:bg-slate-800"
-          onClick={() => toast.message("Закрыть день", { description: "Демо: закрытие операционного дня." })}
+          disabled={closeDay.isPending}
+          onClick={async () => {
+            try {
+              const result = await closeDay.mutateAsync();
+              toast.success("Закрытие дня", {
+                description: `День успешно закрыт. Начислено ${result.totalAccruedRub.toLocaleString("ru-RU")} ₽ за хранение ${result.totalUnits.toLocaleString("ru-RU")} товаров`,
+              });
+            } catch {
+              toast.error("Не удалось закрыть день");
+            }
+          }}
         >
           <CalendarCheck className="h-4 w-4" />
-          Закрыть день
+          {closeDay.isPending ? "Закрытие..." : "Закрыть день"}
         </Button>
       </div>
 

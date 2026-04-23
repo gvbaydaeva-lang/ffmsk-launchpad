@@ -1,4 +1,6 @@
 import * as React from "react";
+import { format, isWithinInterval, parseISO } from "date-fns";
+import { ru } from "date-fns/locale/ru";
 import { ChevronDown, ChevronRight, History, Search } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,10 +14,9 @@ import { Badge } from "@/components/ui/badge";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useLegalEntities, useWarehouseInventory } from "@/hooks/useWmsMock";
+import { useLegalEntities, useOperationHistory, useWarehouseInventory } from "@/hooks/useWmsMock";
 import { groupInventoryRows } from "@/services/mockWarehouseInventory";
 import type { Marketplace, WarehouseInventoryRow } from "@/types/domain";
-import { toast } from "sonner";
 
 const COL_SPAN = 12;
 
@@ -43,7 +44,8 @@ function filterRows(rows: WarehouseInventoryRow[], q: string, mp: Marketplace | 
 const WarehousePage = () => {
   const { data, isLoading, error } = useWarehouseInventory();
   const { data: entities } = useLegalEntities();
-  const { legalEntityId } = useAppFilters();
+  const { legalEntityId, dateFrom, dateTo } = useAppFilters();
+  const { data: history } = useOperationHistory();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
@@ -76,6 +78,15 @@ const WarehousePage = () => {
   };
 
   const flatCount = filtered.length;
+  const historyRows = React.useMemo(() => {
+    const rows = history ?? [];
+    return rows.filter((ev) => {
+      const d = parseISO(ev.dateIso);
+      const byDate = isWithinInterval(d, { start: dateFrom, end: dateTo });
+      const byEntity = legalEntityId === "all" || ev.legalEntityId === legalEntityId || ev.legalEntityId === "all";
+      return byDate && byEntity;
+    });
+  }, [history, dateFrom, dateTo, legalEntityId]);
 
   return (
     <div className="space-y-4">
@@ -224,15 +235,7 @@ const WarehousePage = () => {
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 gap-1 text-slate-600"
-                                onClick={() =>
-                                  toast.message("История движений", { description: `${row.productName} · ${row.barcode} (демо)` })
-                                }
-                              >
+                              <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-slate-600">
                                 <History className="h-3.5 w-3.5" />
                                 История
                               </Button>
@@ -248,6 +251,41 @@ const WarehousePage = () => {
               </TableBody>
             </Table>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader>
+          <CardTitle className="font-display text-lg text-slate-900">История изменений</CardTitle>
+          <CardDescription className="text-slate-500">Кто, когда и какой товар привёз или отгрузил</CardDescription>
+        </CardHeader>
+        <CardContent className="p-0 sm:p-6">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-slate-200 hover:bg-transparent">
+                <TableHead>Дата</TableHead>
+                <TableHead>Сотрудник</TableHead>
+                <TableHead>Действие</TableHead>
+                <TableHead>Товар / документ</TableHead>
+                <TableHead className="text-right">Кол-во</TableHead>
+                <TableHead>Комментарий</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {historyRows.map((ev) => (
+                <TableRow key={ev.id} className="border-slate-100">
+                  <TableCell className="whitespace-nowrap text-slate-500 text-xs sm:text-sm">
+                    {format(parseISO(ev.dateIso), "d MMM yyyy HH:mm", { locale: ru })}
+                  </TableCell>
+                  <TableCell>{ev.actor}</TableCell>
+                  <TableCell>{ev.action}</TableCell>
+                  <TableCell className="max-w-[260px] truncate">{ev.productLabel}</TableCell>
+                  <TableCell className="text-right tabular-nums">{ev.quantity.toLocaleString("ru-RU")}</TableCell>
+                  <TableCell className="max-w-[260px] text-slate-600 text-xs sm:text-sm">{ev.comment}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
     </div>

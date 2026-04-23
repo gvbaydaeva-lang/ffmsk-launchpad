@@ -157,6 +157,18 @@ export type WarehouseInventoryRow = {
   marketplace: Marketplace;
 };
 
+/** История операций склада и финансовых событий */
+export type OperationHistoryEvent = {
+  id: string;
+  dateIso: string;
+  legalEntityId: string;
+  actor: string;
+  action: "приёмка" | "отгрузка" | "сканирование" | "закрытие дня" | "начисление";
+  productLabel: string;
+  quantity: number;
+  comment: string;
+};
+
 /** Пользователь организации */
 export type OrgUser = {
   id: string;
