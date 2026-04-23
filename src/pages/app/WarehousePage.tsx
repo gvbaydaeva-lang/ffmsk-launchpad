@@ -61,7 +61,7 @@ const WarehousePage = () => {
   const groups = React.useMemo(() => groupInventoryRows(filtered), [filtered]);
 
   React.useEffect(() => {
-    setExpanded(new Set(groups.map((g) => groupKey(g))));
+    setExpanded(new Set());
   }, [groups]);
 
   const toggleGroup = (key: string) => {
@@ -143,6 +143,7 @@ const WarehousePage = () => {
                 {groups.map((g) => {
                   const key = groupKey(g);
                   const open = expanded.has(key);
+                  const parentBarcode = g.variants[0]?.barcode;
                   const totalQty = g.variants.reduce((s, v) => s + v.quantity, 0);
                   const totalStorage = g.variants.reduce((s, v) => s + v.storagePerDayRub, 0);
                   return (
@@ -166,7 +167,15 @@ const WarehousePage = () => {
                               <p className="truncate text-sm font-medium text-slate-900">
                                 {g.brand} · {g.productName}
                               </p>
-                              <p className="truncate text-xs text-slate-500">{entities?.find((e) => e.id === g.legalEntityId)?.shortName ?? g.legalEntityId}</p>
+                              <p className="truncate text-xs text-slate-500">
+                                {entities?.find((e) => e.id === g.legalEntityId)?.shortName ?? g.legalEntityId}
+                                {parentBarcode ? (
+                                  <>
+                                    {" · "}
+                                    <span className="font-mono text-[11px] text-slate-600">Баркод: {parentBarcode}</span>
+                                  </>
+                                ) : null}
+                              </p>
                             </div>
                           </div>
                         </TableCell>
@@ -208,7 +217,10 @@ const WarehousePage = () => {
                             <TableCell className="px-2">
                               <div className="space-y-1">
                                 <p className="truncate text-xs text-slate-600">
-                                  {row.size} · {row.color} · <span className="font-mono">{row.barcode}</span>
+                                  {row.size} · {row.color}
+                                </p>
+                                <p className="truncate text-xs font-mono text-slate-700">
+                                  Баркод: <span className="font-semibold">{row.barcode}</span>
                                 </p>
                                 <Badge variant="secondary" className="h-6 rounded border border-slate-300 bg-slate-100 px-2 font-mono text-[11px] text-slate-700">
                                   {row.cellCode}
