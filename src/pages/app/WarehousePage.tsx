@@ -1,24 +1,23 @@
 import * as React from "react";
-import { format, isWithinInterval, parseISO } from "date-fns";
-import { ru } from "date-fns/locale/ru";
-import { ChevronDown, ChevronRight, History, Search } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChevronDown, ChevronRight, MoreHorizontal, Search } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
-import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useLegalEntities, useOperationHistory, useWarehouseInventory } from "@/hooks/useWmsMock";
+import { useLegalEntities, useWarehouseInventory } from "@/hooks/useWmsMock";
 import { groupInventoryRows } from "@/services/mockWarehouseInventory";
 import type { Marketplace, WarehouseInventoryRow } from "@/types/domain";
-
-const COL_SPAN = 12;
+import { toast } from "sonner";
 
 function groupKey(g: { productGroupId: string; legalEntityId: string }) {
   return `${g.productGroupId}:${g.legalEntityId}`;
@@ -41,33 +40,30 @@ function filterRows(rows: WarehouseInventoryRow[], q: string, mp: Marketplace | 
   );
 }
 
+function initials(brand: string, product: string) {
+  const a = brand.trim().charAt(0).toUpperCase();
+  const b = product.trim().charAt(0).toUpperCase();
+  return `${a}${b}`;
+}
+
 const WarehousePage = () => {
   const { data, isLoading, error } = useWarehouseInventory();
   const { data: entities } = useLegalEntities();
-  const { legalEntityId, dateFrom, dateTo } = useAppFilters();
-  const { data: history } = useOperationHistory();
+  const { legalEntityId, setLegalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
-
-  const entityName = React.useCallback(
-    (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
-    [entities],
-  );
 
   const filtered = React.useMemo(
     () => filterRows(data ?? [], search, mp, legalEntityId),
     [data, search, mp, legalEntityId],
   );
-
   const groups = React.useMemo(() => groupInventoryRows(filtered), [filtered]);
 
   React.useEffect(() => {
     setExpanded(new Set(groups.map((g) => groupKey(g))));
   }, [groups]);
 
-  const expandAll = () => setExpanded(new Set(groups.map((g) => groupKey(g))));
-  const collapseAll = () => setExpanded(new Set());
   const toggleGroup = (key: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -77,171 +73,178 @@ const WarehousePage = () => {
     });
   };
 
-  const flatCount = filtered.length;
-  const historyRows = React.useMemo(() => {
-    const rows = history ?? [];
-    return rows.filter((ev) => {
-      const d = parseISO(ev.dateIso);
-      const byDate = isWithinInterval(d, { start: dateFrom, end: dateTo });
-      const byEntity = legalEntityId === "all" || ev.legalEntityId === legalEntityId || ev.legalEntityId === "all";
-      return byDate && byEntity;
-    });
-  }, [history, dateFrom, dateTo, legalEntityId]);
-
   return (
     <div className="space-y-4">
       <div>
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Складской учёт</h2>
-          <Badge variant="secondary" className="border border-slate-200 bg-slate-100 font-normal text-slate-600">
-            Global
-          </Badge>
-        </div>
-        <p className="mt-1 text-sm text-slate-600">Остатки по всем юрлицам · детальный учёт по вариантам (размер, цвет, баркод)</p>
-      </div>
-
-      <GlobalFiltersBar />
-
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="grid gap-1.5 sm:w-[200px]">
-          <Label htmlFor="wh-mp" className="text-slate-700">
-            Маркетплейс
-          </Label>
-          <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
-            <SelectTrigger id="wh-mp" className="border-slate-200 bg-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все</SelectItem>
-              <SelectItem value="wb">Wildberries</SelectItem>
-              <SelectItem value="ozon">Ozon</SelectItem>
-              <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="min-w-0 flex-1">
-          <Label htmlFor="wh-search" className="text-slate-700">
-            Поиск
-          </Label>
-          <div className="relative mt-1.5">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              id="wh-search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по SKU, названию, цвету…"
-              className="border-slate-200 bg-white pl-9"
-            />
-          </div>
-        </div>
+        <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Складской учёт</h2>
+        <p className="mt-1 text-sm text-slate-600">Остатки и адресное хранение по клиентам.</p>
       </div>
 
       <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader className="flex flex-col gap-2 space-y-0 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="font-display text-lg text-slate-900">Инвентарь</CardTitle>
-            <CardDescription className="text-slate-500">Группировка по товару; строки — варианты с ячейкой и баркодом</CardDescription>
+        <CardContent className="space-y-3 p-3 sm:p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={legalEntityId} onValueChange={(v) => setLegalEntityId(v as "all" | string)}>
+              <SelectTrigger className="h-9 w-[200px] border-slate-200">
+                <SelectValue placeholder="Юрлицо" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все юрлица</SelectItem>
+                {entities?.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.shortName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
+              <SelectTrigger className="h-9 w-[180px] border-slate-200">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все МП</SelectItem>
+                <SelectItem value="wb">WB</SelectItem>
+                <SelectItem value="ozon">Ozon</SelectItem>
+                <SelectItem value="yandex">Яндекс</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Поиск: товар, баркод, ячейка"
+                className="h-9 border-slate-200 pl-9"
+              />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <Button type="button" variant="ghost" size="sm" className="h-8 text-slate-600" onClick={expandAll}>
-              Развернуть всё
-            </Button>
-            <Button type="button" variant="ghost" size="sm" className="h-8 text-slate-600" onClick={collapseAll}>
-              Свернуть
-            </Button>
-            <span className="text-slate-500">
-              Групп: {groups.length} · Позиций: {flatCount}
-            </span>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0 sm:p-6">
+
           {isLoading ? (
-            <div className="space-y-2 p-6">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
+            <div className="space-y-2 py-4">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
             </div>
           ) : error ? (
-            <p className="p-6 text-sm text-destructive">Не удалось загрузить склад.</p>
+            <p className="py-4 text-sm text-destructive">Не удалось загрузить склад.</p>
           ) : (
-            <Table>
+            <Table className="table-fixed">
               <TableHeader>
                 <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="w-10 text-slate-600" />
-                  <TableHead className="min-w-[200px] text-slate-600">Товар (бренд · название · цвет)</TableHead>
-                  <TableHead className="text-slate-600">Размер</TableHead>
-                  <TableHead className="font-mono text-slate-600">Баркод</TableHead>
-                  <TableHead className="text-slate-600">Ячейка</TableHead>
-                  <TableHead className="text-slate-600">Юрлицо</TableHead>
-                  <TableHead className="text-right text-slate-600">Кол-во</TableHead>
-                  <TableHead className="text-right text-slate-600">Тариф ₽/сут</TableHead>
-                  <TableHead className="text-right text-slate-600">Хранение ₽/сут</TableHead>
-                  <TableHead className="text-slate-600">Статус</TableHead>
-                  <TableHead className="text-slate-600">Действия</TableHead>
-                  <TableHead className="text-slate-600">МП</TableHead>
+                  <TableHead className="w-8 px-2" />
+                  <TableHead className="w-[46%] px-2 text-slate-600">Товар</TableHead>
+                  <TableHead className="w-[24%] px-2 text-slate-600">Характеристики / Ячейка</TableHead>
+                  <TableHead className="w-[12%] px-2 text-right text-slate-600">Кол-во</TableHead>
+                  <TableHead className="w-[14%] px-2 text-right text-slate-600">Хранение ₽/сут</TableHead>
+                  <TableHead className="w-10 px-2" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {groups.map((g) => {
                   const key = groupKey(g);
                   const open = expanded.has(key);
-                  const sumQty = g.variants.reduce((s, v) => s + v.quantity, 0);
-                  const sumSt = g.variants.reduce((s, v) => s + v.storagePerDayRub, 0);
+                  const totalQty = g.variants.reduce((s, v) => s + v.quantity, 0);
+                  const totalStorage = g.variants.reduce((s, v) => s + v.storagePerDayRub, 0);
                   return (
                     <React.Fragment key={key}>
-                      <TableRow className="border-slate-100 bg-slate-50/90 hover:bg-slate-50">
-                        <TableCell colSpan={COL_SPAN} className="p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <button
-                              type="button"
-                              className="flex items-center gap-2 text-left font-medium text-slate-900"
-                              onClick={() => toggleGroup(key)}
-                            >
-                              {open ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" /> : <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />}
-                              {g.brand} · {g.productName}
-                            </button>
-                            <div className="flex flex-wrap gap-x-4 text-sm text-slate-600">
-                              <span>{entityName(g.legalEntityId)}</span>
-                              <span className="tabular-nums font-semibold text-slate-900">{sumQty} шт</span>
-                              <span className="tabular-nums font-semibold text-emerald-600">
-                                {sumSt.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽/сут
-                              </span>
+                      <TableRow className="border-slate-100 bg-slate-50/70 hover:bg-slate-50">
+                        <TableCell className="px-2">
+                          <button type="button" className="inline-flex" onClick={() => toggleGroup(key)}>
+                            {open ? (
+                              <ChevronDown className="h-4 w-4 text-slate-500" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-slate-500" />
+                            )}
+                          </button>
+                        </TableCell>
+                        <TableCell className="px-2">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-[10px] font-semibold text-slate-600">
+                              {initials(g.brand, g.productName)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-slate-900">
+                                {g.brand} · {g.productName}
+                              </p>
+                              <p className="truncate text-xs text-slate-500">{entities?.find((e) => e.id === g.legalEntityId)?.shortName ?? g.legalEntityId}</p>
                             </div>
                           </div>
                         </TableCell>
+                        <TableCell className="px-2 text-xs text-slate-500">Вариантов: {g.variants.length}</TableCell>
+                        <TableCell className="px-2 text-right tabular-nums text-base font-bold text-slate-900">
+                          {totalQty.toLocaleString("ru-RU")}
+                        </TableCell>
+                        <TableCell className="px-2 text-right text-xs tabular-nums text-slate-500">
+                          {totalStorage.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽
+                        </TableCell>
+                        <TableCell className="px-2 text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-7 w-7">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => toast.message("История", { description: `${g.productName} (группа)` })}>
+                                История движений
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => toast.message("Открыть карточку", { description: g.productName })}>
+                                Карточка товара
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
                       </TableRow>
+
                       {open &&
                         g.variants.map((row) => (
-                          <TableRow key={row.id} className="border-slate-100">
-                            <TableCell>
-                              <Checkbox disabled aria-hidden className="opacity-40" />
+                          <TableRow key={row.id} className="border-slate-100 hover:bg-slate-50/40">
+                            <TableCell className="px-2" />
+                            <TableCell className="px-2">
+                              <p className="truncate text-xs text-slate-700">
+                                {row.brand} · {row.productName}
+                              </p>
                             </TableCell>
-                            <TableCell className="pl-8 text-sm text-slate-600">
-                              — {row.color} · {row.sizeNote}
+                            <TableCell className="px-2">
+                              <div className="space-y-1">
+                                <p className="truncate text-xs text-slate-600">
+                                  {row.size} · {row.color} · <span className="font-mono">{row.barcode}</span>
+                                </p>
+                                <Badge variant="secondary" className="h-6 rounded border border-slate-300 bg-slate-100 px-2 font-mono text-[11px] text-slate-700">
+                                  {row.cellCode}
+                                </Badge>
+                              </div>
                             </TableCell>
-                            <TableCell className="text-slate-800">{row.size}</TableCell>
-                            <TableCell className="font-mono text-xs text-slate-700">{row.barcode}</TableCell>
-                            <TableCell className="font-mono text-xs text-slate-700">{row.cellCode}</TableCell>
-                            <TableCell className="max-w-[160px] truncate text-sm text-slate-700">{entityName(row.legalEntityId)}</TableCell>
-                            <TableCell className="text-right tabular-nums font-medium text-slate-900">{row.quantity}</TableCell>
-                            <TableCell className="text-right tabular-nums text-slate-700">
-                              {row.tariffPerUnitDayRub.toLocaleString("ru-RU")} ₽
+                            <TableCell className="px-2 text-right tabular-nums text-sm font-bold text-slate-900">
+                              {row.quantity.toLocaleString("ru-RU")}
                             </TableCell>
-                            <TableCell className="text-right font-medium tabular-nums text-emerald-600">
+                            <TableCell className="px-2 text-right text-[11px] tabular-nums text-slate-500">
                               {row.storagePerDayRub.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽
                             </TableCell>
-                            <TableCell>
-                              <Badge variant="secondary" className="border-slate-200 bg-white text-xs font-normal">
-                                {row.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-slate-600">
-                                <History className="h-3.5 w-3.5" />
-                                История
-                              </Button>
-                            </TableCell>
-                            <TableCell>
-                              <MarketplaceBadge marketplace={row.marketplace} />
+                            <TableCell className="px-2 text-right">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      toast.message("История", { description: `${row.productName} · ${row.barcode}` })
+                                    }
+                                  >
+                                    История движений
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      toast.message("Печать этикетки", { description: `Ячейка ${row.cellCode}` })
+                                    }
+                                  >
+                                    Печать этикетки
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -251,41 +254,6 @@ const WarehousePage = () => {
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
-
-      <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader>
-          <CardTitle className="font-display text-lg text-slate-900">История изменений</CardTitle>
-          <CardDescription className="text-slate-500">Кто, когда и какой товар привёз или отгрузил</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0 sm:p-6">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-slate-200 hover:bg-transparent">
-                <TableHead>Дата</TableHead>
-                <TableHead>Сотрудник</TableHead>
-                <TableHead>Действие</TableHead>
-                <TableHead>Товар / документ</TableHead>
-                <TableHead className="text-right">Кол-во</TableHead>
-                <TableHead>Комментарий</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {historyRows.map((ev) => (
-                <TableRow key={ev.id} className="border-slate-100">
-                  <TableCell className="whitespace-nowrap text-slate-500 text-xs sm:text-sm">
-                    {format(parseISO(ev.dateIso), "d MMM yyyy HH:mm", { locale: ru })}
-                  </TableCell>
-                  <TableCell>{ev.actor}</TableCell>
-                  <TableCell>{ev.action}</TableCell>
-                  <TableCell className="max-w-[260px] truncate">{ev.productLabel}</TableCell>
-                  <TableCell className="text-right tabular-nums">{ev.quantity.toLocaleString("ru-RU")}</TableCell>
-                  <TableCell className="max-w-[260px] text-slate-600 text-xs sm:text-sm">{ev.comment}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
         </CardContent>
       </Card>
     </div>
