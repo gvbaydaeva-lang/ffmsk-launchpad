@@ -84,6 +84,7 @@ const LegalEntityDetailsPage = () => {
     supplierArticle: "",
     barcode: "",
   });
+  const [printCopies, setPrintCopies] = React.useState("1");
   const [printInclude, setPrintInclude] = React.useState<Record<string, boolean>>({
     name: true,
     brand: true,
@@ -149,6 +150,7 @@ const LegalEntityDetailsPage = () => {
       supplierArticle: product.supplierArticle,
       barcode: product.barcode,
     });
+    setPrintCopies("1");
     setPrintOpen(true);
   };
 
@@ -311,23 +313,49 @@ const LegalEntityDetailsPage = () => {
   };
 
   if (!entity) return <p className="text-sm text-slate-600">Юрлицо не найдено.</p>;
+  const copies = Math.max(1, Number(printCopies) || 1);
 
   return (
     <div className="space-y-4">
       <style>{`
         @media print {
+          @page {
+            size: 58mm 40mm;
+            margin: 0;
+          }
+          html,
+          body {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 58mm;
+          }
           body * {
             visibility: hidden !important;
           }
-          #print-label-area,
-          #print-label-area * {
+          #print-sheet,
+          #print-sheet * {
             visibility: visible !important;
           }
-          #print-label-area {
+          #print-sheet {
             position: fixed;
             left: 0;
             top: 0;
+            width: 58mm;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .print-label {
+            box-sizing: border-box;
+            width: 58mm !important;
+            height: 40mm !important;
+            padding: 2mm !important;
             border: none !important;
+            page-break-after: always;
+            break-after: page;
+          }
+          .barcode-wrap svg {
+            display: block !important;
+            margin: 0 auto !important;
           }
           .no-print {
             display: none !important;
@@ -598,6 +626,16 @@ const LegalEntityDetailsPage = () => {
               </DialogHeader>
               <div className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
                 <div className="space-y-3 no-print">
+                  <div className="grid gap-1.5">
+                    <Label>Количество этикеток</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={printCopies}
+                      onChange={(e) => setPrintCopies(e.target.value)}
+                    />
+                  </div>
                   {(
                     [
                       ["name", "Название"],
@@ -634,38 +672,42 @@ const LegalEntityDetailsPage = () => {
                 <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs text-slate-600 no-print">Превью этикетки 58×40 мм</p>
                   <div className="mx-auto flex items-start justify-center">
-                    <div
-                      id="print-label-area"
-                      className="bg-white text-black"
-                      style={{ width: "58mm", minHeight: "40mm", padding: "2.5mm", border: "1px solid #d9d9d9" }}
-                    >
-                      {printInclude.name && <p className="text-[11px] font-semibold leading-tight">{printDraft.name || "—"}</p>}
-                      {printInclude.brand && <p className="text-[10px] leading-tight">{printDraft.brand || "—"}</p>}
-                      {printInclude.legalEntity && <p className="text-[9px] leading-tight">{printDraft.legalEntity || "—"}</p>}
-                      {(printInclude.color || printInclude.size) && (
-                        <p className="text-[9px] leading-tight">
-                          {printInclude.color ? `Цвет: ${printDraft.color || "—"}` : ""}
-                          {printInclude.color && printInclude.size ? " · " : ""}
-                          {printInclude.size ? `Размер: ${printDraft.size || "—"}` : ""}
-                        </p>
-                      )}
-                      {printInclude.country && <p className="text-[9px] leading-tight">Страна: {printDraft.country || "—"}</p>}
-                      {printInclude.supplierArticle && (
-                        <p className="text-[9px] leading-tight">Арт.: {printDraft.supplierArticle || "—"}</p>
-                      )}
-                      {printInclude.barcode && printDraft.barcode && (
-                        <div className="mt-1">
-                          <Barcode
-                            value={printDraft.barcode}
-                            height={30}
-                            width={1.35}
-                            fontSize={9}
-                            margin={0}
-                            background="#ffffff"
-                            displayValue
-                          />
+                    <div id="print-sheet" className="space-y-1">
+                      {Array.from({ length: copies }).map((_, idx) => (
+                        <div
+                          key={`label-${idx}`}
+                          className="print-label bg-white text-black"
+                          style={{ width: "58mm", height: "40mm", padding: "2mm", border: "1px solid #d9d9d9" }}
+                        >
+                          {printInclude.name && <p className="text-[11px] font-semibold leading-tight">{printDraft.name || "—"}</p>}
+                          {printInclude.brand && <p className="text-[10px] leading-tight">{printDraft.brand || "—"}</p>}
+                          {printInclude.legalEntity && <p className="text-[9px] leading-tight">{printDraft.legalEntity || "—"}</p>}
+                          {(printInclude.color || printInclude.size) && (
+                            <p className="text-[9px] leading-tight">
+                              {printInclude.color ? `Цвет: ${printDraft.color || "—"}` : ""}
+                              {printInclude.color && printInclude.size ? " · " : ""}
+                              {printInclude.size ? `Размер: ${printDraft.size || "—"}` : ""}
+                            </p>
+                          )}
+                          {printInclude.country && <p className="text-[9px] leading-tight">Страна: {printDraft.country || "—"}</p>}
+                          {printInclude.supplierArticle && (
+                            <p className="text-[9px] leading-tight">Арт.: {printDraft.supplierArticle || "—"}</p>
+                          )}
+                          {printInclude.barcode && printDraft.barcode && (
+                            <div className="barcode-wrap mt-1 flex justify-center">
+                              <Barcode
+                                value={printDraft.barcode}
+                                height={30}
+                                width={1.35}
+                                fontSize={9}
+                                margin={0}
+                                background="#ffffff"
+                                displayValue
+                              />
+                            </div>
+                          )}
                         </div>
-                      )}
+                      ))}
                     </div>
                   </div>
                 </div>
