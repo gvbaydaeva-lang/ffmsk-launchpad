@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { Building2, Pencil, Plus } from "lucide-react";
+import { Building2, Plus } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,18 +20,13 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useLegalEntities, useUpdateLegalTariffs } from "@/hooks/useWmsMock";
+import { useLegalEntities } from "@/hooks/useWmsMock";
 import { getDefaultNewTariffs } from "@/services/mockWms";
-import type { FulfillmentTariffs, LegalEntity } from "@/types/domain";
 
 const LegalEntitiesPage = () => {
   const { data, isLoading, error, addEntity, isAdding } = useLegalEntities();
-  const { mutateAsync: saveTariffs, isPending: isSavingTariffs } = useUpdateLegalTariffs();
   const { legalEntityId } = useAppFilters();
   const [open, setOpen] = React.useState(false);
-  const [tariffOpen, setTariffOpen] = React.useState(false);
-  const [editing, setEditing] = React.useState<LegalEntity | null>(null);
-  const [tariffDraft, setTariffDraft] = React.useState<FulfillmentTariffs>(getDefaultNewTariffs());
   const [form, setForm] = React.useState({
     shortName: "",
     fullName: "",
@@ -46,24 +41,6 @@ const LegalEntitiesPage = () => {
     if (legalEntityId === "all") return data;
     return data.filter((e) => e.id === legalEntityId);
   }, [data, legalEntityId]);
-
-  const openTariffs = (e: LegalEntity) => {
-    setEditing(e);
-    setTariffDraft({ ...e.tariffs });
-    setTariffOpen(true);
-  };
-
-  const onSaveTariffs = async () => {
-    if (!editing) return;
-    try {
-      await saveTariffs({ id: editing.id, tariffs: tariffDraft });
-      toast.success("Тарифы сохранены");
-      setTariffOpen(false);
-      setEditing(null);
-    } catch {
-      toast.error("Не удалось сохранить тарифы");
-    }
-  };
 
   const onAdd = async () => {
     if (!form.shortName.trim() || !form.fullName.trim() || !form.inn.trim() || !form.ogrn.trim()) {
@@ -165,61 +142,10 @@ const LegalEntitiesPage = () => {
 
       <GlobalFiltersBar />
 
-      <Dialog open={tariffOpen} onOpenChange={setTariffOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Тарифы · {editing?.shortName}</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3 py-2 sm:grid-cols-2">
-            <div className="grid gap-1.5">
-              <Label>Хранение ₽/ед/сут</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={tariffDraft.storagePerUnitDayRub}
-                onChange={(e) => setTariffDraft((t) => ({ ...t, storagePerUnitDayRub: Number(e.target.value) || 0 }))}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Приёмка ₽/операция</Label>
-              <Input
-                type="number"
-                value={tariffDraft.receivingPerOperationRub}
-                onChange={(e) => setTariffDraft((t) => ({ ...t, receivingPerOperationRub: Number(e.target.value) || 0 }))}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Маркировка ₽/ед</Label>
-              <Input
-                type="number"
-                value={tariffDraft.labelingPerUnitRub}
-                onChange={(e) => setTariffDraft((t) => ({ ...t, labelingPerUnitRub: Number(e.target.value) || 0 }))}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Упаковка ₽/ед</Label>
-              <Input
-                type="number"
-                value={tariffDraft.packagingPerUnitRub}
-                onChange={(e) => setTariffDraft((t) => ({ ...t, packagingPerUnitRub: Number(e.target.value) || 0 }))}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" type="button" onClick={() => setTariffOpen(false)}>
-              Отмена
-            </Button>
-            <Button type="button" onClick={() => void onSaveTariffs()} disabled={isSavingTariffs}>
-              {isSavingTariffs ? "Сохранение…" : "Сохранить"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader>
           <CardTitle className="font-display text-lg text-slate-900">Клиенты</CardTitle>
-          <CardDescription className="text-slate-500">Операционные метрики и договорные ставки</CardDescription>
+          <CardDescription className="text-slate-500">Список юридических лиц и остатки товаров</CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6">
           {isLoading ? (
@@ -234,13 +160,7 @@ const LegalEntitiesPage = () => {
                 <TableRow className="border-slate-200 hover:bg-transparent">
                   <TableHead className="text-slate-600">Юрлицо</TableHead>
                   <TableHead className="font-mono text-slate-600">ИНН</TableHead>
-                  <TableHead className="text-right text-slate-600">Хранение ₽/сут</TableHead>
-                  <TableHead className="text-right text-slate-600">Приёмка ₽</TableHead>
-                  <TableHead className="text-right text-slate-600">Маркировка ₽</TableHead>
-                  <TableHead className="text-right text-slate-600">Упаковка ₽</TableHead>
-                  <TableHead className="text-right text-slate-600">SKU на складе</TableHead>
-                  <TableHead className="text-right text-slate-600">Единиц</TableHead>
-                  <TableHead className="text-slate-600">Действия</TableHead>
+                  <TableHead className="text-right text-slate-600">Товаров на складе (шт)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -249,30 +169,14 @@ const LegalEntitiesPage = () => {
                     <TableCell className="max-w-[240px]">
                       <div className="flex items-start gap-2">
                         <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                        <span className="font-medium text-slate-900">{e.shortName}</span>
+                        <Link to={`/legal-entities/${e.id}`} className="font-medium text-slate-900 hover:underline">
+                          {e.shortName}
+                        </Link>
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-slate-700">{e.inn}</TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-800">
-                      {e.tariffs.storagePerUnitDayRub.toLocaleString("ru-RU")} ₽
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-800">{e.tariffs.receivingPerOperationRub} ₽</TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-800">{e.tariffs.labelingPerUnitRub} ₽</TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-800">{e.tariffs.packagingPerUnitRub} ₽</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium text-slate-900">{e.warehouseSkuCount}</TableCell>
                     <TableCell className="text-right tabular-nums font-medium text-slate-900">
                       {e.warehouseUnitsTotal.toLocaleString("ru-RU")}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button asChild type="button" variant="ghost" size="sm" className="h-8 gap-1 text-slate-700">
-                          <Link to={`/legal-entities/${e.id}`}>Открыть</Link>
-                        </Button>
-                        <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 text-slate-700" onClick={() => openTariffs(e)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                          Тарифы
-                        </Button>
-                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

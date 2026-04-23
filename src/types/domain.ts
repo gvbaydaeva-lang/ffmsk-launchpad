@@ -178,9 +178,12 @@ export type ProductCatalogItem = {
   photoUrl: string | null;
   name: string;
   brand: string;
+  color: string;
+  size: string;
   supplierArticle: string;
   manufacturer: string;
-  country: string;
+  countryOfOrigin: string;
+  composition: string;
   lengthCm: number;
   widthCm: number;
   heightCm: number;
