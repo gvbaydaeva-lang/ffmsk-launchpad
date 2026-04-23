@@ -2,7 +2,8 @@ import * as React from "react";
 import { useParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
-import { Download, FileSpreadsheet, Plus, Upload } from "lucide-react";
+import Barcode from "react-barcode";
+import { Download, FileSpreadsheet, Plus, Printer, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,10 @@ function text(v: unknown) {
   return String(v ?? "").trim();
 }
 
+function hasText(v: unknown) {
+  return text(v) !== "";
+}
+
 function logisticsLabel(p: ProductCatalogItem) {
   const hasDims = p.lengthCm > 0 && p.widthCm > 0 && p.heightCm > 0;
   const dims = hasDims ? `${p.lengthCm}×${p.widthCm}×${p.heightCm} см` : "—";
@@ -51,7 +56,9 @@ const LegalEntityDetailsPage = () => {
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
   const [open, setOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
+  const [printOpen, setPrintOpen] = React.useState(false);
   const [excelRows, setExcelRows] = React.useState<Record<string, unknown>[]>([]);
+  const [quickBarcode, setQuickBarcode] = React.useState("");
   const [inlineDraft, setInlineDraft] = React.useState<Record<string, { lengthCm: string; widthCm: string; heightCm: string; weightKg: string }>>({});
   const [form, setForm] = React.useState({
     category: "",
@@ -66,6 +73,26 @@ const LegalEntityDetailsPage = () => {
     heightCm: "",
     weightKg: "",
     unitsPerPallet: "100",
+  });
+  const [printDraft, setPrintDraft] = React.useState({
+    name: "",
+    brand: "",
+    legalEntity: "",
+    color: "",
+    size: "",
+    country: "",
+    supplierArticle: "",
+    barcode: "",
+  });
+  const [printInclude, setPrintInclude] = React.useState<Record<string, boolean>>({
+    name: true,
+    brand: true,
+    legalEntity: true,
+    color: true,
+    size: true,
+    country: true,
+    supplierArticle: true,
+    barcode: true,
   });
 
   const entity = React.useMemo(() => legal?.find((x) => x.id === id), [legal, id]);
@@ -111,46 +138,109 @@ const LegalEntityDetailsPage = () => {
     setExcelRows(parsed);
   };
 
+  const openPrintDialog = (product: ProductCatalogItem) => {
+    setPrintDraft({
+      name: product.name,
+      brand: product.brand,
+      legalEntity: entity?.shortName ?? "",
+      color: "",
+      size: "",
+      country: product.country,
+      supplierArticle: product.supplierArticle,
+      barcode: product.barcode,
+    });
+    setPrintOpen(true);
+  };
+
+  const onQuickBarcodeOpen = () => {
+    const code = quickBarcode.trim();
+    if (!code) {
+      toast.error("Введите баркод");
+      return;
+    }
+    const hit = rows.find((r) => r.barcode === code);
+    if (!hit) {
+      toast.error("Товар с таким баркодом не найден");
+      return;
+    }
+    openPrintDialog(hit);
+  };
+
   const onImport = async () => {
     if (!entity) return;
-    let imported = 0;
+    let created = 0;
+    let updated = 0;
     let missingDims = 0;
-    for (let i = 0; i < excelRows.length; i += 1) {
-      const row = excelRows[i];
+    const byBarcode = new Map<string, Record<string, unknown>>();
+    const noBarcode: Record<string, unknown>[] = [];
+    for (const row of excelRows) {
+      const barcode = text(row["Баркод"]);
+      if (!barcode) {
+        noBarcode.push(row);
+        continue;
+      }
+      byBarcode.set(barcode, row);
+    }
+    const dedupedRows = [...noBarcode, ...Array.from(byBarcode.values())];
+    const existingByBarcode = new Map(rows.map((r) => [r.barcode, r]));
+
+    for (let i = 0; i < dedupedRows.length; i += 1) {
+      const row = dedupedRows[i];
       const category = text(row["Категория товара"]);
       const name = text(row["Название товара"]);
       const brand = text(row["Бренд"]);
       const barcode = text(row["Баркод"]);
-      const lengthCm = num(row["Длина (см)"]);
-      const widthCm = num(row["Ширина (см)"]);
-      const heightCm = num(row["Высота (см)"]);
-      const weightKg = num(row["Вес (кг)"]);
+      const lengthRaw = row["Длина (см)"];
+      const widthRaw = row["Ширина (см)"];
+      const heightRaw = row["Высота (см)"];
+      const weightRaw = row["Вес (кг)"];
+      const lengthCm = num(lengthRaw);
+      const widthCm = num(widthRaw);
+      const heightCm = num(heightRaw);
+      const weightKg = num(weightRaw);
 
       const fallbackName = name || brand || `Товар ${barcode || i + 1}`;
       if (!(lengthCm > 0 && widthCm > 0 && heightCm > 0)) missingDims += 1;
 
-      await addProduct({
-        legalEntityId: entity.id,
-        category: category || "Без категории",
-        photoUrl: null,
-        name: fallbackName,
-        brand: brand || "Без бренда",
-        supplierArticle: "",
-        manufacturer: "",
-        country: "",
-        lengthCm,
-        widthCm,
-        heightCm,
-        weightKg,
-        unitsPerPallet: 100,
-        barcode: barcode || undefined,
-      });
-      imported += 1;
+      const existing = barcode ? existingByBarcode.get(barcode) : undefined;
+      if (existing) {
+        await updateProduct({
+          id: existing.id,
+          patch: {
+            category: category || existing.category,
+            name: name || existing.name,
+            brand: brand || existing.brand,
+            lengthCm: hasText(lengthRaw) ? lengthCm : existing.lengthCm,
+            widthCm: hasText(widthRaw) ? widthCm : existing.widthCm,
+            heightCm: hasText(heightRaw) ? heightCm : existing.heightCm,
+            weightKg: hasText(weightRaw) ? weightKg : existing.weightKg,
+          },
+        });
+        updated += 1;
+      } else {
+        await addProduct({
+          legalEntityId: entity.id,
+          category: category || "Без категории",
+          photoUrl: null,
+          name: fallbackName,
+          brand: brand || "Без бренда",
+          supplierArticle: "",
+          manufacturer: "",
+          country: "",
+          lengthCm,
+          widthCm,
+          heightCm,
+          weightKg,
+          unitsPerPallet: 100,
+          barcode: barcode || undefined,
+        });
+        created += 1;
+      }
     }
     if (missingDims > 0) {
       toast.warning(`Импорт завершён с предупреждением: у ${missingDims} товаров не указаны габариты.`);
     }
-    toast.success(`Импортировано товаров: ${imported}`);
+    toast.success(`Импорт завершён: создано ${created}, обновлено ${updated}.`);
     setImportOpen(false);
     setExcelRows([]);
   };
@@ -224,6 +314,26 @@ const LegalEntityDetailsPage = () => {
 
   return (
     <div className="space-y-4">
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #print-label-area,
+          #print-label-area * {
+            visibility: visible !important;
+          }
+          #print-label-area {
+            position: fixed;
+            left: 0;
+            top: 0;
+            border: none !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+        }
+      `}</style>
       <div>
         <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">{entity.shortName}</h2>
         <p className="mt-1 text-sm text-slate-600">Карточка клиента: каталог, операции и тарифная модель хранения.</p>
@@ -292,7 +402,13 @@ const LegalEntityDetailsPage = () => {
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Вес, кг</Label>
-                    <Input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((f) => ({ ...f, weightKg: e.target.value }))} />
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={form.weightKg}
+                      onChange={(e) => setForm((f) => ({ ...f, weightKg: e.target.value }))}
+                    />
+                    <p className="text-[11px] text-slate-500">Вес в кг (напр. 0.35)</p>
                   </div>
                 </div>
                 <DialogFooter>
@@ -312,6 +428,21 @@ const LegalEntityDetailsPage = () => {
             <Button variant="outline" className="gap-2" onClick={downloadTemplate}>
               <Download className="h-4 w-4" />
               Скачать шаблон
+            </Button>
+          </div>
+          <div className="flex w-full items-center gap-2">
+            <Input
+              placeholder="Быстрый ввод баркода для печати этикетки"
+              value={quickBarcode}
+              onChange={(e) => setQuickBarcode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onQuickBarcodeOpen();
+              }}
+              className="max-w-md font-mono"
+            />
+            <Button type="button" variant="outline" className="gap-2" onClick={onQuickBarcodeOpen}>
+              <Printer className="h-4 w-4" />
+              Открыть печать
             </Button>
           </div>
 
@@ -369,7 +500,15 @@ const LegalEntityDetailsPage = () => {
                           <div className="h-10 w-10 rounded-md border border-dashed border-slate-300 bg-slate-50" />
                         )}
                       </TableCell>
-                      <TableCell className="max-w-[220px] truncate">{p.name}</TableCell>
+                      <TableCell className="max-w-[220px] truncate">
+                        <button
+                          type="button"
+                          className="truncate text-left text-slate-900 underline-offset-2 hover:underline"
+                          onClick={() => openPrintDialog(p)}
+                        >
+                          {p.name}
+                        </button>
+                      </TableCell>
                       <TableCell className="max-w-[140px] truncate">{p.category || "—"}</TableCell>
                       <TableCell>{p.brand}</TableCell>
                       <TableCell className="space-y-1 text-xs">
@@ -404,10 +543,13 @@ const LegalEntityDetailsPage = () => {
                             onChange={(e) =>
                               setInlineDraft((d) => ({ ...d, [p.id]: { ...(d[p.id] ?? { lengthCm: "", widthCm: "", heightCm: "", weightKg: "" }), weightKg: e.target.value } }))
                             }
-                            placeholder="кг"
+                            placeholder="кг (0.35)"
+                            step="0.01"
+                            type="number"
                             className="h-7 px-2 text-xs"
                           />
                         </div>
+                        <p className="text-[11px] text-slate-500">Вес в кг (напр. 0.35)</p>
                         <Button
                           size="sm"
                           variant="outline"
@@ -418,7 +560,15 @@ const LegalEntityDetailsPage = () => {
                           Сохранить
                         </Button>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{p.barcode}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        <button
+                          type="button"
+                          className="underline-offset-2 hover:underline"
+                          onClick={() => openPrintDialog(p)}
+                        >
+                          {p.barcode}
+                        </button>
+                      </TableCell>
                       <TableCell>
                         <Label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs">
                           <Upload className="h-3.5 w-3.5" />
@@ -440,6 +590,97 @@ const LegalEntityDetailsPage = () => {
               </Table>
             </CardContent>
           </Card>
+
+          <Dialog open={printOpen} onOpenChange={setPrintOpen}>
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
+              <DialogHeader>
+                <DialogTitle>Печать этикетки</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
+                <div className="space-y-3 no-print">
+                  {(
+                    [
+                      ["name", "Название"],
+                      ["brand", "Бренд"],
+                      ["legalEntity", "Юрлицо"],
+                      ["color", "Цвет"],
+                      ["size", "Размер"],
+                      ["country", "Страна производства"],
+                      ["supplierArticle", "Артикул"],
+                      ["barcode", "Баркод"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <div key={key} className="grid gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <Label>{label}</Label>
+                        <Label className="flex items-center gap-1 text-xs text-slate-600">
+                          <Input
+                            className="h-3.5 w-3.5"
+                            type="checkbox"
+                            checked={Boolean(printInclude[key])}
+                            onChange={(e) => setPrintInclude((s) => ({ ...s, [key]: e.target.checked }))}
+                          />
+                          Включить в печать
+                        </Label>
+                      </div>
+                      <Input
+                        value={printDraft[key]}
+                        onChange={(e) => setPrintDraft((s) => ({ ...s, [key]: e.target.value }))}
+                        className={key === "barcode" ? "font-mono" : ""}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <p className="mb-2 text-xs text-slate-600 no-print">Превью этикетки 58×40 мм</p>
+                  <div className="mx-auto flex items-start justify-center">
+                    <div
+                      id="print-label-area"
+                      className="bg-white text-black"
+                      style={{ width: "58mm", minHeight: "40mm", padding: "2.5mm", border: "1px solid #d9d9d9" }}
+                    >
+                      {printInclude.name && <p className="text-[11px] font-semibold leading-tight">{printDraft.name || "—"}</p>}
+                      {printInclude.brand && <p className="text-[10px] leading-tight">{printDraft.brand || "—"}</p>}
+                      {printInclude.legalEntity && <p className="text-[9px] leading-tight">{printDraft.legalEntity || "—"}</p>}
+                      {(printInclude.color || printInclude.size) && (
+                        <p className="text-[9px] leading-tight">
+                          {printInclude.color ? `Цвет: ${printDraft.color || "—"}` : ""}
+                          {printInclude.color && printInclude.size ? " · " : ""}
+                          {printInclude.size ? `Размер: ${printDraft.size || "—"}` : ""}
+                        </p>
+                      )}
+                      {printInclude.country && <p className="text-[9px] leading-tight">Страна: {printDraft.country || "—"}</p>}
+                      {printInclude.supplierArticle && (
+                        <p className="text-[9px] leading-tight">Арт.: {printDraft.supplierArticle || "—"}</p>
+                      )}
+                      {printInclude.barcode && printDraft.barcode && (
+                        <div className="mt-1">
+                          <Barcode
+                            value={printDraft.barcode}
+                            height={30}
+                            width={1.35}
+                            fontSize={9}
+                            margin={0}
+                            background="#ffffff"
+                            displayValue
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter className="no-print">
+                <Button variant="outline" onClick={() => setPrintOpen(false)}>
+                  Закрыть
+                </Button>
+                <Button type="button" className="gap-2" onClick={() => window.print()}>
+                  <Printer className="h-4 w-4" />
+                  Печать
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="history">
