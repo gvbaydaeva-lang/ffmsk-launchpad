@@ -2,7 +2,18 @@ import * as React from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import type { DateRange } from "react-day-picker";
-import { CalendarCheck, CalendarDays, Globe } from "lucide-react";
+import { CalendarDays, CheckCircle2, Globe } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -111,24 +122,43 @@ const GlobalFiltersBar = ({ className }: { className?: string }) => {
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-2 sm:flex-1">
-        <Button
-          type="button"
-          className="h-10 gap-2 bg-slate-900 text-white hover:bg-slate-800"
-          disabled={closeDay.isPending}
-          onClick={async () => {
-            try {
-              const result = await closeDay.mutateAsync();
-              toast.success("Закрытие дня", {
-                description: `День успешно закрыт. Начислено ${result.totalAccruedRub.toLocaleString("ru-RU")} ₽ за хранение ${result.totalUnits.toLocaleString("ru-RU")} товаров`,
-              });
-            } catch {
-              toast.error("Не удалось закрыть день");
-            }
-          }}
-        >
-          <CalendarCheck className="h-4 w-4" />
-          {closeDay.isPending ? "Закрытие..." : "Закрыть день"}
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              type="button"
+              className="h-10 gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+              disabled={closeDay.isPending}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {closeDay.isPending ? "Закрытие..." : "Закрыть день"}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Подтверждение закрытия дня</AlertDialogTitle>
+              <AlertDialogDescription>
+                Вы уверены, что хотите зафиксировать начисления за текущий день?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  try {
+                    const result = await closeDay.mutateAsync();
+                    toast.success("Закрытие дня", {
+                      description: `День успешно закрыт. Начислено ${result.totalAccruedRub.toLocaleString("ru-RU")} ₽ за хранение ${result.totalUnits.toLocaleString("ru-RU")} товаров`,
+                    });
+                  } catch {
+                    toast.error("Не удалось закрыть день");
+                  }
+                }}
+              >
+                Подтвердить
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       <div className="flex min-w-[200px] flex-1 items-center justify-end sm:max-w-xs sm:flex-none">

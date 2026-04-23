@@ -236,7 +236,7 @@ const DashboardPage = () => {
           <Card className="border-slate-200 shadow-sm">
             <CardHeader>
               <CardTitle className="font-display text-base text-slate-900">Последние операции</CardTitle>
-              <CardDescription className="text-slate-500">Склад и биллинг</CardDescription>
+              <CardDescription className="text-slate-500">Склад и финансы</CardDescription>
             </CardHeader>
             <CardContent className="px-0 pb-4 pt-0">
               <Table>

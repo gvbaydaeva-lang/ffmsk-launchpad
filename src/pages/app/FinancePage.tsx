@@ -1,5 +1,5 @@
 import * as React from "react";
-import { format, isWithinInterval, parseISO } from "date-fns";
+import { endOfMonth, format, isWithinInterval, parseISO, startOfDay } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Download } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useFinanceOperations, useLegalEntities } from "@/hooks/useWmsMock";
+import { useFinanceOperations, useLegalEntities, useWarehouseInventory } from "@/hooks/useWmsMock";
 import { exportFinanceClientReport } from "@/lib/financeExport";
 import type { FinanceOperation } from "@/types/domain";
 
@@ -41,6 +41,7 @@ function buildAccrualBasis(op: FinanceOperation) {
 const FinancePage = () => {
   const { data, isLoading, error } = useFinanceOperations();
   const { data: entities } = useLegalEntities();
+  const { data: inventory } = useWarehouseInventory();
   const { legalEntityId, dateFrom, dateTo } = useAppFilters();
   const [accrualFilter, setAccrualFilter] = React.useState<"all" | "storage" | "services">("all");
 
@@ -99,6 +100,19 @@ const FinancePage = () => {
     [summaryRows],
   );
 
+  const overviewStats = React.useMemo(() => {
+    const totalReceivables = summaryRows.filter((x) => x.totalDueRub > 0).reduce((s, x) => s + x.totalDueRub, 0);
+    const serviceRevenue = summaryRows.reduce((s, x) => s + x.serviceAccruedRub + x.paidRub, 0);
+    const today = startOfDay(new Date());
+    const monthEnd = endOfMonth(today);
+    const ms = monthEnd.getTime() - today.getTime();
+    const daysLeft = Math.max(1, Math.floor(ms / 86_400_000) + 1);
+    const relevantInventory = (inventory ?? []).filter((row) => legalEntityId === "all" || row.legalEntityId === legalEntityId);
+    const perDay = relevantInventory.reduce((s, row) => s + row.storagePerDayRub, 0);
+    const storageForecast = Math.round(perDay * daysLeft);
+    return { totalReceivables, serviceRevenue, storageForecast, daysLeft };
+  }, [summaryRows, inventory, legalEntityId]);
+
   const accrualHistoryRows = React.useMemo(() => {
     return filteredOps
       .filter((op) => op.kind !== "оплата от клиента")
@@ -113,13 +127,49 @@ const FinancePage = () => {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Биллинг</h2>
+        <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Финансы</h2>
         <p className="mt-1 text-sm text-slate-600">
           Сводка начислений по юрлицам: хранение, услуги и статус оплаты.
         </p>
       </div>
 
       <GlobalFiltersBar />
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-slate-600">Общая дебиторка</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-display text-2xl font-semibold tabular-nums text-red-600">
+              {overviewStats.totalReceivables.toLocaleString("ru-RU")} ₽
+            </p>
+            <p className="text-xs text-slate-500">Сумма по клиентам со статусом «К оплате»</p>
+          </CardContent>
+        </Card>
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-slate-600">Выручка за месяц</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-display text-2xl font-semibold tabular-nums text-slate-900">
+              {overviewStats.serviceRevenue.toLocaleString("ru-RU")} ₽
+            </p>
+            <p className="text-xs text-slate-500">Оплаченные и начисленные услуги за выбранный период</p>
+          </CardContent>
+        </Card>
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-slate-600">Прогноз хранения</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-display text-2xl font-semibold tabular-nums text-emerald-600">
+              {overviewStats.storageForecast.toLocaleString("ru-RU")} ₽
+            </p>
+            <p className="text-xs text-slate-500">Прогноз на {overviewStats.daysLeft} дн. до конца месяца</p>
+          </CardContent>
+        </Card>
+      </div>
 
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader className="pb-3">
@@ -257,6 +307,7 @@ const FinancePage = () => {
                       <TableHead>Дата</TableHead>
                       <TableHead>Юрлицо</TableHead>
                       <TableHead>Тип начисления</TableHead>
+                      <TableHead>Детальная запись</TableHead>
                       <TableHead className="text-right">Сумма</TableHead>
                       <TableHead>Основание</TableHead>
                     </TableRow>
@@ -271,6 +322,11 @@ const FinancePage = () => {
                           </TableCell>
                           <TableCell className="max-w-[220px] truncate">{entityName}</TableCell>
                           <TableCell>{op.kind}</TableCell>
+                          <TableCell className="max-w-[360px] truncate text-slate-700 text-xs sm:text-sm">
+                            {`${format(parseISO(op.date.includes("T") ? op.date : `${op.date}T00:00:00`), "dd.MM.yyyy", {
+                              locale: ru,
+                            })} — ${entityName} — ${buildAccrualBasis(op)} — ${op.amountRub.toLocaleString("ru-RU")} ₽`}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums font-medium">{op.amountRub.toLocaleString("ru-RU")} ₽</TableCell>
                           <TableCell className="max-w-[320px] text-slate-600 text-xs sm:text-sm">{buildAccrualBasis(op)}</TableCell>
                         </TableRow>
@@ -278,7 +334,7 @@ const FinancePage = () => {
                     })}
                     {accrualHistoryRows.length === 0 && (
                       <TableRow className="border-slate-100">
-                        <TableCell colSpan={5} className="py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">
                           Нет начислений под выбранный фильтр.
                         </TableCell>
                       </TableRow>

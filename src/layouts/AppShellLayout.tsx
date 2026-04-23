@@ -35,7 +35,7 @@ const nav = [
   { to: "/warehouse", label: "Складской учёт", icon: Package },
   { to: "/receiving", label: "Приёмка", icon: PackageOpen },
   { to: "/shipping", label: "Отгрузки", icon: Truck },
-  { to: "/finance", label: "Биллинг", icon: Wallet },
+  { to: "/finance", label: "Финансы", icon: Wallet },
   { to: "/legal-entities", label: "Юрлица", icon: Building2 },
   { to: "/users", label: "Пользователи", icon: Users },
 ] as const;
@@ -63,7 +63,7 @@ const AppShellLayout = () => {
               <Box className="h-4 w-4" />
             </span>
             <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-              <div className="truncate text-sm font-semibold tracking-tight text-white">Fulfillment ERP & Billing</div>
+              <div className="truncate text-sm font-semibold tracking-tight text-white">Fulfillment ERP</div>
               <div className="truncate text-xs text-slate-400">B2B</div>
             </div>
           </div>
