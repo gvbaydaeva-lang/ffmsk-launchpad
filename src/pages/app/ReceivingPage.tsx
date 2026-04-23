@@ -36,6 +36,7 @@ const ReceivingPage = () => {
   const { role } = useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [open, setOpen] = React.useState(false);
+  const [actualDraft, setActualDraft] = React.useState<Record<string, string>>({});
   const [form, setForm] = React.useState({
     legalEntityId: "le-2" as string,
     documentNo: "",
@@ -57,6 +58,25 @@ const ReceivingPage = () => {
     if (legalEntityId === "all") return base;
     return base.filter((r) => r.legalEntityId === legalEntityId);
   }, [data, mp, legalEntityId]);
+  const productMap = React.useMemo(() => new Map((catalog ?? []).map((p) => [p.id, p])), [catalog]);
+  const lineRows = React.useMemo(
+    () =>
+      rows.flatMap((r) =>
+        r.items.map((it, idx) => ({
+          lineId: `${r.id}-${it.productId}-${idx}`,
+          inboundId: r.id,
+          documentNo: r.documentNo,
+          legalEntityId: r.legalEntityId,
+          productId: it.productId,
+          declaredQty: it.quantity,
+          actualQty: r.receivedUnits ?? null,
+          status: r.status,
+          marketplace: r.marketplace,
+          warehouse: r.destinationWarehouse,
+        })),
+      ),
+    [rows],
+  );
 
   const clientProducts = React.useMemo(
     () => (catalog ?? []).filter((x) => x.legalEntityId === form.legalEntityId),
@@ -275,34 +295,45 @@ const ReceivingPage = () => {
             <Table>
               <TableHeader>
                 <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="text-slate-600">Документ</TableHead>
                   <TableHead className="text-slate-600">Юрлицо</TableHead>
-                  <TableHead className="text-slate-600">Поставщик</TableHead>
-                  <TableHead className="text-slate-600">Склад</TableHead>
-                  <TableHead className="text-slate-600">Площадка</TableHead>
-                  <TableHead className="text-right text-slate-600">Ожид.</TableHead>
-                  <TableHead className="text-right text-slate-600">Принято</TableHead>
+                  <TableHead className="text-slate-600">Товар</TableHead>
+                  <TableHead className="text-slate-600">Баркод</TableHead>
+                  <TableHead className="text-right text-slate-600">Количество заявленное</TableHead>
+                  <TableHead className="text-right text-slate-600">Количество фактическое</TableHead>
                   <TableHead className="text-slate-600">Статус</TableHead>
-                  <TableHead className="text-slate-600">ETA</TableHead>
+                  <TableHead className="text-slate-600">Документ</TableHead>
                   <TableHead className="text-right text-slate-600">Действие</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id} className="border-slate-100">
-                    <TableCell className="font-mono text-xs text-slate-900 sm:text-sm">{row.documentNo}</TableCell>
+                {lineRows.map((row) => {
+                  const product = productMap.get(row.productId);
+                  const actualValue = actualDraft[row.lineId] ?? (row.actualQty != null ? String(row.actualQty) : "");
+                  return (
+                  <TableRow key={row.lineId} className="border-slate-100">
                     <TableCell className="max-w-[160px] truncate text-slate-700 text-sm">
                       <Link to={`/legal-entities/${row.legalEntityId}?tab=receiving`} className="hover:underline">
                         {entityName(row.legalEntityId)}
                       </Link>
                     </TableCell>
-                    <TableCell className="max-w-[200px] truncate text-slate-800">{row.supplier}</TableCell>
-                    <TableCell className="max-w-[180px] truncate text-slate-700">{row.destinationWarehouse}</TableCell>
-                    <TableCell>
-                      <MarketplaceBadge marketplace={row.marketplace} />
+                    <TableCell className="max-w-[260px] truncate text-slate-800">
+                      {product ? `${product.name} · ${product.supplierArticle || "—"}` : row.productId}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-900">{row.expectedUnits}</TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-500">{row.receivedUnits ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">{product?.barcode ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-900">{row.declaredQty}</TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-500">
+                      {canChangeInboundStatus(role) ? (
+                        <Input
+                          type="number"
+                          min={0}
+                          className="h-8 w-24 text-right"
+                          value={actualValue}
+                          onChange={(e) => setActualDraft((s) => ({ ...s, [row.lineId]: e.target.value }))}
+                        />
+                      ) : (
+                        row.actualQty ?? "—"
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -321,12 +352,21 @@ const ReceivingPage = () => {
                         {row.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-slate-500 text-xs sm:text-sm">
-                      {format(parseISO(row.eta), "d MMM yyyy", { locale: ru })}
-                    </TableCell>
+                    <TableCell className="font-mono text-xs">{row.documentNo}</TableCell>
                     <TableCell className="text-right">
                       {row.status !== "принято" && canChangeInboundStatus(role) ? (
-                        <Button size="sm" variant="outline" onClick={() => void advanceStatus(row)} disabled={isUpdatingInbound}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            void setInboundStatus({
+                              id: row.inboundId,
+                              status: row.status === "ожидается" ? "на приёмке" : "принято",
+                              receivedUnits: Number(actualValue) || row.declaredQty,
+                            })
+                          }
+                          disabled={isUpdatingInbound}
+                        >
                           {row.status === "ожидается" ? "На приёмке" : "Принять"}
                         </Button>
                       ) : (
@@ -334,7 +374,7 @@ const ReceivingPage = () => {
                       )}
                     </TableCell>
                   </TableRow>
-                ))}
+                )})}
               </TableBody>
             </Table>
           )}

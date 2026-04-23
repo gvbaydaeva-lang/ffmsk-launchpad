@@ -190,10 +190,11 @@ const ShippingPage = () => {
                 <TableRow>
                   <TableHead>Юрлицо</TableHead>
                   <TableHead>Товар</TableHead>
-                  <TableHead>Склад</TableHead>
+                  <TableHead>Склад назначения</TableHead>
+                  <TableHead>Баркод</TableHead>
                   <TableHead>Площадка</TableHead>
                   <TableHead>Метод</TableHead>
-                  <TableHead className="text-right">К выдаче</TableHead>
+                  <TableHead className="text-right">Количество к отгрузке</TableHead>
                   <TableHead>Статус</TableHead>
                   <TableHead>Создано</TableHead>
                   <TableHead className="text-right">Действие</TableHead>
@@ -209,6 +210,7 @@ const ShippingPage = () => {
                     </TableCell>
                     <TableCell>{productMap.get(row.productId)?.name ?? row.productId}</TableCell>
                     <TableCell>{row.sourceWarehouse}</TableCell>
+                    <TableCell className="font-mono text-xs">{productMap.get(row.productId)?.barcode ?? "—"}</TableCell>
                     <TableCell><MarketplaceBadge marketplace={row.marketplace} /></TableCell>
                     <TableCell className="uppercase text-xs">{row.shippingMethod}</TableCell>
                     <TableCell className="text-right tabular-nums">{row.plannedUnits}</TableCell>

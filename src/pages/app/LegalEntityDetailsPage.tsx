@@ -127,6 +127,10 @@ const LegalEntityDetailsPage = () => {
   const [printOpen, setPrintOpen] = React.useState(false);
   const [createInboundOpen, setCreateInboundOpen] = React.useState(false);
   const [createOutboundOpen, setCreateOutboundOpen] = React.useState(false);
+  const [inboundExcelOpen, setInboundExcelOpen] = React.useState(false);
+  const [outboundExcelOpen, setOutboundExcelOpen] = React.useState(false);
+  const [inboundExcelRows, setInboundExcelRows] = React.useState<Record<string, unknown>[]>([]);
+  const [outboundExcelRows, setOutboundExcelRows] = React.useState<Record<string, unknown>[]>([]);
   const [excelRows, setExcelRows] = React.useState<Record<string, unknown>[]>([]);
   const [productSearch, setProductSearch] = React.useState("");
   const [selectedInboundProductId, setSelectedInboundProductId] = React.useState("");
@@ -463,6 +467,119 @@ const LegalEntityDetailsPage = () => {
     setSelectedOutboundProductId("");
   };
 
+  const downloadInboundTaskTemplate = () => {
+    const headers = [["Название", "Баркод", "Артикул", "Цвет", "Размер", "Количество заявленное"]];
+    const ws = XLSX.utils.aoa_to_sheet(headers);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Приемка");
+    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "inbound_tasks_template.xlsx";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadOutboundTaskTemplate = () => {
+    const headers = [["Название", "Баркод", "Артикул", "Цвет", "Размер", "Количество", "Склад назначения", "Маркетплейс"]];
+    const ws = XLSX.utils.aoa_to_sheet(headers);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Отгрузка");
+    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "outbound_tasks_template.xlsx";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const parseExcelRows = async (file: File) => {
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+  };
+
+  const findProductByRow = (row: Record<string, unknown>) => {
+    const barcode = text(row["Баркод"]);
+    const article = text(row["Артикул"]);
+    if (barcode) {
+      const byBarcode = rows.find((p) => p.barcode === barcode);
+      if (byBarcode) return byBarcode;
+    }
+    if (article) {
+      const byArticle = rows.find((p) => p.supplierArticle === article);
+      if (byArticle) return byArticle;
+    }
+    return null;
+  };
+
+  const importInboundExcel = async () => {
+    if (!entity) return;
+    let created = 0;
+    let skipped = 0;
+    const docNo = `ПТ-${Date.now().toString().slice(-6)}`;
+    for (const row of inboundExcelRows) {
+      const product = findProductByRow(row);
+      const qty = Number(row["Количество заявленное"]) || 0;
+      if (!product || qty <= 0) {
+        skipped += 1;
+        continue;
+      }
+      await createInbound({
+        legalEntityId: entity.id,
+        documentNo: docNo,
+        supplier: "Импорт Excel",
+        items: [{ productId: product.id, quantity: qty }],
+        destinationWarehouse: "Склад Коледино",
+        marketplace: "wb",
+        expectedUnits: qty,
+        receivedUnits: null,
+        status: "ожидается",
+        eta: new Date().toISOString().slice(0, 10),
+      });
+      created += 1;
+    }
+    toast.success(`Импорт приёмки: добавлено ${created}, пропущено ${skipped}`);
+    setInboundExcelOpen(false);
+    setInboundExcelRows([]);
+  };
+
+  const importOutboundExcel = async () => {
+    if (!entity) return;
+    let created = 0;
+    let skipped = 0;
+    for (const row of outboundExcelRows) {
+      const product = findProductByRow(row);
+      const qty = Number(row["Количество"]) || 0;
+      const wh = text(row["Склад назначения"]) || "Склад Коледино";
+      const mpRaw = text(row["Маркетплейс"]).toLowerCase();
+      const marketplace = mpRaw === "ozon" ? "ozon" : mpRaw === "yandex" ? "yandex" : "wb";
+      if (!product || qty <= 0 || qty > product.stockOnHand) {
+        skipped += 1;
+        continue;
+      }
+      await createOutbound({
+        legalEntityId: entity.id,
+        productId: product.id,
+        marketplace,
+        sourceWarehouse: wh,
+        shippingMethod: "fbo",
+        plannedUnits: qty,
+        shippedUnits: null,
+        status: "создано",
+      });
+      created += 1;
+    }
+    toast.success(`Импорт отгрузки: добавлено ${created}, пропущено ${skipped}`);
+    setOutboundExcelOpen(false);
+    setOutboundExcelRows([]);
+  };
+
   if (!entity) return <p className="text-sm text-slate-600">Юрлицо не найдено.</p>;
 
   return (
@@ -718,43 +835,76 @@ const LegalEntityDetailsPage = () => {
         <TabsContent value="receiving">
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-600">Задания на приёмку по клиенту</p>
-            {canCreateInbound(role) && (
-              <Dialog open={createInboundOpen} onOpenChange={setCreateInboundOpen}>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" className="gap-2" onClick={downloadInboundTaskTemplate}>
+                <Download className="h-4 w-4" />
+                Скачать шаблон
+              </Button>
+              <Dialog open={inboundExcelOpen} onOpenChange={setInboundExcelOpen}>
                 <DialogTrigger asChild>
-                  <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
-                    <Plus className="h-4 w-4" />
-                    Создать задание на приход
+                  <Button variant="outline" className="gap-2">
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Импорт Excel
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
-                  <DialogHeader><DialogTitle>Новое задание на приёмку</DialogTitle></DialogHeader>
-                  <div className="grid gap-3 py-2">
-                    <div className="grid gap-1.5">
-                      <Label>Поиск товара (название/баркод)</Label>
-                      <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label>Товар</Label>
-                      <Select value={selectedInboundProductId} onValueChange={setSelectedInboundProductId}>
-                        <SelectTrigger><SelectValue placeholder="Выберите товар" /></SelectTrigger>
-                        <SelectContent>
-                          {filteredProducts.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>{p.name} · {p.barcode}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={inboundDraft.quantity} onChange={(e) => setInboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
-                    <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={inboundDraft.marketplace} onValueChange={(v) => setInboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
-                    <div className="grid gap-1.5"><Label>Склад</Label><Input value={inboundDraft.warehouse} onChange={(e) => setInboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
+                  <DialogHeader><DialogTitle>Импорт заданий на приёмку</DialogTitle></DialogHeader>
+                  <div className="space-y-2">
+                    <Input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        void parseExcelRows(f).then(setInboundExcelRows);
+                      }}
+                    />
+                    <p className="text-xs text-slate-600">Строк к импорту: {inboundExcelRows.length}</p>
                   </div>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setCreateInboundOpen(false)}>Отмена</Button>
-                    <Button onClick={() => void onCreateInbound()} disabled={isCreating}>{isCreating ? "Сохранение..." : "Сохранить"}</Button>
+                    <Button variant="outline" onClick={() => setInboundExcelOpen(false)}>Отмена</Button>
+                    <Button onClick={() => void importInboundExcel()} disabled={!inboundExcelRows.length}>Импортировать</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
-            )}
+              {canCreateInbound(role) && (
+                <Dialog open={createInboundOpen} onOpenChange={setCreateInboundOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                      <Plus className="h-4 w-4" />
+                      Создать задание на приход
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader><DialogTitle>Новое задание на приёмку</DialogTitle></DialogHeader>
+                    <div className="grid gap-3 py-2">
+                      <div className="grid gap-1.5">
+                        <Label>Поиск товара (название/баркод)</Label>
+                        <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label>Товар</Label>
+                        <Select value={selectedInboundProductId} onValueChange={setSelectedInboundProductId}>
+                          <SelectTrigger><SelectValue placeholder="Выберите товар" /></SelectTrigger>
+                          <SelectContent>
+                            {filteredProducts.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name} · {p.barcode}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={inboundDraft.quantity} onChange={(e) => setInboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
+                      <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={inboundDraft.marketplace} onValueChange={(v) => setInboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
+                      <div className="grid gap-1.5"><Label>Склад</Label><Input value={inboundDraft.warehouse} onChange={(e) => setInboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setCreateInboundOpen(false)}>Отмена</Button>
+                      <Button onClick={() => void onCreateInbound()} disabled={isCreating}>{isCreating ? "Сохранение..." : "Сохранить"}</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </div>
           </div>
           <Card className="border-slate-200">
             <CardContent className="p-0 sm:p-4">
@@ -810,44 +960,77 @@ const LegalEntityDetailsPage = () => {
         <TabsContent value="shipping">
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-600">Задания на отгрузку по клиенту</p>
-            {canCreateOutbound(role) && (
-              <Dialog open={createOutboundOpen} onOpenChange={setCreateOutboundOpen}>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" className="gap-2" onClick={downloadOutboundTaskTemplate}>
+                <Download className="h-4 w-4" />
+                Скачать шаблон
+              </Button>
+              <Dialog open={outboundExcelOpen} onOpenChange={setOutboundExcelOpen}>
                 <DialogTrigger asChild>
-                  <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
-                    <Plus className="h-4 w-4" />
-                    Создать задание на отгрузку
+                  <Button variant="outline" className="gap-2">
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Импорт Excel
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
-                  <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
-                  <div className="grid gap-3 py-2">
-                    <div className="grid gap-1.5">
-                      <Label>Поиск товара (название/баркод)</Label>
-                      <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label>Товар</Label>
-                      <Select value={selectedOutboundProductId} onValueChange={setSelectedOutboundProductId}>
-                        <SelectTrigger><SelectValue placeholder="Выберите товар из остатков" /></SelectTrigger>
-                        <SelectContent>
-                          {filteredProducts.filter((p) => p.stockOnHand > 0).map((p) => (
-                            <SelectItem key={p.id} value={p.id}>{p.name} · {p.barcode} · остаток {p.stockOnHand}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={outboundDraft.quantity} onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
-                    <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
-                    <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
-                    <div className="grid gap-1.5"><Label>Способ отгрузки</Label><Select value={outboundDraft.shippingMethod} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, shippingMethod: v as "fbo" | "fbs" | "self" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fbo">FBO</SelectItem><SelectItem value="fbs">FBS</SelectItem><SelectItem value="self">Самовывоз</SelectItem></SelectContent></Select></div>
+                  <DialogHeader><DialogTitle>Импорт заданий на отгрузку</DialogTitle></DialogHeader>
+                  <div className="space-y-2">
+                    <Input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        void parseExcelRows(f).then(setOutboundExcelRows);
+                      }}
+                    />
+                    <p className="text-xs text-slate-600">Строк к импорту: {outboundExcelRows.length}</p>
                   </div>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setCreateOutboundOpen(false)}>Отмена</Button>
-                    <Button onClick={() => void onCreateOutbound()} disabled={isCreatingOutbound}>{isCreatingOutbound ? "Сохранение..." : "Сохранить"}</Button>
+                    <Button variant="outline" onClick={() => setOutboundExcelOpen(false)}>Отмена</Button>
+                    <Button onClick={() => void importOutboundExcel()} disabled={!outboundExcelRows.length}>Импортировать</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
-            )}
+              {canCreateOutbound(role) && (
+                <Dialog open={createOutboundOpen} onOpenChange={setCreateOutboundOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                      <Plus className="h-4 w-4" />
+                      Создать задание на отгрузку
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
+                    <div className="grid gap-3 py-2">
+                      <div className="grid gap-1.5">
+                        <Label>Поиск товара (название/баркод)</Label>
+                        <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label>Товар</Label>
+                        <Select value={selectedOutboundProductId} onValueChange={setSelectedOutboundProductId}>
+                          <SelectTrigger><SelectValue placeholder="Выберите товар из остатков" /></SelectTrigger>
+                          <SelectContent>
+                            {filteredProducts.filter((p) => p.stockOnHand > 0).map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name} · {p.barcode} · остаток {p.stockOnHand}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={outboundDraft.quantity} onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
+                      <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
+                      <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
+                      <div className="grid gap-1.5"><Label>Способ отгрузки</Label><Select value={outboundDraft.shippingMethod} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, shippingMethod: v as "fbo" | "fbs" | "self" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fbo">FBO</SelectItem><SelectItem value="fbs">FBS</SelectItem><SelectItem value="self">Самовывоз</SelectItem></SelectContent></Select></div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setCreateOutboundOpen(false)}>Отмена</Button>
+                      <Button onClick={() => void onCreateOutbound()} disabled={isCreatingOutbound}>{isCreatingOutbound ? "Сохранение..." : "Сохранить"}</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </div>
           </div>
           <Card className="border-slate-200">
             <CardContent className="p-0 sm:p-4">
