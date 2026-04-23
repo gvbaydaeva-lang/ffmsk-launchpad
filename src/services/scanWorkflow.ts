@@ -1,12 +1,14 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { InboundSupply, LegalEntity, ShipmentBox, WarehouseInventoryRow } from "@/types/domain";
+import type { InboundSupply, LegalEntity, ProductCatalogItem, ShipmentBox, WarehouseInventoryRow } from "@/types/domain";
 import { aggregateByLegalEntity, fetchMockWarehouseInventory } from "@/services/mockWarehouseInventory";
+import { fetchMockProductCatalog } from "@/services/mockProductCatalog";
 import { fetchMockInboundSupplies } from "@/services/mockReceiving";
 import { fetchMockShipmentBoxes } from "@/services/mockWms";
 
 export type ScanApplyResult =
   | { kind: "inbound_status"; message: string; documentNo: string }
   | { kind: "shipment_found"; message: string; barcode: string }
+  | { kind: "product_found"; message: string; productId: string; barcode: string }
   | { kind: "inventory_status"; message: string; skuLabel: string }
   | { kind: "unknown"; message: string };
 
@@ -47,6 +49,18 @@ export async function applyScannedCodeToDemoState(code: string, qc: QueryClient)
   const hitBox = boxes.find((b) => b.boxBarcode === raw);
   if (hitBox) {
     return { kind: "shipment_found", message: `Короб отгрузки: ${hitBox.boxBarcode}`, barcode: hitBox.boxBarcode };
+  }
+
+  const products =
+    qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
+  const hitProduct = products.find((p) => p.barcode === raw);
+  if (hitProduct) {
+    return {
+      kind: "product_found",
+      message: `Найден товар: ${hitProduct.brand} · ${hitProduct.name}`,
+      productId: hitProduct.id,
+      barcode: hitProduct.barcode,
+    };
   }
 
   let inv = qc.getQueryData<WarehouseInventoryRow[]>(["wms", "warehouse-inventory"]);

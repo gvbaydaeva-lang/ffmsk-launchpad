@@ -2,7 +2,7 @@ import * as React from "react";
 import { useParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
-import { FileSpreadsheet, Plus } from "lucide-react";
+import { Download, FileSpreadsheet, Plus, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,83 +13,48 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLegalEntities, useOperationHistory, useProductCatalog, useUpdateLegalEntitySettings } from "@/hooks/useWmsMock";
+import type { ProductCatalogItem } from "@/types/domain";
 import { toast } from "sonner";
 
-const IMPORT_FIELDS = [
-  { key: "name", label: "Название (Name)", required: true },
-  { key: "brand", label: "Бренд", required: false },
-  { key: "supplierArticle", label: "Артикул поставщика", required: false },
-  { key: "manufacturer", label: "Производитель", required: false },
-  { key: "country", label: "Страна", required: false },
-  { key: "lengthCm", label: "Длина, см", required: false },
-  { key: "widthCm", label: "Ширина, см", required: false },
-  { key: "heightCm", label: "Высота, см", required: false },
-  { key: "weightKg", label: "Вес, кг", required: false },
-  { key: "unitsPerPallet", label: "Ед. на паллету", required: false },
-  { key: "photoUrl", label: "Фото (URL)", required: false },
-  { key: "barcode", label: "Баркод", required: false },
+const TEMPLATE_HEADERS = [
+  "Категория товара",
+  "Название товара",
+  "Бренд",
+  "Баркод",
+  "Длина (см)",
+  "Ширина (см)",
+  "Высота (см)",
+  "Вес (кг)",
 ] as const;
 
-type ImportFieldKey = (typeof IMPORT_FIELDS)[number]["key"];
-type ColumnMapping = Record<ImportFieldKey, string>;
-
-function norm(s: string) {
-  return s.trim().toLowerCase().replace(/\s+/g, "");
+function num(v: unknown) {
+  const n = Number(String(v ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
 }
 
-function guessMapping(headers: string[]): ColumnMapping {
-  const dict = headers.reduce<Record<string, string>>((acc, h) => {
-    acc[norm(h)] = h;
-    return acc;
-  }, {});
-  const pick = (...variants: string[]) => {
-    for (const v of variants) {
-      const found = dict[norm(v)];
-      if (found) return found;
-    }
-    return "__none__";
-  };
-  return {
-    name: pick("Название", "Name", "Товар"),
-    brand: pick("Бренд", "Brand"),
-    supplierArticle: pick("Артикул", "Артикул поставщика", "SupplierArticle"),
-    manufacturer: pick("Производитель", "Manufacturer"),
-    country: pick("Страна", "Country"),
-    lengthCm: pick("Длина", "Длина, см", "Length"),
-    widthCm: pick("Ширина", "Ширина, см", "Width"),
-    heightCm: pick("Высота", "Высота, см", "Height"),
-    weightKg: pick("Вес", "Вес, кг", "Weight"),
-    unitsPerPallet: pick("Ед. на паллету", "UnitsPerPallet"),
-    photoUrl: pick("Фото", "Photo", "PhotoUrl"),
-    barcode: pick("Баркод", "Barcode"),
-  };
+function text(v: unknown) {
+  return String(v ?? "").trim();
+}
+
+function logisticsLabel(p: ProductCatalogItem) {
+  const hasDims = p.lengthCm > 0 && p.widthCm > 0 && p.heightCm > 0;
+  const dims = hasDims ? `${p.lengthCm}×${p.widthCm}×${p.heightCm} см` : "—";
+  const weight = p.weightKg > 0 ? `${p.weightKg} кг` : "—";
+  return `${dims} — ${weight}`;
 }
 
 const LegalEntityDetailsPage = () => {
   const { id = "" } = useParams();
   const { data: legal } = useLegalEntities();
   const { data: history } = useOperationHistory();
-  const { data: catalog, addProduct, isAddingProduct } = useProductCatalog();
+  const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
   const [open, setOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
-  const [excelHeaders, setExcelHeaders] = React.useState<string[]>([]);
   const [excelRows, setExcelRows] = React.useState<Record<string, unknown>[]>([]);
-  const [mapping, setMapping] = React.useState<ColumnMapping>({
-    name: "__none__",
-    brand: "__none__",
-    supplierArticle: "__none__",
-    manufacturer: "__none__",
-    country: "__none__",
-    lengthCm: "__none__",
-    widthCm: "__none__",
-    heightCm: "__none__",
-    weightKg: "__none__",
-    unitsPerPallet: "__none__",
-    photoUrl: "__none__",
-    barcode: "__none__",
-  });
+  const [inlineDraft, setInlineDraft] = React.useState<Record<string, { lengthCm: string; widthCm: string; heightCm: string; weightKg: string }>>({});
   const [form, setForm] = React.useState({
+    category: "",
     photoUrl: "",
     name: "",
     brand: "",
@@ -107,75 +72,78 @@ const LegalEntityDetailsPage = () => {
   const rows = React.useMemo(() => (catalog ?? []).filter((x) => x.legalEntityId === id), [catalog, id]);
   const ops = React.useMemo(() => (history ?? []).filter((x) => x.legalEntityId === id), [history, id]);
 
-  const resetImport = () => {
-    setExcelHeaders([]);
-    setExcelRows([]);
-    setMapping({
-      name: "__none__",
-      brand: "__none__",
-      supplierArticle: "__none__",
-      manufacturer: "__none__",
-      country: "__none__",
-      lengthCm: "__none__",
-      widthCm: "__none__",
-      heightCm: "__none__",
-      weightKg: "__none__",
-      unitsPerPallet: "__none__",
-      photoUrl: "__none__",
-      barcode: "__none__",
-    });
+  React.useEffect(() => {
+    const next: Record<string, { lengthCm: string; widthCm: string; heightCm: string; weightKg: string }> = {};
+    for (const r of rows) {
+      next[r.id] = {
+        lengthCm: String(r.lengthCm || ""),
+        widthCm: String(r.widthCm || ""),
+        heightCm: String(r.heightCm || ""),
+        weightKg: String(r.weightKg || ""),
+      };
+    }
+    setInlineDraft(next);
+  }, [rows]);
+
+  const downloadTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Каталог");
+    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "catalog_template.xlsx";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const onExcelFile = async (file: File) => {
     const buffer = await file.arrayBuffer();
     const wb = XLSX.read(buffer, { type: "array" });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-    if (!rows.length) {
+    const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+    if (!parsed.length) {
       toast.error("Файл пустой");
       return;
     }
-    const headers = Object.keys(rows[0]);
-    setExcelHeaders(headers);
-    setExcelRows(rows);
-    setMapping(guessMapping(headers));
+    setExcelRows(parsed);
   };
 
   const onImport = async () => {
     if (!entity) return;
-    if (mapping.name === "__none__") {
-      toast.error("Сопоставьте колонку Название (Name)");
-      return;
-    }
     let imported = 0;
     let missingDims = 0;
-    for (const row of excelRows) {
-      const val = (field: ImportFieldKey) => {
-        const h = mapping[field];
-        if (!h || h === "__none__") return "";
-        const raw = row[h];
-        return typeof raw === "string" ? raw.trim() : String(raw ?? "").trim();
-      };
-      const name = val("name");
-      if (!name) continue;
-      const lengthCm = Number(val("lengthCm"));
-      const widthCm = Number(val("widthCm"));
-      const heightCm = Number(val("heightCm"));
+    for (let i = 0; i < excelRows.length; i += 1) {
+      const row = excelRows[i];
+      const category = text(row["Категория товара"]);
+      const name = text(row["Название товара"]);
+      const brand = text(row["Бренд"]);
+      const barcode = text(row["Баркод"]);
+      const lengthCm = num(row["Длина (см)"]);
+      const widthCm = num(row["Ширина (см)"]);
+      const heightCm = num(row["Высота (см)"]);
+      const weightKg = num(row["Вес (кг)"]);
+
+      const fallbackName = name || brand || `Товар ${barcode || i + 1}`;
       if (!(lengthCm > 0 && widthCm > 0 && heightCm > 0)) missingDims += 1;
+
       await addProduct({
         legalEntityId: entity.id,
-        photoUrl: val("photoUrl") || null,
-        name,
-        brand: val("brand") || "Без бренда",
-        supplierArticle: val("supplierArticle"),
-        manufacturer: val("manufacturer"),
-        country: val("country"),
-        lengthCm: lengthCm > 0 ? lengthCm : 0,
-        widthCm: widthCm > 0 ? widthCm : 0,
-        heightCm: heightCm > 0 ? heightCm : 0,
-        weightKg: Number(val("weightKg")) || 0,
-        unitsPerPallet: Number(val("unitsPerPallet")) || 100,
-        barcode: val("barcode") || undefined,
+        category: category || "Без категории",
+        photoUrl: null,
+        name: fallbackName,
+        brand: brand || "Без бренда",
+        supplierArticle: "",
+        manufacturer: "",
+        country: "",
+        lengthCm,
+        widthCm,
+        heightCm,
+        weightKg,
+        unitsPerPallet: 100,
+        barcode: barcode || undefined,
       });
       imported += 1;
     }
@@ -184,7 +152,7 @@ const LegalEntityDetailsPage = () => {
     }
     toast.success(`Импортировано товаров: ${imported}`);
     setImportOpen(false);
-    resetImport();
+    setExcelRows([]);
   };
 
   const onAdd = async () => {
@@ -194,27 +162,29 @@ const LegalEntityDetailsPage = () => {
     const heightCm = Number(form.heightCm);
     const weightKg = Number(form.weightKg);
     const unitsPerPallet = Number(form.unitsPerPallet);
-    if (!form.name.trim() || !form.brand.trim() || !Number.isFinite(lengthCm) || !Number.isFinite(widthCm) || !Number.isFinite(heightCm)) {
-      toast.error("Заполните обязательные поля");
+    if (!form.name.trim()) {
+      toast.error("Укажите название товара");
       return;
     }
     await addProduct({
       legalEntityId: entity.id,
+      category: form.category.trim() || "Без категории",
       photoUrl: form.photoUrl.trim() || null,
       name: form.name.trim(),
-      brand: form.brand.trim(),
+      brand: form.brand.trim() || "Без бренда",
       supplierArticle: form.supplierArticle.trim(),
       manufacturer: form.manufacturer.trim(),
       country: form.country.trim(),
-      lengthCm,
-      widthCm,
-      heightCm,
+      lengthCm: Number.isFinite(lengthCm) ? lengthCm : 0,
+      widthCm: Number.isFinite(widthCm) ? widthCm : 0,
+      heightCm: Number.isFinite(heightCm) ? heightCm : 0,
       weightKg: Number.isFinite(weightKg) ? weightKg : 0,
       unitsPerPallet: Number.isFinite(unitsPerPallet) && unitsPerPallet > 0 ? unitsPerPallet : 100,
     });
     toast.success("Товар добавлен в каталог");
     setOpen(false);
     setForm({
+      category: "",
       photoUrl: "",
       name: "",
       brand: "",
@@ -227,6 +197,27 @@ const LegalEntityDetailsPage = () => {
       weightKg: "",
       unitsPerPallet: "100",
     });
+  };
+
+  const saveInlineLogistics = async (idProduct: string) => {
+    const d = inlineDraft[idProduct];
+    if (!d) return;
+    await updateProduct({
+      id: idProduct,
+      patch: {
+        lengthCm: Number(d.lengthCm) || 0,
+        widthCm: Number(d.widthCm) || 0,
+        heightCm: Number(d.heightCm) || 0,
+        weightKg: Number(d.weightKg) || 0,
+      },
+    });
+    toast.success("Логистика обновлена");
+  };
+
+  const onUploadPhoto = async (idProduct: string, file: File) => {
+    const url = URL.createObjectURL(file);
+    await updateProduct({ id: idProduct, patch: { photoUrl: url } });
+    toast.success("Фото привязано к товару");
   };
 
   if (!entity) return <p className="text-sm text-slate-600">Юрлицо не найдено.</p>;
@@ -259,6 +250,10 @@ const LegalEntityDetailsPage = () => {
                   <DialogTitle>Новый товар в справочник</DialogTitle>
                 </DialogHeader>
                 <div className="grid gap-3 py-2 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <Label>Категория товара</Label>
+                    <Input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} />
+                  </div>
                   <div className="grid gap-1.5">
                     <Label>Фото (URL)</Label>
                     <Input value={form.photoUrl} onChange={(e) => setForm((f) => ({ ...f, photoUrl: e.target.value }))} />
@@ -310,78 +305,40 @@ const LegalEntityDetailsPage = () => {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={() => setImportOpen(true)}
-            >
+            <Button variant="outline" className="gap-2" onClick={() => setImportOpen(true)}>
               <FileSpreadsheet className="h-4 w-4" />
               Импорт Excel
             </Button>
+            <Button variant="outline" className="gap-2" onClick={downloadTemplate}>
+              <Download className="h-4 w-4" />
+              Скачать шаблон
+            </Button>
           </div>
 
-          <Dialog
-            open={importOpen}
-            onOpenChange={(v) => {
-              setImportOpen(v);
-              if (!v) resetImport();
-            }}
-          >
-            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+          <Dialog open={importOpen} onOpenChange={setImportOpen}>
+            <DialogContent className="sm:max-w-lg">
               <DialogHeader>
-                <DialogTitle>Импорт Excel и сопоставление колонок</DialogTitle>
+                <DialogTitle>Импорт из Excel (по шаблону)</DialogTitle>
               </DialogHeader>
-              <div className="space-y-3">
-                <div className="grid gap-1.5">
-                  <Label>Файл Excel (.xlsx, .xls)</Label>
-                  <Input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void onExcelFile(f);
-                    }}
-                  />
-                </div>
-                {excelHeaders.length > 0 && (
-                  <>
-                    <div className="rounded-md border border-slate-200 p-2 text-xs text-slate-600">
-                      Найдено колонок: {excelHeaders.length}. Строк в файле: {excelRows.length}.
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {IMPORT_FIELDS.map((f) => (
-                        <div key={f.key} className="grid gap-1">
-                          <Label>
-                            {f.label}
-                            {f.required ? " *" : ""}
-                          </Label>
-                          <Select
-                            value={mapping[f.key]}
-                            onValueChange={(v) => setMapping((m) => ({ ...m, [f.key]: v }))}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Не сопоставлено" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">Не сопоставлять</SelectItem>
-                              {excelHeaders.map((h) => (
-                                <SelectItem key={h} value={h}>
-                                  {h}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">
+                  Ожидаемые колонки: Категория товара, Название товара, Бренд, Баркод, Длина, Ширина, Высота, Вес.
+                </p>
+                <Input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void onExcelFile(f);
+                  }}
+                />
+                {excelRows.length > 0 && <p className="text-xs text-slate-600">Готово к импорту: {excelRows.length} строк</p>}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setImportOpen(false)}>
                   Отмена
                 </Button>
-                <Button onClick={() => void onImport()} disabled={isAddingProduct || !excelRows.length}>
+                <Button onClick={() => void onImport()} disabled={!excelRows.length || isAddingProduct}>
                   {isAddingProduct ? "Импорт..." : "Импортировать"}
                 </Button>
               </DialogFooter>
@@ -393,21 +350,90 @@ const LegalEntityDetailsPage = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>Фото</TableHead>
                     <TableHead>Товар</TableHead>
+                    <TableHead>Категория</TableHead>
                     <TableHead>Бренд</TableHead>
-                    <TableHead>Артикул</TableHead>
                     <TableHead>Логистика</TableHead>
                     <TableHead>Баркод</TableHead>
+                    <TableHead>Фото</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell>{p.name}</TableCell>
+                      <TableCell>
+                        {p.photoUrl ? (
+                          <img src={p.photoUrl} alt={p.name} className="h-10 w-10 rounded-md border border-slate-200 object-cover" />
+                        ) : (
+                          <div className="h-10 w-10 rounded-md border border-dashed border-slate-300 bg-slate-50" />
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-[220px] truncate">{p.name}</TableCell>
+                      <TableCell className="max-w-[140px] truncate">{p.category || "—"}</TableCell>
                       <TableCell>{p.brand}</TableCell>
-                      <TableCell className="font-mono text-xs">{p.supplierArticle || "—"}</TableCell>
-                      <TableCell className="text-xs text-slate-600">{`${p.lengthCm}x${p.widthCm}x${p.heightCm} см · ${p.weightKg} кг`}</TableCell>
+                      <TableCell className="space-y-1 text-xs">
+                        <p className="text-slate-600">{logisticsLabel(p)}</p>
+                        <div className="grid grid-cols-4 gap-1">
+                          <Input
+                            value={inlineDraft[p.id]?.lengthCm ?? ""}
+                            onChange={(e) =>
+                              setInlineDraft((d) => ({ ...d, [p.id]: { ...(d[p.id] ?? { lengthCm: "", widthCm: "", heightCm: "", weightKg: "" }), lengthCm: e.target.value } }))
+                            }
+                            placeholder="L"
+                            className="h-7 px-2 text-xs"
+                          />
+                          <Input
+                            value={inlineDraft[p.id]?.widthCm ?? ""}
+                            onChange={(e) =>
+                              setInlineDraft((d) => ({ ...d, [p.id]: { ...(d[p.id] ?? { lengthCm: "", widthCm: "", heightCm: "", weightKg: "" }), widthCm: e.target.value } }))
+                            }
+                            placeholder="W"
+                            className="h-7 px-2 text-xs"
+                          />
+                          <Input
+                            value={inlineDraft[p.id]?.heightCm ?? ""}
+                            onChange={(e) =>
+                              setInlineDraft((d) => ({ ...d, [p.id]: { ...(d[p.id] ?? { lengthCm: "", widthCm: "", heightCm: "", weightKg: "" }), heightCm: e.target.value } }))
+                            }
+                            placeholder="H"
+                            className="h-7 px-2 text-xs"
+                          />
+                          <Input
+                            value={inlineDraft[p.id]?.weightKg ?? ""}
+                            onChange={(e) =>
+                              setInlineDraft((d) => ({ ...d, [p.id]: { ...(d[p.id] ?? { lengthCm: "", widthCm: "", heightCm: "", weightKg: "" }), weightKg: e.target.value } }))
+                            }
+                            placeholder="кг"
+                            className="h-7 px-2 text-xs"
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => void saveInlineLogistics(p.id)}
+                          disabled={isUpdatingProduct}
+                        >
+                          Сохранить
+                        </Button>
+                      </TableCell>
                       <TableCell className="font-mono text-xs">{p.barcode}</TableCell>
+                      <TableCell>
+                        <Label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs">
+                          <Upload className="h-3.5 w-3.5" />
+                          Загрузить
+                          <Input
+                            className="hidden"
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) void onUploadPhoto(p.id, f);
+                            }}
+                          />
+                        </Label>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

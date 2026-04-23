@@ -174,6 +174,7 @@ export type WarehouseInventoryRow = {
 export type ProductCatalogItem = {
   id: string;
   legalEntityId: string;
+  category: string;
   photoUrl: string | null;
   name: string;
   brand: string;

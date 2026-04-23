@@ -12,7 +12,7 @@ import type {
 import { appendMockInbound, fetchMockInboundSupplies } from "@/services/mockReceiving";
 import { closeOperationalDay } from "@/services/financeCloseDay";
 import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
-import { appendMockProductCatalogItem, fetchMockProductCatalog } from "@/services/mockProductCatalog";
+import { appendMockProductCatalogItem, fetchMockProductCatalog, updateMockProductCatalogItem } from "@/services/mockProductCatalog";
 import {
   appendMockLegalEntity,
   appendMockOrgUser,
@@ -124,7 +124,20 @@ export function useProductCatalog() {
     },
     onSuccess: (data) => qc.setQueryData(["wms", "product-catalog"], data),
   });
-  return { ...query, addProduct: add.mutateAsync, isAddingProduct: add.isPending };
+  const update = useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<ProductCatalogItem> }) => {
+      const cur = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
+      return updateMockProductCatalogItem(cur, id, patch);
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "product-catalog"], data),
+  });
+  return {
+    ...query,
+    addProduct: add.mutateAsync,
+    isAddingProduct: add.isPending,
+    updateProduct: update.mutateAsync,
+    isUpdatingProduct: update.isPending,
+  };
 }
 
 export function useOperationHistory() {

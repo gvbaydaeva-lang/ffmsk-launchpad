@@ -8,6 +8,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
   {
     id: "prd-1",
     legalEntityId: "le-4",
+    category: "Спорттовары",
     photoUrl: null,
     name: "Бутылка спорт.",
     brand: "SportAqua",
@@ -24,6 +25,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
   {
     id: "prd-2",
     legalEntityId: "le-3",
+    category: "Одежда",
     photoUrl: null,
     name: "Джинсы прямые",
     brand: "DenimCo",
@@ -40,6 +42,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
   {
     id: "prd-3",
     legalEntityId: "le-5",
+    category: "Дом",
     photoUrl: null,
     name: "Диффузор",
     brand: "HomeScent",
@@ -56,6 +59,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
   {
     id: "prd-4",
     legalEntityId: "le-2",
+    category: "Косметика",
     photoUrl: null,
     name: "Крем для лица 50 мл",
     brand: "CareLab",
@@ -72,6 +76,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
   {
     id: "prd-5",
     legalEntityId: "le-2",
+    category: "Косметика",
     photoUrl: null,
     name: "Крем для лица 30 мл",
     brand: "CareLab",
@@ -88,6 +93,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
   {
     id: "prd-6",
     legalEntityId: "le-1",
+    category: "Демо",
     photoUrl: null,
     name: "Тестовый товар",
     brand: "[DEMO]",
@@ -114,5 +120,13 @@ export function appendMockProductCatalogItem(
 ): ProductCatalogItem[] {
   const id = `prd-${Date.now()}`;
   const generatedBarcode = draft.barcode?.trim() || `${Date.now()}`.slice(-13);
-  return [{ ...draft, id, barcode: generatedBarcode }, ...current];
+  return [{ ...draft, category: draft.category || "Без категории", id, barcode: generatedBarcode }, ...current];
+}
+
+export function updateMockProductCatalogItem(
+  current: ProductCatalogItem[],
+  id: string,
+  patch: Partial<ProductCatalogItem>,
+): ProductCatalogItem[] {
+  return current.map((x) => (x.id === id ? { ...x, ...patch } : x));
 }
