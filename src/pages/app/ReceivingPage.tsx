@@ -2,6 +2,7 @@ import * as React from "react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Plus } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +28,7 @@ import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace } from "@/types/domain";
 
 const ReceivingPage = () => {
-  const { data, isLoading, error, createInbound, isCreating } = useInboundSupplies();
+  const { data, isLoading, error, createInbound, isCreating, setInboundStatus, isUpdatingInbound } = useInboundSupplies();
   const { data: entities } = useLegalEntities();
   const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
@@ -38,6 +39,7 @@ const ReceivingPage = () => {
     documentNo: "",
     supplier: "",
     productId: "",
+    destinationWarehouse: "Склад Коледино",
     marketplace: "wb" as Marketplace,
     expectedUnits: "",
     eta: "",
@@ -65,6 +67,7 @@ const ReceivingPage = () => {
       documentNo: "",
       supplier: "",
       productId: "",
+      destinationWarehouse: "Склад Коледино",
       marketplace: "wb",
       expectedUnits: "",
       eta: "",
@@ -87,6 +90,7 @@ const ReceivingPage = () => {
       documentNo: form.documentNo.trim(),
       supplier: form.supplier.trim(),
       items: [{ productId: selectedProductId, quantity: units }],
+      destinationWarehouse: form.destinationWarehouse,
       marketplace: form.marketplace,
       expectedUnits: units,
       receivedUnits: null,
@@ -100,6 +104,19 @@ const ReceivingPage = () => {
       resetForm();
     } catch {
       toast.error("Не удалось сохранить");
+    }
+  };
+
+  const advanceStatus = async (row: InboundSupply) => {
+    try {
+      if (row.status === "ожидается") {
+        await setInboundStatus({ id: row.id, status: "на приёмке" });
+      } else if (row.status === "на приёмке") {
+        await setInboundStatus({ id: row.id, status: "принято", receivedUnits: row.receivedUnits ?? row.expectedUnits });
+      }
+      toast.success("Статус обновлен");
+    } catch {
+      toast.error("Не удалось обновить статус");
     }
   };
 
@@ -183,6 +200,15 @@ const ReceivingPage = () => {
                   </Select>
                 </div>
                 <div className="grid gap-1.5">
+                  <Label htmlFor="wh">Склад назначения</Label>
+                  <Input
+                    id="wh"
+                    value={form.destinationWarehouse}
+                    onChange={(e) => setForm((f) => ({ ...f, destinationWarehouse: e.target.value }))}
+                    placeholder="Склад Коледино"
+                  />
+                </div>
+                <div className="grid gap-1.5">
                   <Label>Маркетплейс</Label>
                   <Select
                     value={form.marketplace}
@@ -231,7 +257,7 @@ const ReceivingPage = () => {
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader>
           <CardTitle className="font-display text-lg text-slate-900">Поставки</CardTitle>
-          <CardDescription className="text-slate-500">Статусы: ожидается · частично · принято</CardDescription>
+          <CardDescription className="text-slate-500">Статусы: ожидается → на приёмке → принято</CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6">
           {isLoading ? (
@@ -248,19 +274,26 @@ const ReceivingPage = () => {
                   <TableHead className="text-slate-600">Документ</TableHead>
                   <TableHead className="text-slate-600">Юрлицо</TableHead>
                   <TableHead className="text-slate-600">Поставщик</TableHead>
+                  <TableHead className="text-slate-600">Склад</TableHead>
                   <TableHead className="text-slate-600">Площадка</TableHead>
                   <TableHead className="text-right text-slate-600">Ожид.</TableHead>
                   <TableHead className="text-right text-slate-600">Принято</TableHead>
                   <TableHead className="text-slate-600">Статус</TableHead>
                   <TableHead className="text-slate-600">ETA</TableHead>
+                  <TableHead className="text-right text-slate-600">Действие</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => (
                   <TableRow key={row.id} className="border-slate-100">
                     <TableCell className="font-mono text-xs text-slate-900 sm:text-sm">{row.documentNo}</TableCell>
-                    <TableCell className="max-w-[160px] truncate text-slate-700 text-sm">{entityName(row.legalEntityId)}</TableCell>
+                    <TableCell className="max-w-[160px] truncate text-slate-700 text-sm">
+                      <Link to={`/legal-entities/${row.legalEntityId}?tab=receiving`} className="hover:underline">
+                        {entityName(row.legalEntityId)}
+                      </Link>
+                    </TableCell>
                     <TableCell className="max-w-[200px] truncate text-slate-800">{row.supplier}</TableCell>
+                    <TableCell className="max-w-[180px] truncate text-slate-700">{row.destinationWarehouse}</TableCell>
                     <TableCell>
                       <MarketplaceBadge marketplace={row.marketplace} />
                     </TableCell>
@@ -271,12 +304,12 @@ const ReceivingPage = () => {
                         variant={
                           row.status === "принято"
                             ? "default"
-                            : row.status === "в обработке"
+                            : row.status === "на приёмке"
                               ? "default"
                               : "secondary"
                         }
                         className={
-                          row.status === "в обработке"
+                          row.status === "на приёмке"
                             ? "border-emerald-200 bg-emerald-600 text-white hover:bg-emerald-600"
                             : "border-slate-200"
                         }
@@ -286,6 +319,15 @@ const ReceivingPage = () => {
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-slate-500 text-xs sm:text-sm">
                       {format(parseISO(row.eta), "d MMM yyyy", { locale: ru })}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {row.status !== "принято" ? (
+                        <Button size="sm" variant="outline" onClick={() => void advanceStatus(row)} disabled={isUpdatingInbound}>
+                          {row.status === "ожидается" ? "На приёмке" : "Принять"}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-emerald-700">Завершено</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

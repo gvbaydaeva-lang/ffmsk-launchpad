@@ -33,14 +33,14 @@ export async function applyScannedCodeToDemoState(code: string, qc: QueryClient)
   const hitIn = inbound.find((r) => r.documentNo === raw || r.id === raw);
   if (hitIn) {
     const next = inbound.map((r) =>
-      r.id === hitIn.id && (r.status === "ожидается" || r.status === "частично")
-        ? { ...r, status: "в обработке" as const }
+      r.id === hitIn.id && r.status === "ожидается"
+        ? { ...r, status: "на приёмке" as const }
         : r,
     );
     qc.setQueryData(["wms", "inbound"], next);
     return {
       kind: "inbound_status",
-      message: `Приёмка ${hitIn.documentNo}: статус обновлён на «в обработке»`,
+      message: `Приёмка ${hitIn.documentNo}: статус обновлён на «на приёмке»`,
       documentNo: hitIn.documentNo,
     };
   }

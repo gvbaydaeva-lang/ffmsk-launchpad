@@ -100,10 +100,11 @@ export type InboundSupply = {
   documentNo: string;
   supplier: string;
   items: InboundLineItem[];
+  destinationWarehouse: string;
   marketplace: Marketplace;
   expectedUnits: number;
   receivedUnits: number | null;
-  status: "ожидается" | "в обработке" | "частично" | "принято";
+  status: "ожидается" | "на приёмке" | "принято";
   eta: string;
 };
 
@@ -190,6 +191,20 @@ export type ProductCatalogItem = {
   weightKg: number;
   barcode: string;
   unitsPerPallet: number;
+  stockOnHand: number;
+};
+
+export type OutboundShipment = {
+  id: string;
+  legalEntityId: string;
+  productId: string;
+  marketplace: Marketplace;
+  sourceWarehouse: string;
+  shippingMethod: "fbo" | "fbs" | "self";
+  plannedUnits: number;
+  shippedUnits: number | null;
+  status: "создано" | "к отгрузке" | "отгружено";
+  createdAt: string;
 };
 
 /** История операций склада и финансовых событий */

@@ -24,6 +24,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     weightKg: 0.35,
     barcode: "2000000001001",
     unitsPerPallet: 300,
+    stockOnHand: 640,
   },
   {
     id: "prd-2",
@@ -44,6 +45,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     weightKg: 0.65,
     barcode: "2000000002002",
     unitsPerPallet: 240,
+    stockOnHand: 480,
   },
   {
     id: "prd-3",
@@ -64,6 +66,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     weightKg: 0.5,
     barcode: "2000000003003",
     unitsPerPallet: 180,
+    stockOnHand: 900,
   },
   {
     id: "prd-4",
@@ -84,6 +87,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     weightKg: 0.12,
     barcode: "2000000004004",
     unitsPerPallet: 1200,
+    stockOnHand: 1200,
   },
   {
     id: "prd-5",
@@ -104,6 +108,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     weightKg: 0.09,
     barcode: "2000000004005",
     unitsPerPallet: 1500,
+    stockOnHand: 780,
   },
   {
     id: "prd-6",
@@ -124,6 +129,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     weightKg: 1,
     barcode: "2000000000000",
     unitsPerPallet: 64,
+    stockOnHand: 320,
   },
 ];
 

@@ -4,11 +4,13 @@ import type {
   InboundSupply,
   LegalEntity,
   Marketplace,
+  OutboundShipment,
   OperationHistoryEvent,
   ProductCatalogItem,
   OrgUser,
   WarehouseInventoryRow,
 } from "@/types/domain";
+import { appendMockOutbound, fetchMockOutboundShipments } from "@/services/mockOutbound";
 import { appendMockInbound, fetchMockInboundSupplies } from "@/services/mockReceiving";
 import { closeOperationalDay } from "@/services/financeCloseDay";
 import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
@@ -92,7 +94,106 @@ export function useInboundSupplies() {
     },
   });
 
-  return { ...query, createInbound: create.mutateAsync, isCreating: create.isPending };
+  const setStatus = useMutation({
+    mutationFn: async (args: { id: string; status: InboundSupply["status"]; receivedUnits?: number }) => {
+      const inbound = qc.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? (await fetchMockInboundSupplies());
+      const catalog = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
+      const row = inbound.find((x) => x.id === args.id);
+      if (!row) return { inbound, catalog };
+
+      const nextInbound = inbound.map((x) =>
+        x.id === args.id
+          ? {
+              ...x,
+              status: args.status,
+              receivedUnits: args.receivedUnits ?? x.receivedUnits,
+            }
+          : x,
+      );
+
+      let nextCatalog = catalog;
+      const becomesAccepted = row.status !== "принято" && args.status === "принято";
+      if (becomesAccepted) {
+        const qty = args.receivedUnits ?? row.receivedUnits ?? row.expectedUnits;
+        const productId = row.items[0]?.productId;
+        if (productId) {
+          nextCatalog = catalog.map((p) => (p.id === productId ? { ...p, stockOnHand: p.stockOnHand + qty } : p));
+        }
+      }
+      return { inbound: nextInbound, catalog: nextCatalog };
+    },
+    onSuccess: ({ inbound, catalog }) => {
+      qc.setQueryData(["wms", "inbound"], inbound);
+      qc.setQueryData(["wms", "product-catalog"], catalog);
+    },
+  });
+
+  return {
+    ...query,
+    createInbound: create.mutateAsync,
+    isCreating: create.isPending,
+    setInboundStatus: setStatus.mutateAsync,
+    isUpdatingInbound: setStatus.isPending,
+  };
+}
+
+export function useOutboundShipments() {
+  const qc = useQueryClient();
+  const query = useQuery({ queryKey: ["wms", "outbound"], queryFn: fetchMockOutboundShipments });
+
+  const create = useMutation({
+    mutationFn: async (draft: Omit<OutboundShipment, "id" | "createdAt">) => {
+      const outbound = qc.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? (await fetchMockOutboundShipments());
+      const catalog = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
+      const product = catalog.find((p) => p.id === draft.productId);
+      if (!product || product.stockOnHand < draft.plannedUnits) {
+        throw new Error("insufficient_stock");
+      }
+      return appendMockOutbound(outbound, draft);
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "outbound"], data),
+  });
+
+  const setStatus = useMutation({
+    mutationFn: async (args: { id: string; status: OutboundShipment["status"]; shippedUnits?: number }) => {
+      const outbound = qc.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? (await fetchMockOutboundShipments());
+      const catalog = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
+      const row = outbound.find((x) => x.id === args.id);
+      if (!row) return { outbound, catalog };
+
+      const qty = args.shippedUnits ?? row.shippedUnits ?? row.plannedUnits;
+      const nextOutbound = outbound.map((x) =>
+        x.id === args.id
+          ? {
+              ...x,
+              status: args.status,
+              shippedUnits: args.shippedUnits ?? x.shippedUnits,
+            }
+          : x,
+      );
+
+      let nextCatalog = catalog;
+      const becomesShipped = row.status !== "отгружено" && args.status === "отгружено";
+      if (becomesShipped) {
+        nextCatalog = catalog.map((p) =>
+          p.id === row.productId ? { ...p, stockOnHand: Math.max(0, p.stockOnHand - qty) } : p,
+        );
+      }
+      return { outbound: nextOutbound, catalog: nextCatalog };
+    },
+    onSuccess: ({ outbound, catalog }) => {
+      qc.setQueryData(["wms", "outbound"], outbound);
+      qc.setQueryData(["wms", "product-catalog"], catalog);
+    },
+  });
+
+  return {
+    ...query,
+    createOutbound: create.mutateAsync,
+    isCreatingOutbound: create.isPending,
+    setOutboundStatus: setStatus.mutateAsync,
+    isUpdatingOutbound: setStatus.isPending,
+  };
 }
 
 export function useLegalEntities() {

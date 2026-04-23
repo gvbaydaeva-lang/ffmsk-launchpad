@@ -1,152 +1,223 @@
 import * as React from "react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
-import { ChevronDown, PackagePlus } from "lucide-react";
+import { Link } from "react-router-dom";
+import { PackagePlus } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useLegalEntities, useShipmentBoxes } from "@/hooks/useWmsMock";
-import { exportShipmentBoxesForMarketplace } from "@/lib/shipmentExport";
+import { useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace } from "@/types/domain";
 
 const ShippingPage = () => {
-  const { data, isLoading, error, generateBoxes, isGenerating } = useShipmentBoxes();
+  const { data, isLoading, error, createOutbound, setOutboundStatus, isCreatingOutbound, isUpdatingOutbound } = useOutboundShipments();
   const { data: entities } = useLegalEntities();
+  const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
-  const [mp, setMp] = React.useState<Marketplace>("wb");
+  const [open, setOpen] = React.useState(false);
+  const [mp, setMp] = React.useState<Marketplace | "all">("all");
+  const [form, setForm] = React.useState({
+    legalEntityId: "le-2",
+    productId: "",
+    plannedUnits: "",
+    marketplace: "wb" as Marketplace,
+    sourceWarehouse: "Склад Коледино",
+    shippingMethod: "fbo" as "fbo" | "fbs" | "self",
+  });
 
-  const entityName = React.useCallback(
-    (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
-    [entities],
+  const filtered = React.useMemo(() => {
+    const base = filterOutboundByMarketplace(data ?? [], mp);
+    if (legalEntityId === "all") return base;
+    return base.filter((x) => x.legalEntityId === legalEntityId);
+  }, [data, mp, legalEntityId]);
+
+  const products = React.useMemo(
+    () => (catalog ?? []).filter((x) => x.legalEntityId === form.legalEntityId && x.stockOnHand > 0),
+    [catalog, form.legalEntityId],
   );
+  const productMap = React.useMemo(() => new Map((catalog ?? []).map((p) => [p.id, p])), [catalog]);
 
-  const rows = React.useMemo(() => {
-    if (!data) return [];
-    if (legalEntityId === "all") return data;
-    return data.filter((b) => b.legalEntityId === legalEntityId);
-  }, [data, legalEntityId]);
-
-  const targetEntityForNew = legalEntityId === "all" ? "le-2" : legalEntityId;
-
-  const onGenerate = async () => {
+  const onCreate = async () => {
+    const qty = Number(form.plannedUnits);
+    const product = productMap.get(form.productId);
+    if (!product || !Number.isFinite(qty) || qty <= 0) return toast.error("Выберите товар и количество");
+    if (qty > product.stockOnHand) return toast.error("Недостаточно остатка на складе");
     try {
-      await generateBoxes({ marketplace: mp, legalEntityId: targetEntityForNew });
-      toast.success("Короб добавлен в список");
+      await createOutbound({
+        legalEntityId: form.legalEntityId,
+        productId: form.productId,
+        marketplace: form.marketplace,
+        sourceWarehouse: form.sourceWarehouse,
+        shippingMethod: form.shippingMethod,
+        plannedUnits: qty,
+        shippedUnits: null,
+        status: "создано",
+      });
+      toast.success("Задание на отгрузку создано");
+      setOpen(false);
     } catch {
-      toast.error("Не удалось сгенерировать короб");
+      toast.error("Не удалось создать отгрузку");
     }
   };
 
-  const onExport = (m: Marketplace) => {
-    if (!rows.length) {
-      toast.message("Нет коробов для выгрузки");
-      return;
+  const advanceStatus = async (id: string, current: "создано" | "к отгрузке" | "отгружено", plannedUnits: number) => {
+    try {
+      if (current === "создано") await setOutboundStatus({ id, status: "к отгрузке" });
+      if (current === "к отгрузке") await setOutboundStatus({ id, status: "отгружено", shippedUnits: plannedUnits });
+      toast.success("Статус обновлен");
+    } catch {
+      toast.error("Не удалось обновить статус");
     }
-    exportShipmentBoxesForMarketplace(rows, m);
-    toast.success("Файл скачан (CSV для Excel)");
   };
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Отгрузки</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          Коробы по площадкам и экспорт таблицы с колонками под WB, Ozon или Яндекс (CSV, UTF-8).
-        </p>
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Отгрузка</h2>
+          <p className="mt-1 text-sm text-slate-600">Задания на выдачу со склада FF и контроль остатков.</p>
+        </div>
+        <div className="flex gap-2">
+          <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
+            <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все площадки</SelectItem>
+              <SelectItem value="wb">Wildberries</SelectItem>
+              <SelectItem value="ozon">Ozon</SelectItem>
+              <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
+            </SelectContent>
+          </Select>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
+                <PackagePlus className="h-4 w-4" />
+                Новая отгрузка
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
+              <div className="grid gap-3 py-2">
+                <div className="grid gap-1.5">
+                  <Label>Юрлицо</Label>
+                  <Select value={form.legalEntityId} onValueChange={(v) => setForm((f) => ({ ...f, legalEntityId: v, productId: "" }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {entities?.map((e) => <SelectItem key={e.id} value={e.id}>{e.shortName}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Товар из остатков</Label>
+                  <Select value={form.productId} onValueChange={(v) => setForm((f) => ({ ...f, productId: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Выберите товар" /></SelectTrigger>
+                    <SelectContent>
+                      {products.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>{p.brand} · {p.name} · остаток {p.stockOnHand}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Количество к выдаче</Label>
+                  <Input type="number" min={1} value={form.plannedUnits} onChange={(e) => setForm((f) => ({ ...f, plannedUnits: e.target.value }))} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>С какого склада</Label>
+                  <Input value={form.sourceWarehouse} onChange={(e) => setForm((f) => ({ ...f, sourceWarehouse: e.target.value }))} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Маркетплейс</Label>
+                  <Select value={form.marketplace} onValueChange={(v) => setForm((f) => ({ ...f, marketplace: v as Marketplace }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="wb">Wildberries</SelectItem>
+                      <SelectItem value="ozon">Ozon</SelectItem>
+                      <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Способ отгрузки</Label>
+                  <Select value={form.shippingMethod} onValueChange={(v) => setForm((f) => ({ ...f, shippingMethod: v as "fbo" | "fbs" | "self" }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fbo">FBO</SelectItem>
+                      <SelectItem value="fbs">FBS</SelectItem>
+                      <SelectItem value="self">Самовывоз</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setOpen(false)}>Отмена</Button>
+                <Button onClick={() => void onCreate()} disabled={isCreatingOutbound}>{isCreatingOutbound ? "Сохранение..." : "Создать"}</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <GlobalFiltersBar />
 
       <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader className="flex flex-col gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="font-display text-lg text-slate-900">Коробы</CardTitle>
-            <CardDescription className="text-slate-500">Генерация и выгрузка под конкретный маркетплейс</CardDescription>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="grid gap-1.5">
-              <Label htmlFor="mp-gen" className="text-xs text-slate-600">
-                Маркетплейс для нового короба
-              </Label>
-              <Select value={mp} onValueChange={(v) => setMp(v as Marketplace)}>
-                <SelectTrigger id="mp-gen" className="w-full border-slate-200 bg-white sm:w-[200px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="wb">Wildberries</SelectItem>
-                  <SelectItem value="ozon">Ozon</SelectItem>
-                  <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={onGenerate} disabled={isGenerating} className="gap-2 shrink-0 bg-slate-900 text-white hover:bg-slate-800">
-              <PackagePlus className="h-4 w-4" />
-              {isGenerating ? "Генерация…" : "Сгенерировать короб"}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="gap-2 border-slate-200 bg-white shrink-0 shadow-none">
-                  Экспорт в Excel (CSV)
-                  <ChevronDown className="h-4 w-4 opacity-70" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>Формат колонок</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onExport("wb")}>Wildberries</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onExport("ozon")}>Ozon</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onExport("yandex")}>Яндекс.Маркет</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+        <CardHeader>
+          <CardTitle className="font-display text-lg text-slate-900">Отгрузки</CardTitle>
+          <CardDescription className="text-slate-500">Статусы: создано → к отгрузке → отгружено</CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6">
           {isLoading ? (
-            <div className="space-y-2 p-6">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
+            <div className="space-y-2 p-6"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>
           ) : error ? (
-            <p className="p-6 text-sm text-destructive">Не удалось загрузить коробы.</p>
+            <p className="p-6 text-sm text-destructive">Не удалось загрузить отгрузки.</p>
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="text-slate-600">Штрихкороб</TableHead>
-                  <TableHead className="text-slate-600">Юрлицо</TableHead>
-                  <TableHead className="text-slate-600">Площадка</TableHead>
-                  <TableHead className="text-right text-slate-600">Шт.</TableHead>
-                  <TableHead className="text-right text-slate-600">Вес, кг</TableHead>
-                  <TableHead className="text-slate-600">Создан</TableHead>
+                <TableRow>
+                  <TableHead>Юрлицо</TableHead>
+                  <TableHead>Товар</TableHead>
+                  <TableHead>Склад</TableHead>
+                  <TableHead>Площадка</TableHead>
+                  <TableHead>Метод</TableHead>
+                  <TableHead className="text-right">К выдаче</TableHead>
+                  <TableHead>Статус</TableHead>
+                  <TableHead>Создано</TableHead>
+                  <TableHead className="text-right">Действие</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((b) => (
-                  <TableRow key={b.id} className="border-slate-100">
-                    <TableCell className="font-mono text-xs text-slate-900 sm:text-sm">{b.boxBarcode}</TableCell>
-                    <TableCell className="max-w-[200px] truncate text-slate-800 text-sm">{entityName(b.legalEntityId)}</TableCell>
+                {filtered.map((row) => (
+                  <TableRow key={row.id}>
                     <TableCell>
-                      <MarketplaceBadge marketplace={b.marketplace} />
+                      <Link to={`/legal-entities/${row.legalEntityId}?tab=shipping`} className="hover:underline">
+                        {entities?.find((e) => e.id === row.legalEntityId)?.shortName ?? row.legalEntityId}
+                      </Link>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-900">{b.itemsCount}</TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-900">{b.weightKg}</TableCell>
-                    <TableCell className="whitespace-nowrap text-slate-500 text-xs sm:text-sm">
-                      {format(parseISO(b.createdAt), "d MMM yyyy HH:mm", { locale: ru })}
+                    <TableCell>{productMap.get(row.productId)?.name ?? row.productId}</TableCell>
+                    <TableCell>{row.sourceWarehouse}</TableCell>
+                    <TableCell><MarketplaceBadge marketplace={row.marketplace} /></TableCell>
+                    <TableCell className="uppercase text-xs">{row.shippingMethod}</TableCell>
+                    <TableCell className="text-right tabular-nums">{row.plannedUnits}</TableCell>
+                    <TableCell><Badge variant={row.status === "отгружено" ? "default" : "secondary"}>{row.status}</Badge></TableCell>
+                    <TableCell>{format(parseISO(row.createdAt), "d MMM yyyy HH:mm", { locale: ru })}</TableCell>
+                    <TableCell className="text-right">
+                      {row.status !== "отгружено" ? (
+                        <Button size="sm" variant="outline" onClick={() => void advanceStatus(row.id, row.status, row.plannedUnits)} disabled={isUpdatingOutbound}>
+                          {row.status === "создано" ? "К отгрузке" : "Отгружено"}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-emerald-700">Завершено</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

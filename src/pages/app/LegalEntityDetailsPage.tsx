@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import Barcode from "react-barcode";
@@ -13,7 +13,14 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useLegalEntities, useOperationHistory, useProductCatalog, useUpdateLegalEntitySettings } from "@/hooks/useWmsMock";
+import {
+  useInboundSupplies,
+  useLegalEntities,
+  useOperationHistory,
+  useOutboundShipments,
+  useProductCatalog,
+  useUpdateLegalEntitySettings,
+} from "@/hooks/useWmsMock";
 import type { ProductCatalogItem } from "@/types/domain";
 import { toast } from "sonner";
 
@@ -97,8 +104,11 @@ function paramsLabel(item: ProductCatalogItem) {
 
 const LegalEntityDetailsPage = () => {
   const { id = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: legal } = useLegalEntities();
   const { data: history } = useOperationHistory();
+  const { data: inbound } = useInboundSupplies();
+  const { data: outbound } = useOutboundShipments();
   const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
 
@@ -153,7 +163,18 @@ const LegalEntityDetailsPage = () => {
   const entity = React.useMemo(() => legal?.find((x) => x.id === id), [legal, id]);
   const rows = React.useMemo(() => (catalog ?? []).filter((x) => x.legalEntityId === id), [catalog, id]);
   const ops = React.useMemo(() => (history ?? []).filter((x) => x.legalEntityId === id), [history, id]);
+  const inboundRows = React.useMemo(() => (inbound ?? []).filter((x) => x.legalEntityId === id), [inbound, id]);
+  const outboundRows = React.useMemo(() => (outbound ?? []).filter((x) => x.legalEntityId === id), [outbound, id]);
   const copies = Math.max(1, Number(printCopies) || 1);
+  const currentTab = searchParams.get("tab") ?? "catalog";
+  const kpi = React.useMemo(
+    () => ({
+      inTransit: inboundRows.filter((x) => x.status === "ожидается").reduce((s, x) => s + x.expectedUnits, 0),
+      onStock: rows.reduce((s, x) => s + x.stockOnHand, 0),
+      reserved: outboundRows.filter((x) => x.status !== "отгружено").reduce((s, x) => s + x.plannedUnits, 0),
+    }),
+    [inboundRows, outboundRows, rows],
+  );
 
   React.useEffect(() => {
     const next: Record<string, RowDraft> = {};
@@ -283,6 +304,7 @@ const LegalEntityDetailsPage = () => {
           heightCm: patch.heightCm,
           weightKg: patch.weightKg,
           unitsPerPallet: 100,
+          stockOnHand: 0,
           barcode: barcode || undefined,
         });
         created += 1;
@@ -313,6 +335,7 @@ const LegalEntityDetailsPage = () => {
       heightCm: num(form.heightCm),
       weightKg: num(form.weightKg),
       unitsPerPallet: Number(form.unitsPerPallet) || 100,
+      stockOnHand: 0,
     });
     toast.success("Товар добавлен в каталог");
     setOpen(false);
@@ -391,9 +414,17 @@ const LegalEntityDetailsPage = () => {
         <p className="mt-1 text-sm text-slate-600">Нажмите на название, чтобы вернуться к списку юрлиц.</p>
       </div>
 
-      <Tabs defaultValue="catalog" className="w-full">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="border-slate-200"><CardContent className="p-4"><p className="text-xs text-slate-500">В пути</p><p className="mt-1 text-2xl font-semibold">{kpi.inTransit}</p></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="p-4"><p className="text-xs text-slate-500">На складе</p><p className="mt-1 text-2xl font-semibold">{kpi.onStock}</p></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="p-4"><p className="text-xs text-slate-500">В резерве / к отгрузке</p><p className="mt-1 text-2xl font-semibold">{kpi.reserved}</p></CardContent></Card>
+      </div>
+
+      <Tabs value={currentTab} onValueChange={(tab) => setSearchParams({ tab })} className="w-full">
         <TabsList className="bg-slate-100">
           <TabsTrigger value="catalog">Каталог товаров</TabsTrigger>
+          <TabsTrigger value="receiving">Приёмки</TabsTrigger>
+          <TabsTrigger value="shipping">Отгрузки</TabsTrigger>
           <TabsTrigger value="history">История операций</TabsTrigger>
           <TabsTrigger value="tariffs">Тарифы</TabsTrigger>
         </TabsList>
@@ -600,6 +631,68 @@ const LegalEntityDetailsPage = () => {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+        </TabsContent>
+
+        <TabsContent value="receiving">
+          <Card className="border-slate-200">
+            <CardContent className="p-0 sm:p-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Документ</TableHead>
+                    <TableHead>Склад назначения</TableHead>
+                    <TableHead>Площадка</TableHead>
+                    <TableHead className="text-right">План</TableHead>
+                    <TableHead className="text-right">Факт</TableHead>
+                    <TableHead>Статус</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {inboundRows.map((x) => (
+                    <TableRow key={x.id}>
+                      <TableCell className="font-mono text-xs">{x.documentNo}</TableCell>
+                      <TableCell>{x.destinationWarehouse}</TableCell>
+                      <TableCell>{x.marketplace.toUpperCase()}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x.expectedUnits}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x.receivedUnits ?? "—"}</TableCell>
+                      <TableCell>{x.status}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="shipping">
+          <Card className="border-slate-200">
+            <CardContent className="p-0 sm:p-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Товар</TableHead>
+                    <TableHead>Склад отгрузки</TableHead>
+                    <TableHead>Площадка</TableHead>
+                    <TableHead>Метод</TableHead>
+                    <TableHead className="text-right">Кол-во</TableHead>
+                    <TableHead>Статус</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {outboundRows.map((x) => (
+                    <TableRow key={x.id}>
+                      <TableCell>{rows.find((p) => p.id === x.productId)?.name ?? x.productId}</TableCell>
+                      <TableCell>{x.sourceWarehouse}</TableCell>
+                      <TableCell>{x.marketplace.toUpperCase()}</TableCell>
+                      <TableCell className="uppercase text-xs">{x.shippingMethod}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x.plannedUnits}</TableCell>
+                      <TableCell>{x.status}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="history">

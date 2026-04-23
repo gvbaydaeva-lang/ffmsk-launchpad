@@ -20,11 +20,14 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useLegalEntities } from "@/hooks/useWmsMock";
+import { useInboundSupplies, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { getDefaultNewTariffs } from "@/services/mockWms";
 
 const LegalEntitiesPage = () => {
   const { data, isLoading, error, addEntity, isAdding } = useLegalEntities();
+  const { data: inbound } = useInboundSupplies();
+  const { data: outbound } = useOutboundShipments();
+  const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState({
@@ -41,6 +44,35 @@ const LegalEntitiesPage = () => {
     if (legalEntityId === "all") return data;
     return data.filter((e) => e.id === legalEntityId);
   }, [data, legalEntityId]);
+
+  const analyticsByEntity = React.useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        inTransit: number;
+        onStock: number;
+        reserved: number;
+      }
+    >();
+    for (const e of data ?? []) map.set(e.id, { inTransit: 0, onStock: 0, reserved: 0 });
+    for (const x of inbound ?? []) {
+      if (x.status === "ожидается") {
+        const acc = map.get(x.legalEntityId);
+        if (acc) acc.inTransit += x.expectedUnits;
+      }
+    }
+    for (const p of catalog ?? []) {
+      const acc = map.get(p.legalEntityId);
+      if (acc) acc.onStock += p.stockOnHand;
+    }
+    for (const x of outbound ?? []) {
+      if (x.status !== "отгружено") {
+        const acc = map.get(x.legalEntityId);
+        if (acc) acc.reserved += x.plannedUnits;
+      }
+    }
+    return map;
+  }, [data, inbound, outbound, catalog]);
 
   const onAdd = async () => {
     if (!form.shortName.trim() || !form.fullName.trim() || !form.inn.trim() || !form.ogrn.trim()) {
@@ -160,7 +192,9 @@ const LegalEntitiesPage = () => {
                 <TableRow className="border-slate-200 hover:bg-transparent">
                   <TableHead className="text-slate-600">Юрлицо</TableHead>
                   <TableHead className="font-mono text-slate-600">ИНН</TableHead>
-                  <TableHead className="text-right text-slate-600">Товаров на складе (шт)</TableHead>
+                  <TableHead className="text-right text-slate-600">В пути</TableHead>
+                  <TableHead className="text-right text-slate-600">На складе</TableHead>
+                  <TableHead className="text-right text-slate-600">К отгрузке</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -175,8 +209,10 @@ const LegalEntitiesPage = () => {
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-slate-700">{e.inn}</TableCell>
+                    <TableCell className="text-right tabular-nums">{analyticsByEntity.get(e.id)?.inTransit ?? 0}</TableCell>
+                    <TableCell className="text-right tabular-nums">{analyticsByEntity.get(e.id)?.onStock ?? 0}</TableCell>
                     <TableCell className="text-right tabular-nums font-medium text-slate-900">
-                      {e.warehouseUnitsTotal.toLocaleString("ru-RU")}
+                      {analyticsByEntity.get(e.id)?.reserved ?? 0}
                     </TableCell>
                   </TableRow>
                 ))}
