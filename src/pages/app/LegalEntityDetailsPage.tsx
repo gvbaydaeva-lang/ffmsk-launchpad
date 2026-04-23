@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { FileSpreadsheet, Plus } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,8 +13,57 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLegalEntities, useOperationHistory, useProductCatalog, useUpdateLegalEntitySettings } from "@/hooks/useWmsMock";
-import type { ProductCatalogItem } from "@/types/domain";
 import { toast } from "sonner";
+
+const IMPORT_FIELDS = [
+  { key: "name", label: "Название (Name)", required: true },
+  { key: "brand", label: "Бренд", required: false },
+  { key: "supplierArticle", label: "Артикул поставщика", required: false },
+  { key: "manufacturer", label: "Производитель", required: false },
+  { key: "country", label: "Страна", required: false },
+  { key: "lengthCm", label: "Длина, см", required: false },
+  { key: "widthCm", label: "Ширина, см", required: false },
+  { key: "heightCm", label: "Высота, см", required: false },
+  { key: "weightKg", label: "Вес, кг", required: false },
+  { key: "unitsPerPallet", label: "Ед. на паллету", required: false },
+  { key: "photoUrl", label: "Фото (URL)", required: false },
+  { key: "barcode", label: "Баркод", required: false },
+] as const;
+
+type ImportFieldKey = (typeof IMPORT_FIELDS)[number]["key"];
+type ColumnMapping = Record<ImportFieldKey, string>;
+
+function norm(s: string) {
+  return s.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function guessMapping(headers: string[]): ColumnMapping {
+  const dict = headers.reduce<Record<string, string>>((acc, h) => {
+    acc[norm(h)] = h;
+    return acc;
+  }, {});
+  const pick = (...variants: string[]) => {
+    for (const v of variants) {
+      const found = dict[norm(v)];
+      if (found) return found;
+    }
+    return "__none__";
+  };
+  return {
+    name: pick("Название", "Name", "Товар"),
+    brand: pick("Бренд", "Brand"),
+    supplierArticle: pick("Артикул", "Артикул поставщика", "SupplierArticle"),
+    manufacturer: pick("Производитель", "Manufacturer"),
+    country: pick("Страна", "Country"),
+    lengthCm: pick("Длина", "Длина, см", "Length"),
+    widthCm: pick("Ширина", "Ширина, см", "Width"),
+    heightCm: pick("Высота", "Высота, см", "Height"),
+    weightKg: pick("Вес", "Вес, кг", "Weight"),
+    unitsPerPallet: pick("Ед. на паллету", "UnitsPerPallet"),
+    photoUrl: pick("Фото", "Photo", "PhotoUrl"),
+    barcode: pick("Баркод", "Barcode"),
+  };
+}
 
 const LegalEntityDetailsPage = () => {
   const { id = "" } = useParams();
@@ -22,6 +72,23 @@ const LegalEntityDetailsPage = () => {
   const { data: catalog, addProduct, isAddingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
   const [open, setOpen] = React.useState(false);
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [excelHeaders, setExcelHeaders] = React.useState<string[]>([]);
+  const [excelRows, setExcelRows] = React.useState<Record<string, unknown>[]>([]);
+  const [mapping, setMapping] = React.useState<ColumnMapping>({
+    name: "__none__",
+    brand: "__none__",
+    supplierArticle: "__none__",
+    manufacturer: "__none__",
+    country: "__none__",
+    lengthCm: "__none__",
+    widthCm: "__none__",
+    heightCm: "__none__",
+    weightKg: "__none__",
+    unitsPerPallet: "__none__",
+    photoUrl: "__none__",
+    barcode: "__none__",
+  });
   const [form, setForm] = React.useState({
     photoUrl: "",
     name: "",
@@ -39,6 +106,86 @@ const LegalEntityDetailsPage = () => {
   const entity = React.useMemo(() => legal?.find((x) => x.id === id), [legal, id]);
   const rows = React.useMemo(() => (catalog ?? []).filter((x) => x.legalEntityId === id), [catalog, id]);
   const ops = React.useMemo(() => (history ?? []).filter((x) => x.legalEntityId === id), [history, id]);
+
+  const resetImport = () => {
+    setExcelHeaders([]);
+    setExcelRows([]);
+    setMapping({
+      name: "__none__",
+      brand: "__none__",
+      supplierArticle: "__none__",
+      manufacturer: "__none__",
+      country: "__none__",
+      lengthCm: "__none__",
+      widthCm: "__none__",
+      heightCm: "__none__",
+      weightKg: "__none__",
+      unitsPerPallet: "__none__",
+      photoUrl: "__none__",
+      barcode: "__none__",
+    });
+  };
+
+  const onExcelFile = async (file: File) => {
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+    if (!rows.length) {
+      toast.error("Файл пустой");
+      return;
+    }
+    const headers = Object.keys(rows[0]);
+    setExcelHeaders(headers);
+    setExcelRows(rows);
+    setMapping(guessMapping(headers));
+  };
+
+  const onImport = async () => {
+    if (!entity) return;
+    if (mapping.name === "__none__") {
+      toast.error("Сопоставьте колонку Название (Name)");
+      return;
+    }
+    let imported = 0;
+    let missingDims = 0;
+    for (const row of excelRows) {
+      const val = (field: ImportFieldKey) => {
+        const h = mapping[field];
+        if (!h || h === "__none__") return "";
+        const raw = row[h];
+        return typeof raw === "string" ? raw.trim() : String(raw ?? "").trim();
+      };
+      const name = val("name");
+      if (!name) continue;
+      const lengthCm = Number(val("lengthCm"));
+      const widthCm = Number(val("widthCm"));
+      const heightCm = Number(val("heightCm"));
+      if (!(lengthCm > 0 && widthCm > 0 && heightCm > 0)) missingDims += 1;
+      await addProduct({
+        legalEntityId: entity.id,
+        photoUrl: val("photoUrl") || null,
+        name,
+        brand: val("brand") || "Без бренда",
+        supplierArticle: val("supplierArticle"),
+        manufacturer: val("manufacturer"),
+        country: val("country"),
+        lengthCm: lengthCm > 0 ? lengthCm : 0,
+        widthCm: widthCm > 0 ? widthCm : 0,
+        heightCm: heightCm > 0 ? heightCm : 0,
+        weightKg: Number(val("weightKg")) || 0,
+        unitsPerPallet: Number(val("unitsPerPallet")) || 100,
+        barcode: val("barcode") || undefined,
+      });
+      imported += 1;
+    }
+    if (missingDims > 0) {
+      toast.warning(`Импорт завершён с предупреждением: у ${missingDims} товаров не указаны габариты.`);
+    }
+    toast.success(`Импортировано товаров: ${imported}`);
+    setImportOpen(false);
+    resetImport();
+  };
 
   const onAdd = async () => {
     if (!entity) return;
@@ -166,12 +313,80 @@ const LegalEntityDetailsPage = () => {
             <Button
               variant="outline"
               className="gap-2"
-              onClick={() => toast.message("Импорт Excel", { description: "Демо: импорт каталога в процессе." })}
+              onClick={() => setImportOpen(true)}
             >
               <FileSpreadsheet className="h-4 w-4" />
               Импорт Excel
             </Button>
           </div>
+
+          <Dialog
+            open={importOpen}
+            onOpenChange={(v) => {
+              setImportOpen(v);
+              if (!v) resetImport();
+            }}
+          >
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>Импорт Excel и сопоставление колонок</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div className="grid gap-1.5">
+                  <Label>Файл Excel (.xlsx, .xls)</Label>
+                  <Input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void onExcelFile(f);
+                    }}
+                  />
+                </div>
+                {excelHeaders.length > 0 && (
+                  <>
+                    <div className="rounded-md border border-slate-200 p-2 text-xs text-slate-600">
+                      Найдено колонок: {excelHeaders.length}. Строк в файле: {excelRows.length}.
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {IMPORT_FIELDS.map((f) => (
+                        <div key={f.key} className="grid gap-1">
+                          <Label>
+                            {f.label}
+                            {f.required ? " *" : ""}
+                          </Label>
+                          <Select
+                            value={mapping[f.key]}
+                            onValueChange={(v) => setMapping((m) => ({ ...m, [f.key]: v }))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Не сопоставлено" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Не сопоставлять</SelectItem>
+                              {excelHeaders.map((h) => (
+                                <SelectItem key={h} value={h}>
+                                  {h}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setImportOpen(false)}>
+                  Отмена
+                </Button>
+                <Button onClick={() => void onImport()} disabled={isAddingProduct || !excelRows.length}>
+                  {isAddingProduct ? "Импорт..." : "Импортировать"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <Card className="border-slate-200">
             <CardContent className="p-0 sm:p-4">
