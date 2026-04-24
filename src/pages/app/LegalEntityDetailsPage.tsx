@@ -80,6 +80,15 @@ type OutboundRowDraft = {
   factualUnits: string;
 };
 
+type InboundImportPreviewRow = {
+  name: string;
+  barcode: string;
+  supplierArticle: string;
+  color: string;
+  size: string;
+  plannedQuantity: number;
+};
+
 function text(v: unknown) {
   return String(v ?? "").trim();
 }
@@ -91,6 +100,24 @@ function num(v: unknown) {
 
 function hasValue(v: unknown) {
   return text(v) !== "";
+}
+
+function normalizeHeader(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeObjectKeys(row: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) out[normalizeHeader(k)] = v;
+  return out;
+}
+
+function pickByAliases(row: Record<string, unknown>, aliases: string[]) {
+  for (const key of aliases) {
+    const hit = row[normalizeHeader(key)];
+    if (hit !== undefined) return hit;
+  }
+  return "";
 }
 
 function rowToDraft(item: ProductCatalogItem): RowDraft {
@@ -150,7 +177,7 @@ const LegalEntityDetailsPage = () => {
   const [createOutboundOpen, setCreateOutboundOpen] = React.useState(false);
   const [inboundExcelOpen, setInboundExcelOpen] = React.useState(false);
   const [outboundExcelOpen, setOutboundExcelOpen] = React.useState(false);
-  const [inboundExcelRows, setInboundExcelRows] = React.useState<Record<string, unknown>[]>([]);
+  const [inboundExcelRows, setInboundExcelRows] = React.useState<InboundImportPreviewRow[]>([]);
   const [outboundExcelRows, setOutboundExcelRows] = React.useState<Record<string, unknown>[]>([]);
   const [excelRows, setExcelRows] = React.useState<Record<string, unknown>[]>([]);
   const [productSearch, setProductSearch] = React.useState("");
@@ -659,9 +686,9 @@ const LegalEntityDetailsPage = () => {
     return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
   };
 
-  const findProductByRow = (row: Record<string, unknown>) => {
-    const barcode = text(row["Баркод"]);
-    const article = text(row["Артикул"]);
+  const findProductByInboundPreview = (row: InboundImportPreviewRow) => {
+    const barcode = text(row.barcode);
+    const article = text(row.supplierArticle);
     if (barcode) {
       const byBarcode = rows.find((p) => p.barcode === barcode);
       if (byBarcode) return byBarcode;
@@ -673,20 +700,46 @@ const LegalEntityDetailsPage = () => {
     return null;
   };
 
+  const findProductByRow = (row: Record<string, unknown>) => {
+    const normalized = normalizeObjectKeys(row);
+    const barcode = text(pickByAliases(normalized, ["Баркод"]));
+    const article = text(pickByAliases(normalized, ["Артикул"]));
+    if (barcode) {
+      const byBarcode = rows.find((p) => p.barcode === barcode);
+      if (byBarcode) return byBarcode;
+    }
+    if (article) {
+      const byArticle = rows.find((p) => p.supplierArticle === article);
+      if (byArticle) return byArticle;
+    }
+    return null;
+  };
+
+  const parseInboundImportRows = (raw: Record<string, unknown>[]) => {
+    return raw.map((entry) => {
+      const row = normalizeObjectKeys(entry);
+      const plannedRaw = pickByAliases(row, ["Количество заявленное", "Кол-во", "План", "план ", "Плановое количество"]);
+      const planned = Number(String(plannedRaw).replace(",", "."));
+      return {
+        name: text(pickByAliases(row, ["Название"])),
+        barcode: text(pickByAliases(row, ["Баркод"])),
+        supplierArticle: text(pickByAliases(row, ["Артикул"])),
+        color: text(pickByAliases(row, ["Цвет"])),
+        size: text(pickByAliases(row, ["Размер"])),
+        plannedQuantity: Number.isFinite(planned) ? planned : 0,
+      } satisfies InboundImportPreviewRow;
+    });
+  };
+
   const importInboundExcel = async () => {
     if (!entity) return;
     let created = 0;
     let skipped = 0;
     const docNo = `ПТ-${Date.now().toString().slice(-6)}`;
     for (const row of inboundExcelRows) {
-      const product = findProductByRow(row);
-      const qty =
-        Number(row["Количество заявленное"]) ||
-        Number(row["Кол-во"]) ||
-        Number(row["план "]) ||
-        Number(row["План"]) ||
-        0;
-      if (!product || qty <= 0) {
+      const product = findProductByInboundPreview(row);
+      const qty = Number(row.plannedQuantity) || 0;
+      if (!product) {
         skipped += 1;
         continue;
       }
@@ -699,9 +752,9 @@ const LegalEntityDetailsPage = () => {
             productId: product.id,
             barcode: product.barcode,
             supplierArticle: product.supplierArticle,
-            name: product.name,
-            color: product.color,
-            size: product.size,
+            name: row.name || product.name,
+            color: row.color || product.color,
+            size: row.size || product.size,
             plannedQuantity: qty,
             factualQuantity: 0,
           },
@@ -1087,10 +1140,36 @@ const LegalEntityDetailsPage = () => {
                       onChange={(e) => {
                         const f = e.target.files?.[0];
                         if (!f) return;
-                        void parseExcelRows(f).then(setInboundExcelRows);
+                        void parseExcelRows(f).then((raw) => setInboundExcelRows(parseInboundImportRows(raw)));
                       }}
                     />
                     <p className="text-xs text-slate-600">Строк к импорту: {inboundExcelRows.length}</p>
+                    {inboundExcelRows.length > 0 && (
+                      <div className="max-h-56 overflow-auto rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Артикул</TableHead>
+                              <TableHead>Баркод</TableHead>
+                              <TableHead>Цвет</TableHead>
+                              <TableHead>Размер</TableHead>
+                              <TableHead className="text-right">План</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {inboundExcelRows.slice(0, 20).map((r, i) => (
+                              <TableRow key={`${r.barcode}-${i}`}>
+                                <TableCell>{r.supplierArticle || "—"}</TableCell>
+                                <TableCell className="font-mono text-xs">{r.barcode || "—"}</TableCell>
+                                <TableCell>{r.color || "—"}</TableCell>
+                                <TableCell>{r.size || "—"}</TableCell>
+                                <TableCell className="text-right tabular-nums">{r.plannedQuantity}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setInboundExcelOpen(false)}>Отмена</Button>
