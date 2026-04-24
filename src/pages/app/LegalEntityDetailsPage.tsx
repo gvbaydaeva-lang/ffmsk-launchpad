@@ -31,6 +31,7 @@ import {
   useProductCatalog,
   useUpdateLegalEntitySettings,
 } from "@/hooks/useWmsMock";
+import { flushMockOutboundToDb } from "@/services/mockOutbound";
 import type { ProductCatalogItem } from "@/types/domain";
 import { toast } from "sonner";
 
@@ -228,6 +229,7 @@ const LegalEntityDetailsPage = () => {
   const [scanDraftByShipment, setScanDraftByShipment] = React.useState<Record<string, string>>({});
   const [scanErrorByShipment, setScanErrorByShipment] = React.useState<Record<string, boolean>>({});
   const [qrBoxPayload, setQrBoxPayload] = React.useState<{ barcode: string; warehouse: string } | null>(null);
+  const [outboundDbSaved, setOutboundDbSaved] = React.useState<boolean | null>(null);
   const [form, setForm] = React.useState({
     category: "",
     photoUrl: "",
@@ -1030,7 +1032,14 @@ const LegalEntityDetailsPage = () => {
       });
       created += 1;
     }
-    toast.success(`Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}`);
+    const currentAll = outbound ?? [];
+    const persisted = await flushMockOutboundToDb(currentAll);
+    setOutboundDbSaved(persisted);
+    if (persisted) {
+      toast.success(`Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}. Сохранено в БД.`);
+    } else {
+      toast.error(`Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}. Ошибка сохранения в БД.`);
+    }
     setOutboundExcelOpen(false);
     setOutboundExcelRows([]);
   };
@@ -1595,6 +1604,8 @@ const LegalEntityDetailsPage = () => {
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-600">Задания на отгрузку по клиенту</p>
             <div className="flex items-center gap-2">
+              {outboundDbSaved === true && <span className="text-xs font-medium text-emerald-600">✓ Сохранено в БД</span>}
+              {outboundDbSaved === false && <span className="text-xs font-medium text-red-600">Ошибка сохранения в БД</span>}
               <Button variant="outline" className="gap-2" onClick={downloadOutboundTaskTemplate}>
                 <Download className="h-4 w-4" />
                 Скачать шаблон
