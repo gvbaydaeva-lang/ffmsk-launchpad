@@ -26,6 +26,11 @@ const ReceivingPage = () => {
   const { role } = useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [actualDraft, setActualDraft] = React.useState<Record<string, string>>({});
+  const [search, setSearch] = React.useState("");
+  const [showOnlyDiff, setShowOnlyDiff] = React.useState(false);
+  const [editableRows, setEditableRows] = React.useState<Record<string, boolean>>({});
+  const [sortKey, setSortKey] = React.useState<"title" | "barcode" | "declaredQty" | "actualQty">("title");
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -60,6 +65,28 @@ const ReceivingPage = () => {
       ),
     [rows],
   );
+  const preparedRows = React.useMemo(() => {
+    const s = search.trim().toLowerCase();
+    const filteredRows = lineRows.filter((r) => {
+      const match = !s || r.title.toLowerCase().includes(s) || r.barcode.toLowerCase().includes(s) || r.article.toLowerCase().includes(s);
+      const diff = !showOnlyDiff || r.declaredQty !== r.actualQty;
+      return match && diff;
+    });
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...filteredRows].sort((a, b) => {
+      if (sortKey === "title") return a.title.localeCompare(b.title, "ru") * dir;
+      if (sortKey === "barcode") return a.barcode.localeCompare(b.barcode, "ru") * dir;
+      if (sortKey === "declaredQty") return (a.declaredQty - b.declaredQty) * dir;
+      return ((a.actualQty ?? 0) - (b.actualQty ?? 0)) * dir;
+    });
+  }, [lineRows, search, showOnlyDiff, sortDir, sortKey]);
+  const onSort = (key: "title" | "barcode" | "declaredQty" | "actualQty") => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
 
 
   return (
@@ -70,6 +97,15 @@ const ReceivingPage = () => {
           <p className="mt-1 text-sm text-slate-600">Входящие поставки по маркетплейсам и юрлицам.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Поиск: название, баркод, артикул"
+            className="w-full sm:w-[280px]"
+          />
+          <Button variant={showOnlyDiff ? "default" : "outline"} size="sm" onClick={() => setShowOnlyDiff((v) => !v)}>
+            {showOnlyDiff ? "Показать все" : "Только расхождения"}
+          </Button>
           <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
             <SelectTrigger className="w-full border-slate-200 bg-white sm:w-[200px]">
               <SelectValue placeholder="Площадка" />
@@ -104,17 +140,17 @@ const ReceivingPage = () => {
               <TableHeader>
                 <TableRow className="border-slate-200 hover:bg-transparent">
                   <TableHead className="text-slate-600">Юрлицо</TableHead>
-                  <TableHead className="text-slate-600">Товар</TableHead>
-                  <TableHead className="text-slate-600">Баркод</TableHead>
-                  <TableHead className="text-right text-slate-600">Количество заявленное</TableHead>
-                  <TableHead className="text-right text-slate-600">Количество фактическое</TableHead>
+                  <TableHead className="text-slate-600 cursor-pointer" onClick={() => onSort("title")}>Товар</TableHead>
+                  <TableHead className="text-slate-600 cursor-pointer" onClick={() => onSort("barcode")}>Баркод</TableHead>
+                  <TableHead className="text-right text-slate-600 cursor-pointer" onClick={() => onSort("declaredQty")}>Количество заявленное</TableHead>
+                  <TableHead className="text-right text-slate-600 cursor-pointer" onClick={() => onSort("actualQty")}>Количество фактическое</TableHead>
                   <TableHead className="text-slate-600">Статус</TableHead>
-                  <TableHead className="text-slate-600">Документ</TableHead>
                   <TableHead className="text-right text-slate-600">Действие</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lineRows.map((row) => {
+                {preparedRows.map((row) => {
+                  const isEditable = Boolean(editableRows[row.lineId]);
                   const actualValue = actualDraft[row.lineId] ?? (row.actualQty != null ? String(row.actualQty) : "");
                   const draftItems = rows.find((x) => x.id === row.inboundId)?.items ?? [];
                   const diffClass =
@@ -132,6 +168,7 @@ const ReceivingPage = () => {
                     </TableCell>
                     <TableCell className="max-w-[260px] truncate text-slate-800">
                       <Input
+                        disabled={!isEditable}
                         className="h-8"
                         value={row.title}
                         onChange={(e) =>
@@ -146,6 +183,7 @@ const ReceivingPage = () => {
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       <Input
+                        disabled={!isEditable}
                         className="h-8 font-mono"
                         value={row.barcode}
                         onChange={(e) =>
@@ -160,6 +198,7 @@ const ReceivingPage = () => {
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-slate-900">
                       <Input
+                        disabled={!isEditable}
                         type="number"
                         min={0}
                         className="h-8 w-24 text-right"
@@ -179,6 +218,7 @@ const ReceivingPage = () => {
                     <TableCell className="text-right tabular-nums text-slate-500">
                       {canChangeInboundStatus(role) ? (
                         <Input
+                          disabled={!isEditable}
                           type="number"
                           min={0}
                           className="h-8 w-24 text-right"
@@ -218,8 +258,10 @@ const ReceivingPage = () => {
                         {row.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{row.documentNo}</TableCell>
                     <TableCell className="text-right">
+                      <Button size="sm" variant="outline" className="mr-2" onClick={() => setEditableRows((s) => ({ ...s, [row.lineId]: !s[row.lineId] }))}>
+                        {isEditable ? "Готово" : "Редактировать"}
+                      </Button>
                       {row.status !== "принято" && canChangeInboundStatus(role) ? (
                         <Button
                           size="sm"

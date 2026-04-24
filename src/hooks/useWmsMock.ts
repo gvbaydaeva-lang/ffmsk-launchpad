@@ -133,13 +133,14 @@ export function useInboundSupplies() {
   });
 
   const updateDraft = useMutation({
-    mutationFn: async (args: { id: string; items: InboundSupply["items"] }) => {
+    mutationFn: async (args: { id: string; items: InboundSupply["items"]; marketplace?: Marketplace }) => {
       const inbound = qc.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? (await fetchMockInboundSupplies());
       return inbound.map((x) =>
         x.id === args.id
           ? {
               ...x,
               items: args.items,
+              marketplace: args.marketplace ?? x.marketplace,
               expectedUnits: args.items.reduce((s, it) => s + it.plannedQuantity, 0),
               receivedUnits: args.items.reduce((s, it) => s + it.factualQuantity, 0),
             }

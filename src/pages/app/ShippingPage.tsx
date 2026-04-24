@@ -9,7 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -33,14 +32,10 @@ const ShippingPage = () => {
   const [scanError, setScanError] = React.useState<Record<string, boolean>>({});
   const [qrOpenFor, setQrOpenFor] = React.useState<string | null>(null);
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
-  const [form, setForm] = React.useState({
-    legalEntityId: "le-2",
-    productId: "",
-    plannedUnits: "",
-    marketplace: "wb" as Marketplace,
-    sourceWarehouse: "Склад Коледино",
-    shippingMethod: "fbo" as "fbo" | "fbs" | "self",
-  });
+  const [search, setSearch] = React.useState("");
+  const [editableRows, setEditableRows] = React.useState<Record<string, boolean>>({});
+  const [sortKey, setSortKey] = React.useState<"name" | "barcode" | "planned">("name");
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
 
   const filtered = React.useMemo(() => {
     const base = filterOutboundByMarketplace(data ?? [], mp);
@@ -58,8 +53,32 @@ const ShippingPage = () => {
       ),
     [filtered],
   );
-
   const productMap = React.useMemo(() => new Map((catalog ?? []).map((p) => [p.id, p])), [catalog]);
+  const preparedRows = React.useMemo(() => {
+    const s = search.trim().toLowerCase();
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...lineRows]
+      .filter((x) => {
+        const name = (productMap.get(x.productId)?.name ?? "").toLowerCase();
+        const barcode = (productMap.get(x.productId)?.barcode ?? "").toLowerCase();
+        return !s || name.includes(s) || barcode.includes(s);
+      })
+      .sort((a, b) => {
+        if (sortKey === "barcode") {
+          return ((productMap.get(a.productId)?.barcode ?? "").localeCompare(productMap.get(b.productId)?.barcode ?? "", "ru")) * dir;
+        }
+        if (sortKey === "planned") return (a.plannedUnits - b.plannedUnits) * dir;
+        return ((productMap.get(a.productId)?.name ?? "").localeCompare(productMap.get(b.productId)?.name ?? "", "ru")) * dir;
+      });
+  }, [lineRows, productMap, search, sortDir, sortKey]);
+  const onSort = (key: "name" | "barcode" | "planned") => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
   const qrRow = qrOpenFor ? filtered.find((x) => x.id === qrOpenFor) ?? null : null;
 
   const onCreateBox = async (id: string) => {
@@ -68,7 +87,7 @@ const ShippingPage = () => {
     if (row.boxBarcode) return;
     await updateOutboundDraft({
       id,
-      patch: { boxBarcode: `BOX-${Date.now().toString().slice(-8)}`, status: "к отгрузке" },
+      patch: { boxBarcode: `BOX-${Date.now().toString().slice(-8)}` },
     });
     toast.success("Короб создан. Можно наполнять.");
   };
@@ -109,9 +128,13 @@ const ShippingPage = () => {
     XLSX.writeFile(wb, "shk-excel-export.xlsx");
   };
 
-  const advanceStatus = async (id: string, current: "создано" | "к отгрузке" | "отгружено", plannedUnits: number) => {
+  const advanceStatus = async (
+    id: string,
+    current: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено",
+    plannedUnits: number,
+  ) => {
     try {
-      if (current === "создано") await setOutboundStatus({ id, status: "к отгрузке" });
+      if (current === "готов к отгрузке (резерв)") await setOutboundStatus({ id, status: "к отгрузке" });
       if (current === "к отгрузке") await setOutboundStatus({ id, status: "отгружено", shippedUnits: plannedUnits });
       toast.success("Статус обновлен");
     } catch {
@@ -127,6 +150,7 @@ const ShippingPage = () => {
           <p className="mt-1 text-sm text-slate-600">Задания на выдачу со склада FF и контроль остатков.</p>
         </div>
         <div className="flex gap-2">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: название, баркод" className="w-[250px]" />
           <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
             <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -160,12 +184,12 @@ const ShippingPage = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>Юрлицо</TableHead>
-                  <TableHead>Товар</TableHead>
+                  <TableHead className="cursor-pointer" onClick={() => onSort("name")}>Товар</TableHead>
                   <TableHead>Склад назначения</TableHead>
-                  <TableHead>Баркод</TableHead>
+                  <TableHead className="cursor-pointer" onClick={() => onSort("barcode")}>Баркод</TableHead>
                   <TableHead>Площадка</TableHead>
                   <TableHead>Метод</TableHead>
-                  <TableHead className="text-right">Количество к отгрузке</TableHead>
+                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("planned")}>Количество к отгрузке</TableHead>
                   <TableHead className="text-right">Упаковано</TableHead>
                   <TableHead>ШК короба</TableHead>
                   <TableHead>ШК пропуска</TableHead>
@@ -177,7 +201,7 @@ const ShippingPage = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lineRows.map((row) => (
+                {preparedRows.map((row) => (
                   <TableRow key={row.lineId} className={scanError[row.id] ? "bg-red-50" : undefined}>
                     <TableCell>
                       <Link to={`/legal-entities/${row.legalEntityId}?tab=shipping`} className="hover:underline">
@@ -195,24 +219,28 @@ const ShippingPage = () => {
                     </TableCell>
                     <TableCell>
                       <Input
+                        disabled={!editableRows[row.id]}
                         className="h-8 font-mono"
                         value={row.boxBarcode}
                         onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { boxBarcode: e.target.value } })}
                       />
                     </TableCell>
                     <TableCell>
-                      <Input className="h-8" value={row.gateBarcode} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { gateBarcode: e.target.value } })} />
+                      <Input disabled={!editableRows[row.id]} className="h-8" value={row.gateBarcode} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { gateBarcode: e.target.value } })} />
                     </TableCell>
                     <TableCell>
-                      <Input className="h-8" value={row.supplyNumber} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { supplyNumber: e.target.value } })} />
+                      <Input disabled={!editableRows[row.id]} className="h-8" value={row.supplyNumber} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { supplyNumber: e.target.value } })} />
                     </TableCell>
                     <TableCell>
-                      <Input className="h-8" type="date" value={row.expiryDate} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { expiryDate: e.target.value } })} />
+                      <Input disabled={!editableRows[row.id]} className="h-8" type="date" value={row.expiryDate} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { expiryDate: e.target.value } })} />
                     </TableCell>
                     <TableCell><Badge variant={row.status === "отгружено" ? "default" : "secondary"}>{row.status}</Badge></TableCell>
                     <TableCell>{format(parseISO(row.createdAt), "d MMM yyyy HH:mm", { locale: ru })}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="outline" onClick={() => setEditableRows((s) => ({ ...s, [row.id]: !s[row.id] }))}>
+                          {editableRows[row.id] ? "Готово" : "Редактировать"}
+                        </Button>
                         <Button size="sm" variant="outline" onClick={() => void onCreateBox(row.id)}>
                           Короб
                         </Button>
@@ -233,7 +261,7 @@ const ShippingPage = () => {
                       </div>
                       {row.status !== "отгружено" && canChangeOutboundStatus(role) ? (
                         <Button size="sm" variant="outline" onClick={() => void advanceStatus(row.id, row.status, row.plannedUnits)} disabled={isUpdatingOutbound}>
-                          {row.status === "создано" ? "К отгрузке" : "Отгружено"}
+                          {row.status === "готов к отгрузке (резерв)" ? "К отгрузке" : "Отгружено"}
                         </Button>
                       ) : (
                         <span className="text-xs text-slate-500">{row.status === "отгружено" ? "Завершено" : "Без доступа"}</span>
