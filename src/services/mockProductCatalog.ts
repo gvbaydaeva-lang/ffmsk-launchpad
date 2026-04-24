@@ -4,6 +4,8 @@ function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const PRODUCT_STORAGE_KEY = "ffmsk.mock.productCatalog";
+
 export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
   {
     id: "prd-1",
@@ -141,7 +143,15 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
 
 export async function fetchMockProductCatalog(): Promise<ProductCatalogItem[]> {
   await delay(80);
-  return PRODUCT_CATALOG_SEED.map((x) => ({ ...x }));
+  if (typeof window === "undefined") return PRODUCT_CATALOG_SEED.map((x) => ({ ...x }));
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_STORAGE_KEY);
+    if (!raw) return PRODUCT_CATALOG_SEED.map((x) => ({ ...x }));
+    const parsed = JSON.parse(raw) as ProductCatalogItem[];
+    return Array.isArray(parsed) ? parsed : PRODUCT_CATALOG_SEED.map((x) => ({ ...x }));
+  } catch {
+    return PRODUCT_CATALOG_SEED.map((x) => ({ ...x }));
+  }
 }
 
 export function appendMockProductCatalogItem(
@@ -150,7 +160,7 @@ export function appendMockProductCatalogItem(
 ): ProductCatalogItem[] {
   const id = `prd-${Date.now()}`;
   const generatedBarcode = draft.barcode?.trim() || `${Date.now()}`.slice(-13);
-  return [
+  const next = [
     {
       ...draft,
       category: draft.category || "Без категории",
@@ -160,6 +170,8 @@ export function appendMockProductCatalogItem(
     },
     ...current,
   ];
+  saveMockProductCatalog(next);
+  return next;
 }
 
 export function updateMockProductCatalogItem(
@@ -167,5 +179,12 @@ export function updateMockProductCatalogItem(
   id: string,
   patch: Partial<ProductCatalogItem>,
 ): ProductCatalogItem[] {
-  return current.map((x) => (x.id === id ? { ...x, ...patch } : x));
+  const next = current.map((x) => (x.id === id ? { ...x, ...patch } : x));
+  saveMockProductCatalog(next);
+  return next;
+}
+
+export function saveMockProductCatalog(rows: ProductCatalogItem[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(PRODUCT_STORAGE_KEY, JSON.stringify(rows));
 }
