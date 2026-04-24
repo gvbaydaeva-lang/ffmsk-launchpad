@@ -118,7 +118,7 @@ const LegalEntityDetailsPage = () => {
   const { data: legal } = useLegalEntities();
   const { data: history } = useOperationHistory();
   const { data: inbound, createInbound, setInboundStatus, isCreating, isUpdatingInbound } = useInboundSupplies();
-  const { data: outbound, createOutbound, setOutboundStatus, isCreatingOutbound, isUpdatingOutbound } = useOutboundShipments();
+  const { data: outbound, createOutbound, setOutboundStatus, isCreatingOutbound, isUpdatingOutbound, updateOutboundDraft } = useOutboundShipments();
   const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
 
@@ -151,6 +151,9 @@ const LegalEntityDetailsPage = () => {
     shippingMethod: "fbo" as "fbo" | "fbs" | "self",
   });
   const [quickBarcode, setQuickBarcode] = React.useState("");
+  const [catalogSearch, setCatalogSearch] = React.useState("");
+  const [catalogSort, setCatalogSort] = React.useState<"name" | "barcode" | "article">("name");
+  const [showOnlyDiff, setShowOnlyDiff] = React.useState(false);
   const [printCopies, setPrintCopies] = React.useState("1");
   const [rowDrafts, setRowDrafts] = React.useState<Record<string, RowDraft>>({});
   const [form, setForm] = React.useState({
@@ -204,6 +207,22 @@ const LegalEntityDetailsPage = () => {
     if (!s) return rows;
     return rows.filter((p) => p.name.toLowerCase().includes(s) || p.barcode.toLowerCase().includes(s));
   }, [rows, productSearch]);
+  const catalogRows = React.useMemo(() => {
+    const s = catalogSearch.trim().toLowerCase();
+    let arr = rows.filter(
+      (p) =>
+        !s ||
+        p.name.toLowerCase().includes(s) ||
+        p.barcode.toLowerCase().includes(s) ||
+        p.supplierArticle.toLowerCase().includes(s),
+    );
+    arr = [...arr].sort((a, b) => {
+      if (catalogSort === "barcode") return a.barcode.localeCompare(b.barcode, "ru");
+      if (catalogSort === "article") return a.supplierArticle.localeCompare(b.supplierArticle, "ru");
+      return a.name.localeCompare(b.name, "ru");
+    });
+    return arr;
+  }, [rows, catalogSearch, catalogSort]);
   const copies = Math.max(1, Number(printCopies) || 1);
   const historyProduct = historyProductId ? rows.find((p) => p.id === historyProductId) ?? null : null;
   const currentTab = searchParams.get("tab") ?? "catalog";
@@ -479,9 +498,10 @@ const LegalEntityDetailsPage = () => {
       supplyNumber: "",
       expiryDate: "",
       packedUnits: 0,
+      plannedShipDate: null,
       plannedUnits: qty,
       shippedUnits: null,
-      status: "создано",
+      status: "готов к отгрузке (резерв)",
     });
     toast.success("Задание на отгрузку создано");
     setCreateOutboundOpen(false);
@@ -612,9 +632,10 @@ const LegalEntityDetailsPage = () => {
         supplyNumber: "",
         expiryDate: "",
         packedUnits: 0,
+        plannedShipDate: null,
         plannedUnits: qty,
         shippedUnits: null,
-        status: "создано",
+        status: "готов к отгрузке (резерв)",
       });
       created += 1;
     }
@@ -727,6 +748,22 @@ const LegalEntityDetailsPage = () => {
               Открыть печать
             </Button>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Поиск по названию, баркоду, артикулу"
+              value={catalogSearch}
+              onChange={(e) => setCatalogSearch(e.target.value)}
+              className="max-w-md"
+            />
+            <Select value={catalogSort} onValueChange={(v) => setCatalogSort(v as "name" | "barcode" | "article")}>
+              <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name">Сортировка: Название А-Я</SelectItem>
+                <SelectItem value="barcode">Сортировка: Баркод 0-9</SelectItem>
+                <SelectItem value="article">Сортировка: Артикул А-Я</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
           <Dialog open={importOpen} onOpenChange={setImportOpen}>
             <DialogContent className="sm:max-w-lg">
@@ -762,7 +799,7 @@ const LegalEntityDetailsPage = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((item) => {
+                  {catalogRows.map((item) => {
                     const draft = rowDrafts[item.id];
                     const dirty = isDirty(item, draft);
                     return (
@@ -775,14 +812,14 @@ const LegalEntityDetailsPage = () => {
                         <TableCell className="font-mono text-xs"><button type="button" className="hover:underline" onClick={() => openPrintDialog(item)}>{item.barcode}</button></TableCell>
                         <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.color ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), color: e.target.value } }))} /></TableCell>
                         <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.size ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value } }))} /></TableCell>
-                        <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} /></TableCell>
+                        <TableCell className="min-w-[170px]"><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} /></TableCell>
                         <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.composition ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value } }))} /></TableCell>
                         <TableCell className="text-right">
                           <button type="button" className="text-sm font-medium hover:underline" onClick={() => setHistoryProductId(item.id)}>
                             {item.stockOnHand}
                           </button>
                         </TableCell>
-                        <TableCell className="min-w-[240px] space-y-1 text-xs">
+                        <TableCell className="min-w-[185px] space-y-1 text-xs">
                           <p className="text-slate-600">{paramsLabel(item)}</p>
                           <div className="grid grid-cols-4 gap-1">
                             <Input disabled={!canEditCatalog(role)} className="h-7 px-2 text-xs" placeholder="L" value={draft?.lengthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), lengthCm: e.target.value } }))} />
@@ -976,14 +1013,20 @@ const LegalEntityDetailsPage = () => {
               )}
             </div>
           </div>
+          <div className="mb-3 flex items-center gap-2">
+            <Button variant={showOnlyDiff ? "default" : "outline"} size="sm" onClick={() => setShowOnlyDiff((v) => !v)}>
+              {showOnlyDiff ? "Показать все" : "Только расхождения"}
+            </Button>
+          </div>
           <Card className="border-slate-200">
             <CardContent className="p-0 sm:p-4">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Документ</TableHead>
-                    <TableHead>Склад назначения</TableHead>
-                    <TableHead>Площадка</TableHead>
+                    <TableHead>Товар</TableHead>
+                    <TableHead>Баркод</TableHead>
+                    <TableHead>Цвет</TableHead>
+                    <TableHead>Размер</TableHead>
                     <TableHead className="text-right">План</TableHead>
                     <TableHead className="text-right">Факт</TableHead>
                     <TableHead>Статус</TableHead>
@@ -991,13 +1034,24 @@ const LegalEntityDetailsPage = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {inboundRows.map((x) => (
-                    <TableRow key={x.id}>
-                      <TableCell className="font-mono text-xs">{x.documentNo}</TableCell>
-                      <TableCell>{x.destinationWarehouse}</TableCell>
-                      <TableCell>{x.marketplace.toUpperCase()}</TableCell>
-                      <TableCell className="text-right tabular-nums">{x.expectedUnits}</TableCell>
-                      <TableCell className="text-right tabular-nums">{x.receivedUnits ?? "—"}</TableCell>
+                  {inboundRows
+                    .flatMap((x) =>
+                      x.items.map((it, idx) => ({
+                        rowId: `${x.id}-${idx}`,
+                        inboundId: x.id,
+                        item: it,
+                        status: x.status,
+                      })),
+                    )
+                    .filter((x) => (showOnlyDiff ? x.item.plannedQuantity !== x.item.factualQuantity : true))
+                    .map((x) => (
+                    <TableRow key={x.rowId}>
+                      <TableCell>{x.item.name}</TableCell>
+                      <TableCell className="font-mono text-xs">{x.item.barcode}</TableCell>
+                      <TableCell>{x.item.color}</TableCell>
+                      <TableCell>{x.item.size}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x.item.plannedQuantity}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x.item.factualQuantity}</TableCell>
                       <TableCell>{x.status}</TableCell>
                       <TableCell className="text-right">
                         {canChangeInboundStatus(role) && x.status !== "принято" ? (
@@ -1006,14 +1060,14 @@ const LegalEntityDetailsPage = () => {
                             variant="outline"
                             onClick={() =>
                               void setInboundStatus({
-                                id: x.id,
+                                id: x.inboundId,
                                 status: x.status === "ожидается" ? "на приёмке" : "принято",
-                                receivedUnits: x.expectedUnits,
+                                receivedUnits: x.item.factualQuantity || x.item.plannedQuantity,
                               })
                             }
                             disabled={isUpdatingInbound}
                           >
-                            {x.status === "ожидается" ? "На приёмке" : "Принять"}
+                            {x.status === "ожидается" ? "На приёмке" : "Завершить приёмку"}
                           </Button>
                         ) : (
                           <span className="text-xs text-slate-500">{x.status === "принято" ? "Завершено" : "Без доступа"}</span>
@@ -1111,6 +1165,7 @@ const LegalEntityDetailsPage = () => {
                     <TableHead>Склад отгрузки</TableHead>
                     <TableHead>Площадка</TableHead>
                     <TableHead>Метод</TableHead>
+                    <TableHead>Дата отгрузки</TableHead>
                     <TableHead className="text-right">Кол-во</TableHead>
                     <TableHead>Статус</TableHead>
                     <TableHead className="text-right">Действие</TableHead>
@@ -1123,6 +1178,14 @@ const LegalEntityDetailsPage = () => {
                       <TableCell>{x.sourceWarehouse}</TableCell>
                       <TableCell>{x.marketplace.toUpperCase()}</TableCell>
                       <TableCell className="uppercase text-xs">{x.shippingMethod}</TableCell>
+                      <TableCell>
+                        <Input
+                          type="date"
+                          className="h-8"
+                          value={x.plannedShipDate ?? ""}
+                          onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { plannedShipDate: e.target.value || null } })}
+                        />
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{x.plannedUnits}</TableCell>
                       <TableCell>{x.status}</TableCell>
                       <TableCell className="text-right">
@@ -1133,13 +1196,13 @@ const LegalEntityDetailsPage = () => {
                             onClick={() =>
                               void setOutboundStatus({
                                 id: x.id,
-                                status: x.status === "создано" ? "к отгрузке" : "отгружено",
+                                status: x.status === "готов к отгрузке (резерв)" ? "к отгрузке" : "отгружено",
                                 shippedUnits: x.plannedUnits,
                               })
                             }
                             disabled={isUpdatingOutbound}
                           >
-                            {x.status === "создано" ? "К отгрузке" : "Отгружено"}
+                            {x.status === "готов к отгрузке (резерв)" ? "Назначить дату/в план" : "Отгружено"}
                           </Button>
                         ) : (
                           <span className="text-xs text-slate-500">{x.status === "отгружено" ? "Завершено" : "Без доступа"}</span>

@@ -172,9 +172,19 @@ export function useOutboundShipments() {
       if (!product || product.stockOnHand < draft.plannedUnits) {
         throw new Error("insufficient_stock");
       }
-      return appendMockOutbound(outbound, draft);
+      const nextOutbound = appendMockOutbound(outbound, draft);
+      let nextCatalog = catalog;
+      if (draft.status === "готов к отгрузке (резерв)") {
+        nextCatalog = catalog.map((p) =>
+          p.id === draft.productId ? { ...p, stockOnHand: Math.max(0, p.stockOnHand - draft.plannedUnits) } : p,
+        );
+      }
+      return { nextOutbound, nextCatalog };
     },
-    onSuccess: (data) => qc.setQueryData(["wms", "outbound"], data),
+    onSuccess: ({ nextOutbound, nextCatalog }) => {
+      qc.setQueryData(["wms", "outbound"], nextOutbound);
+      qc.setQueryData(["wms", "product-catalog"], nextCatalog);
+    },
   });
 
   const setStatus = useMutation({

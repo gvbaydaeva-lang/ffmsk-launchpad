@@ -218,8 +218,9 @@ export type OutboundShipment = {
   expiryDate: string;
   packedUnits: number;
   plannedUnits: number;
+  plannedShipDate: string | null;
   shippedUnits: number | null;
-  status: "создано" | "к отгрузке" | "отгружено";
+  status: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено";
   createdAt: string;
 };
 
