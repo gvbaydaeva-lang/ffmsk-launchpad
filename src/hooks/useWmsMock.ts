@@ -10,7 +10,7 @@ import type {
   OrgUser,
   WarehouseInventoryRow,
 } from "@/types/domain";
-import { appendMockOutbound, fetchMockOutboundShipments, flushMockOutboundToDb, saveMockOutbound } from "@/services/mockOutbound";
+import { appendMockOutbound, fetchMockOutboundShipments, persistOutboundDurably, saveMockOutbound } from "@/services/mockOutbound";
 import { appendMockInbound, fetchMockInboundSupplies, saveMockInbound } from "@/services/mockReceiving";
 import { closeOperationalDay } from "@/services/financeCloseDay";
 import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
@@ -197,7 +197,7 @@ export function useOutboundShipments() {
       qc.setQueryData(["wms", "outbound"], nextOutbound);
       qc.setQueryData(["wms", "product-catalog"], nextCatalog);
       saveMockOutbound(nextOutbound);
-      void flushMockOutboundToDb(nextOutbound);
+      void persistOutboundDurably(nextOutbound);
       saveMockProductCatalog(nextCatalog);
     },
   });
@@ -233,7 +233,7 @@ export function useOutboundShipments() {
       qc.setQueryData(["wms", "outbound"], outbound);
       qc.setQueryData(["wms", "product-catalog"], catalog);
       saveMockOutbound(outbound);
-      void flushMockOutboundToDb(outbound);
+      void persistOutboundDurably(outbound);
       saveMockProductCatalog(catalog);
     },
   });
@@ -246,7 +246,7 @@ export function useOutboundShipments() {
     onSuccess: (data) => {
       qc.setQueryData(["wms", "outbound"], data);
       saveMockOutbound(data);
-      void flushMockOutboundToDb(data);
+      void persistOutboundDurably(data);
     },
   });
 

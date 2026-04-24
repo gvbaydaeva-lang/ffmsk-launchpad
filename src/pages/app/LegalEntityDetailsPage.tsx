@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import Barcode from "react-barcode";
@@ -31,8 +32,8 @@ import {
   useProductCatalog,
   useUpdateLegalEntitySettings,
 } from "@/hooks/useWmsMock";
-import { flushMockOutboundToDb } from "@/services/mockOutbound";
-import type { ProductCatalogItem } from "@/types/domain";
+import { persistOutboundDurably } from "@/services/mockOutbound";
+import type { OutboundShipment, ProductCatalogItem } from "@/types/domain";
 import { toast } from "sonner";
 
 const TEMPLATE_HEADERS = [
@@ -136,6 +137,40 @@ function normalizeCode(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function findCatalogProductForOutbound(
+  row: { barcode: string; supplierArticle: string },
+  catalogRows: ProductCatalogItem[],
+): ProductCatalogItem | null {
+  const bc = text(row.barcode);
+  const art = text(row.supplierArticle);
+  if (bc) {
+    const exact = catalogRows.find((p) => p.barcode === bc);
+    if (exact) return exact;
+    const bcTrim = bc.replace(/^0+/, "") || bc;
+    const byLeadingZeros = catalogRows.find((p) => {
+      const pTrim = p.barcode.replace(/^0+/, "") || p.barcode;
+      return pTrim === bcTrim;
+    });
+    if (byLeadingZeros) return byLeadingZeros;
+    const d = digitsOnly(bc);
+    if (d.length >= 8) {
+      const byDigits = catalogRows.find((p) => digitsOnly(p.barcode) === d);
+      if (byDigits) return byDigits;
+    }
+  }
+  if (art) {
+    const byArticle = catalogRows.find((p) => p.supplierArticle === art);
+    if (byArticle) return byArticle;
+    const al = art.toLowerCase();
+    return catalogRows.find((p) => p.supplierArticle.toLowerCase() === al) ?? null;
+  }
+  return null;
+}
+
 function rowToDraft(item: ProductCatalogItem): RowDraft {
   return {
     name: item.name,
@@ -184,6 +219,7 @@ const LegalEntityDetailsPage = () => {
   const { data: outbound, createOutbound, setOutboundStatus, isCreatingOutbound, isUpdatingOutbound, updateOutboundDraft } = useOutboundShipments();
   const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
+  const queryClient = useQueryClient();
 
   const [open, setOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
@@ -229,7 +265,8 @@ const LegalEntityDetailsPage = () => {
   const [scanDraftByShipment, setScanDraftByShipment] = React.useState<Record<string, string>>({});
   const [scanErrorByShipment, setScanErrorByShipment] = React.useState<Record<string, boolean>>({});
   const [qrBoxPayload, setQrBoxPayload] = React.useState<{ barcode: string; warehouse: string } | null>(null);
-  const [outboundDbSaved, setOutboundDbSaved] = React.useState<boolean | null>(null);
+  /** null — нет статуса; durable — IndexedDB+LS; durable+warn — облако не синхронизировалось */
+  const [outboundPersistStatus, setOutboundPersistStatus] = React.useState<"durable" | "durable_warn" | "fail" | null>(null);
   const [form, setForm] = React.useState({
     category: "",
     photoUrl: "",
@@ -667,13 +704,30 @@ const LegalEntityDetailsPage = () => {
     toast.success("Короб добавлен");
   };
 
+  const barcodesMatch = (a: string, b: string) => {
+    const A = a.trim();
+    const B = b.trim();
+    if (!A || !B) return false;
+    if (A === B) return true;
+    const da = digitsOnly(A);
+    const db = digitsOnly(B);
+    if (da.length >= 8 && da === db) return true;
+    const at = A.replace(/^0+/, "") || A;
+    const bt = B.replace(/^0+/, "") || B;
+    return at === bt;
+  };
+
   const onScanIntoActiveBox = async (shipmentId: string) => {
     const row = outboundRows.find((x) => x.id === shipmentId);
     const scanned = (scanDraftByShipment[shipmentId] ?? "").trim();
     const barcode = outboundRowDrafts[shipmentId]?.barcode ?? rows.find((p) => p.id === row?.productId)?.barcode ?? "";
-    if (!row || !row.activeBoxId) return toast.error("Сначала добавьте короб");
+    if (!row || !row.activeBoxId) {
+      return toast.error(
+        (row.boxes ?? []).length ? "Выберите активный короб — кнопка «Открыть»" : "Сначала нажмите «Добавить короб»",
+      );
+    }
     if (!scanned) return toast.error("Введите баркод для сканирования");
-    if (scanned !== barcode) {
+    if (!barcodesMatch(scanned, barcode)) {
       setScanErrorByShipment((s) => ({ ...s, [shipmentId]: true }));
       beepError();
       return toast.error("Баркод не входит в план отгрузки");
@@ -703,15 +757,17 @@ const LegalEntityDetailsPage = () => {
     const rowsExport: Array<Record<string, string | number>> = [];
     for (const out of outboundRows) {
       const boxes = out.boxes ?? [];
+      const productBarcode = outboundRowDrafts[out.id]?.barcode ?? rows.find((p) => p.id === out.productId)?.barcode ?? "";
       for (const box of boxes) {
-        const count = box.scannedBarcodes.length;
-        if (!count) continue;
-        rowsExport.push({
-          "Баркод товара": outboundRowDrafts[out.id]?.barcode ?? rows.find((p) => p.id === out.productId)?.barcode ?? "",
-          "Кол-во товаров": count,
-          "ШК короба": box.clientBoxBarcode || box.id,
-          "Срок годности": out.expiryDate || "",
-        });
+        const boxSk = box.clientBoxBarcode || box.id;
+        for (const scanned of box.scannedBarcodes) {
+          rowsExport.push({
+            "Баркод товара": scanned || productBarcode,
+            "Кол-во товаров": 1,
+            "ШК короба": boxSk,
+            "Срок годности": out.expiryDate || "",
+          });
+        }
       }
     }
     if (!rowsExport.length) return toast.error("Нет данных для выгрузки");
@@ -825,7 +881,8 @@ const LegalEntityDetailsPage = () => {
   const parseExcelRows = async (file: File) => {
     const buffer = await file.arrayBuffer();
     const wb = XLSX.read(buffer, { type: "array" });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const sheetName = wb.SheetNames.includes("Отгрузка") ? "Отгрузка" : wb.SheetNames[0];
+    const sheet = wb.Sheets[sheetName];
     return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
   };
 
@@ -980,6 +1037,8 @@ const LegalEntityDetailsPage = () => {
     let created = 0;
     let mergedWithExisting = 0;
     let skipped = 0;
+    const assignmentId = `ass-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const assignmentNo = `ОТГ-${Date.now().toString().slice(-8)}`;
     const deduped = new Map<string, OutboundImportPreviewRow>();
     for (const row of outboundExcelRows) {
       const key = normalizeCode(row.barcode) || `art:${normalizeCode(row.supplierArticle)}`;
@@ -991,15 +1050,32 @@ const LegalEntityDetailsPage = () => {
       if (!prev) deduped.set(key, { ...row });
       else deduped.set(key, { ...prev, plannedUnits: prev.plannedUnits + (row.plannedUnits || 0) });
     }
+    const stockLeft = new Map<string, number>();
+    for (const p of rows) stockLeft.set(p.id, p.stockOnHand);
+
     for (const row of deduped.values()) {
-      const product = findProductByRow({ Баркод: row.barcode, Артикул: row.supplierArticle });
-      const qty = Number(row.plannedUnits) || 0;
-      if (!product || qty <= 0 || qty > product.stockOnHand) {
+      const product = findCatalogProductForOutbound(row, rows);
+      const wantQty = Number(row.plannedUnits) || 0;
+      if (!product || wantQty <= 0) {
         skipped += 1;
         continue;
       }
-      const existing = outboundRows.find(
-        (x) => x.productId === product.id && x.status !== "отгружено" && x.sourceWarehouse === row.sourceWarehouse,
+      const available = stockLeft.get(product.id) ?? 0;
+      const qty = Math.min(wantQty, available);
+      if (qty <= 0) {
+        skipped += 1;
+        continue;
+      }
+      stockLeft.set(product.id, available - qty);
+
+      const allOutbound = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? [];
+      const existing = allOutbound.find(
+        (x) =>
+          x.legalEntityId === entity.id &&
+          x.productId === product.id &&
+          x.status !== "отгружено" &&
+          x.sourceWarehouse === row.sourceWarehouse &&
+          x.assignmentId === assignmentId,
       );
       if (existing) {
         await updateOutboundDraft({
@@ -1015,6 +1091,8 @@ const LegalEntityDetailsPage = () => {
       await createOutbound({
         legalEntityId: entity.id,
         productId: product.id,
+        assignmentId,
+        assignmentNo,
         marketplace: row.marketplace,
         sourceWarehouse: row.sourceWarehouse,
         shippingMethod: "fbo",
@@ -1032,13 +1110,21 @@ const LegalEntityDetailsPage = () => {
       });
       created += 1;
     }
-    const currentAll = outbound ?? [];
-    const persisted = await flushMockOutboundToDb(currentAll);
-    setOutboundDbSaved(persisted);
-    if (persisted) {
-      toast.success(`Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}. Сохранено в БД.`);
+    const currentAll = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? outbound ?? [];
+    const { durable, supabaseOk } = await persistOutboundDurably(currentAll);
+    if (!durable) {
+      setOutboundPersistStatus("fail");
+      toast.error(
+        `Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}. Не удалось записать в локальное хранилище (IndexedDB).`,
+      );
+    } else if (!supabaseOk) {
+      setOutboundPersistStatus("durable_warn");
+      toast.success(
+        `Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}. Сохранено локально; синхронизация с Supabase не удалась.`,
+      );
     } else {
-      toast.error(`Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}. Ошибка сохранения в БД.`);
+      setOutboundPersistStatus("durable");
+      toast.success(`Импорт отгрузки: добавлено ${created}, объединено ${mergedWithExisting}, пропущено ${skipped}. Данные записаны.`);
     }
     setOutboundExcelOpen(false);
     setOutboundExcelRows([]);
@@ -1185,16 +1271,15 @@ const LegalEntityDetailsPage = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Фото</TableHead>
+                    <TableHead className="w-14">Фото</TableHead>
                     <TableHead>Товар</TableHead>
                     <TableHead>Баркод</TableHead>
-                    <TableHead>Цвет</TableHead>
-                    <TableHead>Размер</TableHead>
-                    <TableHead>Страна</TableHead>
-                    <TableHead>Состав</TableHead>
+                    <TableHead className="min-w-[10rem] whitespace-normal">Цвет</TableHead>
+                    <TableHead className="w-24">Размер</TableHead>
+                    <TableHead className="min-w-[10rem] whitespace-normal">Страна</TableHead>
+                    <TableHead className="min-w-[12rem] max-w-[20rem] whitespace-normal">Состав</TableHead>
                     <TableHead className="text-right">Остаток</TableHead>
-                    <TableHead>Параметры</TableHead>
-                    <TableHead>Фото</TableHead>
+                    <TableHead className="w-[9.5rem] shrink-0">Параметры</TableHead>
                     <TableHead className="text-right">Действие</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1211,29 +1296,34 @@ const LegalEntityDetailsPage = () => {
                           <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.name ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), name: e.target.value } }))} />
                         </TableCell>
                         <TableCell className="font-mono text-xs"><button type="button" className="hover:underline" onClick={() => openPrintDialog(item)}>{item.barcode}</button></TableCell>
-                        <TableCell className="min-w-[150px]"><Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.color ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), color: e.target.value } }))} /></TableCell>
-                        <TableCell><Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.size ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value } }))} /></TableCell>
-                        <TableCell className="min-w-[190px]"><Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} /></TableCell>
-                        <TableCell className="min-w-[220px]"><Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.composition ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value } }))} /></TableCell>
+                        <TableCell className="min-w-[10rem] max-w-[18rem] align-top">
+                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-auto min-h-7 w-full whitespace-normal text-xs" value={draft?.color ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), color: e.target.value } }))} />
+                        </TableCell>
+                        <TableCell className="w-24 align-top">
+                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.size ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value } }))} />
+                        </TableCell>
+                        <TableCell className="min-w-[10rem] max-w-[18rem] align-top">
+                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-auto min-h-7 w-full whitespace-normal text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} />
+                        </TableCell>
+                        <TableCell className="min-w-[12rem] max-w-[22rem] align-top">
+                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-auto min-h-7 w-full whitespace-normal text-xs" value={draft?.composition ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value } }))} />
+                        </TableCell>
                         <TableCell className="text-right">
                           <button type="button" className="text-sm font-medium hover:underline" onClick={() => setHistoryProductId(item.id)}>
                             {item.stockOnHand}
                           </button>
                         </TableCell>
-                        <TableCell className="min-w-[150px] space-y-1 text-xs">
-                          <p className="text-slate-600">{paramsLabel(item)}</p>
-                          <div className="grid grid-cols-4 gap-1">
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 px-2 text-xs" placeholder="L" value={draft?.lengthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), lengthCm: e.target.value } }))} />
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 px-2 text-xs" placeholder="W" value={draft?.widthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), widthCm: e.target.value } }))} />
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 px-2 text-xs" placeholder="H" value={draft?.heightCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), heightCm: e.target.value } }))} />
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 px-2 text-xs" placeholder="кг" type="number" step="0.01" value={draft?.weightKg ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), weightKg: e.target.value } }))} />
+                        <TableCell className="w-[9.5rem] shrink-0 space-y-0.5 text-[10px] leading-tight">
+                          <p className="line-clamp-2 text-slate-600">{paramsLabel(item)}</p>
+                          <div className="grid grid-cols-4 gap-0.5">
+                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="L" value={draft?.lengthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), lengthCm: e.target.value } }))} />
+                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="W" value={draft?.widthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), widthCm: e.target.value } }))} />
+                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="H" value={draft?.heightCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), heightCm: e.target.value } }))} />
+                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="кг" type="number" step="0.01" value={draft?.weightKg ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), weightKg: e.target.value } }))} />
                           </div>
-                          <p className="text-[11px] text-slate-500">Вес в кг (напр. 0.35)</p>
-                        </TableCell>
-                        <TableCell>
-                          <Label className="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-xs">
-                            <Upload className="h-3.5 w-3.5" />
-                            Загрузить
+                          <Label className="mt-0.5 inline-flex cursor-pointer items-center gap-0.5 rounded border px-1 py-0.5 text-[10px]">
+                            <Upload className="h-3 w-3" />
+                            Фото
                             <Input disabled={!canEditCatalog(role) || !isEditing} className="hidden" type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && void onUploadPhoto(item.id, e.target.files[0])} />
                           </Label>
                         </TableCell>
@@ -1604,8 +1694,15 @@ const LegalEntityDetailsPage = () => {
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-600">Задания на отгрузку по клиенту</p>
             <div className="flex items-center gap-2">
-              {outboundDbSaved === true && <span className="text-xs font-medium text-emerald-600">✓ Сохранено в БД</span>}
-              {outboundDbSaved === false && <span className="text-xs font-medium text-red-600">Ошибка сохранения в БД</span>}
+              {outboundPersistStatus === "durable" && (
+                <span className="text-xs font-medium text-emerald-600">✓ Сохранено (локальная БД + IndexedDB)</span>
+              )}
+              {outboundPersistStatus === "durable_warn" && (
+                <span className="text-xs font-medium text-amber-600">Сохранено локально; Supabase не синхронизирован</span>
+              )}
+              {outboundPersistStatus === "fail" && (
+                <span className="text-xs font-medium text-red-600">Ошибка записи в локальное хранилище</span>
+              )}
               <Button variant="outline" className="gap-2" onClick={downloadOutboundTaskTemplate}>
                 <Download className="h-4 w-4" />
                 Скачать шаблон
@@ -1727,7 +1824,12 @@ const LegalEntityDetailsPage = () => {
                     const x = row.shipment;
                     const isEditing = Boolean(outboundEditingRows[x.id]);
                     return (
-                    <TableRow key={x.id} className={scanErrorByShipment[x.id] ? "bg-red-100" : ""}>
+                    <TableRow
+                      key={x.id}
+                      className={
+                        scanErrorByShipment[x.id] || x.packedUnits > x.plannedUnits ? "bg-red-100 dark:bg-red-950/40" : ""
+                      }
+                    >
                       <TableCell>
                         <Input
                           className="h-8"
@@ -1865,7 +1967,8 @@ const LegalEntityDetailsPage = () => {
                         <Button size="sm" variant="outline" onClick={() => void onAddBox(x.id)}>Добавить короб</Button>
                         <Input
                           className="h-8 w-48 font-mono"
-                          placeholder="Скан баркода"
+                          placeholder={activeBox ? "Скан баркода" : "Сначала «Открыть» короб"}
+                          disabled={!activeBox}
                           value={scanDraftByShipment[x.id] ?? ""}
                           onChange={(e) => setScanDraftByShipment((s) => ({ ...s, [x.id]: e.target.value }))}
                         />

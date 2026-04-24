@@ -209,6 +209,10 @@ export type OutboundShipment = {
   id: string;
   legalEntityId: string;
   productId: string;
+  /** Один импорт Excel / пакет строк задания — для upsert по баркоду внутри пакета */
+  assignmentId?: string | null;
+  /** Человекочитаемый номер задания (сводка в «Отгрузке») */
+  assignmentNo?: string | null;
   marketplace: Marketplace;
   sourceWarehouse: string;
   shippingMethod: "fbo" | "fbs" | "self";

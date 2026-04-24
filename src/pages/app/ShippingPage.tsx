@@ -32,11 +32,25 @@ const ShippingPage = () => {
   const summaryRows = React.useMemo(() => {
     const grouped = new Map<
       string,
-      { legalEntityId: string; planned: number; fact: number; reserved: number; warehouses: Set<string>; statuses: Set<string> }
+      {
+        legalEntityId: string;
+        assignmentKey: string;
+        assignmentLabel: string;
+        planned: number;
+        fact: number;
+        reserved: number;
+        warehouses: Set<string>;
+        statuses: Set<string>;
+      }
     >();
     for (const x of filtered) {
-      const cur = grouped.get(x.legalEntityId) ?? {
+      const assignmentKey = x.assignmentId ?? "legacy";
+      const groupId = `${x.legalEntityId}|${assignmentKey}`;
+      const assignmentLabel = x.assignmentNo?.trim() || (x.assignmentId ? "Задание" : "—");
+      const cur = grouped.get(groupId) ?? {
         legalEntityId: x.legalEntityId,
+        assignmentKey,
+        assignmentLabel,
         planned: 0,
         fact: 0,
         reserved: 0,
@@ -48,7 +62,7 @@ const ShippingPage = () => {
       if (x.status === "готов к отгрузке (резерв)") cur.reserved += x.plannedUnits;
       cur.warehouses.add(x.sourceWarehouse);
       cur.statuses.add(x.status);
-      grouped.set(x.legalEntityId, cur);
+      grouped.set(groupId, cur);
     }
     const arr = Array.from(grouped.values()).map((g) => ({
       ...g,
@@ -57,7 +71,7 @@ const ShippingPage = () => {
     const s = search.trim().toLowerCase();
     const dir = sortDir === "asc" ? 1 : -1;
     return arr
-      .filter((r) => !s || r.entity.toLowerCase().includes(s))
+      .filter((r) => !s || r.entity.toLowerCase().includes(s) || r.assignmentLabel.toLowerCase().includes(s))
       .sort((a, b) => {
         if (sortKey === "planned") return (a.planned - b.planned) * dir;
         if (sortKey === "fact") return (a.fact - b.fact) * dir;
@@ -114,23 +128,32 @@ const ShippingPage = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Юрлицо</TableHead>
-                  <TableHead className="cursor-pointer" onClick={() => onSort("entity")}>Юрлицо</TableHead>
-                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("planned")}>Общее кол-во</TableHead>
-                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("fact")}>Факт отгрузки</TableHead>
-                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("reserved")}>В резерве</TableHead>
+                  <TableHead className="cursor-pointer" onClick={() => onSort("entity")}>
+                    Юрлицо
+                  </TableHead>
+                  <TableHead>Номер задания</TableHead>
+                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("planned")}>
+                    Общее кол-во
+                  </TableHead>
+                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("fact")}>
+                    Факт отгрузки
+                  </TableHead>
+                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("reserved")}>
+                    В резерве
+                  </TableHead>
                   <TableHead>Склад</TableHead>
-                  <TableHead>Статусы</TableHead>
+                  <TableHead>Статус</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {summaryRows.map((row) => (
-                  <TableRow key={row.legalEntityId}>
+                  <TableRow key={`${row.legalEntityId}-${row.assignmentKey}`}>
                     <TableCell>
                       <Link to={`/legal-entities/${row.legalEntityId}?tab=shipping`} className="font-medium hover:underline">
                         {row.entity}
                       </Link>
                     </TableCell>
+                    <TableCell className="text-sm text-slate-600">{row.assignmentLabel}</TableCell>
                     <TableCell className="text-right tabular-nums">{row.planned}</TableCell>
                     <TableCell className="text-right tabular-nums">{row.fact}</TableCell>
                     <TableCell className="text-right tabular-nums">{row.reserved}</TableCell>

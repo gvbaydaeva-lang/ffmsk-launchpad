@@ -6,6 +6,9 @@ function delay(ms: number) {
 }
 
 const OUTBOUND_STORAGE_KEY = "ffmsk.mock.outbound";
+const IDB_NAME = "ffmsk-wms";
+const IDB_VERSION = 1;
+const IDB_STORE = "outbound_shipments";
 
 function readOutboundStorage(): OutboundShipment[] {
   if (typeof window === "undefined") return [];
@@ -22,6 +25,76 @@ function readOutboundStorage(): OutboundShipment[] {
 function writeOutboundStorage(rows: OutboundShipment[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(OUTBOUND_STORAGE_KEY, JSON.stringify(rows));
+}
+
+function openOutboundIdb(): Promise<IDBDatabase | null> {
+  if (typeof window === "undefined" || !window.indexedDB) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onerror = () => resolve(null);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+  });
+}
+
+/** Браузерная «БД»: IndexedDB — переживает F5 и навигацию. */
+export async function writeOutboundIndexed(rows: OutboundShipment[]): Promise<boolean> {
+  const db = await openOutboundIdb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      const store = tx.objectStore(IDB_STORE);
+      store.clear();
+      for (const row of rows) {
+        store.put(JSON.parse(JSON.stringify(row)) as OutboundShipment);
+      }
+      tx.oncomplete = () => {
+        db.close();
+        resolve(true);
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve(false);
+      };
+      tx.onabort = () => {
+        db.close();
+        resolve(false);
+      };
+    } catch {
+      db.close();
+      resolve(false);
+    }
+  });
+}
+
+export async function readOutboundIndexed(): Promise<OutboundShipment[] | null> {
+  const db = await openOutboundIdb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        db.close();
+        const rows = req.result as OutboundShipment[];
+        resolve(Array.isArray(rows) ? rows : null);
+      };
+      req.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    } catch {
+      db.close();
+      resolve(null);
+    }
+  });
 }
 
 type OutboundDbRow = {
@@ -43,6 +116,8 @@ type OutboundDbRow = {
   boxes: OutboundShipment["boxes"];
   active_box_id: string | null;
   created_at: string;
+  assignment_id?: string | null;
+  assignment_no?: string | null;
 };
 
 function toDb(row: OutboundShipment): OutboundDbRow {
@@ -65,6 +140,8 @@ function toDb(row: OutboundShipment): OutboundDbRow {
     boxes: row.boxes ?? [],
     active_box_id: row.activeBoxId ?? null,
     created_at: row.createdAt,
+    assignment_id: row.assignmentId ?? null,
+    assignment_no: row.assignmentNo ?? null,
   };
 }
 
@@ -88,7 +165,14 @@ function fromDb(row: OutboundDbRow): OutboundShipment {
     boxes: row.boxes ?? [],
     activeBoxId: row.active_box_id,
     createdAt: row.created_at,
+    assignmentId: row.assignment_id ?? undefined,
+    assignmentNo: row.assignment_no ?? undefined,
   };
+}
+
+function stripAssignmentForLegacySupabase(row: OutboundDbRow): Omit<OutboundDbRow, "assignment_id" | "assignment_no"> {
+  const { assignment_id: _a, assignment_no: _n, ...rest } = row;
+  return rest;
 }
 
 export async function fetchMockOutboundShipments(): Promise<OutboundShipment[]> {
@@ -98,8 +182,14 @@ export async function fetchMockOutboundShipments(): Promise<OutboundShipment[]> 
     if (!error && data) {
       const mapped = (data as OutboundDbRow[]).map(fromDb);
       writeOutboundStorage(mapped);
+      void writeOutboundIndexed(mapped);
       return mapped;
     }
+  }
+  const fromIdb = await readOutboundIndexed();
+  if (fromIdb && fromIdb.length) {
+    writeOutboundStorage(fromIdb);
+    return fromIdb;
   }
   return readOutboundStorage();
 }
@@ -111,6 +201,7 @@ export function appendMockOutbound(
   const id = `out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const next = [{ ...draft, id, createdAt: new Date().toISOString() }, ...current];
   writeOutboundStorage(next);
+  void writeOutboundIndexed(next);
   return next;
 }
 
@@ -121,11 +212,34 @@ export function filterOutboundByMarketplace(rows: OutboundShipment[], mp: Market
 
 export function saveMockOutbound(rows: OutboundShipment[]) {
   writeOutboundStorage(rows);
+  void writeOutboundIndexed(rows);
 }
 
-export async function flushMockOutboundToDb(rows: OutboundShipment[]) {
-  if (!hasSupabase || !supabase) return false;
+/**
+ * Гарантированная запись: localStorage + IndexedDB; при наличии конфига — upsert в Supabase.
+ * Возвращает durable=true если локальный слой записан; supabaseOk — отдельно про облако.
+ */
+export async function persistOutboundDurably(rows: OutboundShipment[]): Promise<{ durable: boolean; supabaseOk: boolean }> {
+  writeOutboundStorage(rows);
+  const idbOk = typeof window === "undefined" ? true : await writeOutboundIndexed(rows);
+  const durable = idbOk;
+
+  if (!hasSupabase || !supabase) {
+    return { durable, supabaseOk: true };
+  }
+
   const payload = rows.map(toDb);
-  const { error } = await supabase.from("outbound_shipments").upsert(payload, { onConflict: "id" });
-  return !error;
+  let { error } = await supabase.from("outbound_shipments").upsert(payload, { onConflict: "id" });
+  if (error) {
+    const stripped = payload.map(stripAssignmentForLegacySupabase);
+    const second = await supabase.from("outbound_shipments").upsert(stripped, { onConflict: "id" });
+    error = second.error;
+  }
+  return { durable, supabaseOk: !error };
+}
+
+/** @deprecated Используйте persistOutboundDurably — оставлено для совместимости импорта. */
+export async function flushMockOutboundToDb(rows: OutboundShipment[]) {
+  const r = await persistOutboundDurably(rows);
+  return r.supabaseOk;
 }
