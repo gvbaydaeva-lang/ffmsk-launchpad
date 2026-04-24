@@ -309,10 +309,17 @@ const LegalEntityDetailsPage = () => {
   });
 
   const entity = React.useMemo(() => legal?.find((x) => x.id === id), [legal, id]);
-  const rows = React.useMemo(() => (catalog ?? []).filter((x) => x.legalEntityId === id), [catalog, id]);
+  const entityIdNorm = id.trim();
+  const rows = React.useMemo(
+    () => (catalog ?? []).filter((x) => (x.legalEntityId ?? "").trim() === entityIdNorm),
+    [catalog, entityIdNorm],
+  );
   const ops = React.useMemo(() => (history ?? []).filter((x) => x.legalEntityId === id), [history, id]);
   const inboundRows = React.useMemo(() => (inbound ?? []).filter((x) => x.legalEntityId === id), [inbound, id]);
-  const outboundRows = React.useMemo(() => (outbound ?? []).filter((x) => x.legalEntityId === id), [outbound, id]);
+  const outboundRows = React.useMemo(
+    () => (outbound ?? []).filter((x) => (x.legalEntityId ?? "").trim() === entityIdNorm),
+    [outbound, entityIdNorm],
+  );
   const filteredProducts = React.useMemo(() => {
     const s = productSearch.trim().toLowerCase();
     if (!s) return rows;
@@ -371,13 +378,14 @@ const LegalEntityDetailsPage = () => {
   }, [inboundRows]);
 
   React.useEffect(() => {
-    const byId = new Map(rows.map((p) => [p.id, p]));
+    const byEntity = new Map(rows.map((p) => [p.id, p]));
+    const byGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
     const next: Record<string, OutboundRowDraft> = {};
     for (const out of outboundRows) {
-      const product = byId.get(out.productId);
+      const product = byEntity.get(out.productId) ?? byGlobal.get(out.productId) ?? null;
       next[out.id] = {
-        supplierArticle: product?.supplierArticle ?? "",
-        barcode: product?.barcode ?? "",
+        supplierArticle: product?.supplierArticle ?? out.importArticle ?? "",
+        barcode: product?.barcode ?? out.importBarcode ?? "",
         size: product?.size ?? "",
         color: product?.color ?? "",
         marketplace: out.marketplace,
@@ -386,7 +394,21 @@ const LegalEntityDetailsPage = () => {
       };
     }
     setOutboundRowDrafts(next);
-  }, [outboundRows, rows]);
+  }, [outboundRows, rows, catalog]);
+
+  React.useEffect(() => {
+    console.log("[wms:outbound] загрузка на страницу юрлица", {
+      routeEntityId: entityIdNorm,
+      totalInCache: (outbound ?? []).length,
+      forThisEntity: outboundRows.length,
+      sample: outboundRows.slice(0, 15).map((x) => ({
+        id: x.id,
+        legalEntityId: x.legalEntityId,
+        productId: x.productId,
+        assignmentId: x.assignmentId,
+      })),
+    });
+  }, [entityIdNorm, outbound, outboundRows]);
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS]);
@@ -656,16 +678,17 @@ const LegalEntityDetailsPage = () => {
   };
 
   const shippingRows = React.useMemo(() => {
-    const productById = new Map(rows.map((p) => [p.id, p]));
+    const productByEntity = new Map(rows.map((p) => [p.id, p]));
+    const productByGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
     const s = shippingSearch.trim().toLowerCase();
     const arr = outboundRows
       .map((x) => {
-        const product = productById.get(x.productId);
+        const product = productByEntity.get(x.productId) ?? productByGlobal.get(x.productId) ?? null;
         const draft = outboundRowDrafts[x.id];
         return {
           shipment: x,
-          article: draft?.supplierArticle ?? product?.supplierArticle ?? "",
-          barcode: draft?.barcode ?? product?.barcode ?? "",
+          article: draft?.supplierArticle ?? product?.supplierArticle ?? x.importArticle ?? "",
+          barcode: draft?.barcode ?? product?.barcode ?? x.importBarcode ?? "",
           size: draft?.size ?? product?.size ?? "",
           color: draft?.color ?? product?.color ?? "",
           marketplace: draft?.marketplace ?? x.marketplace,
@@ -683,7 +706,7 @@ const LegalEntityDetailsPage = () => {
       if (shippingSort === "fact") return a.fact - b.fact;
       return String(a[shippingSort]).localeCompare(String(b[shippingSort]), "ru");
     });
-  }, [outboundRows, outboundRowDrafts, rows, shippingSearch, shippingSort]);
+  }, [outboundRows, outboundRowDrafts, rows, catalog, shippingSearch, shippingSort]);
 
   const onAddBox = async (shipmentId: string) => {
     const row = outboundRows.find((x) => x.id === shipmentId);
@@ -949,8 +972,31 @@ const LegalEntityDetailsPage = () => {
       const mpRaw = text(pickByAliases(row, ["Маркетплейс", "Площадка"])).toLowerCase();
       const marketplace = mpRaw === "ozon" ? "ozon" : mpRaw === "yandex" ? "yandex" : "wb";
       return {
-        barcode: text(pickByAliases(row, ["Баркод", "Баркод товара"])),
-        supplierArticle: text(pickByAliases(row, ["Артикул", "Vendor Code", "vendor code"])),
+        barcode: text(
+          pickByAliases(row, [
+            "Баркод",
+            "Баркод товара",
+            "Barcode",
+            "barcode",
+            "ШК",
+            "ШК товара",
+            "SKU",
+            "sku",
+          ]),
+        ),
+        supplierArticle: text(
+          pickByAliases(row, [
+            "Артикул",
+            "Vendor Code",
+            "vendor code",
+            "Vendor code",
+            "Артикул поставщика",
+            "Article",
+            "article",
+            "vendor_code",
+            "Vendor_article",
+          ]),
+        ),
         color: text(pickByAliases(row, ["Цвет"])),
         size: text(pickByAliases(row, ["Размер"])),
         plannedUnits,
@@ -1093,6 +1139,8 @@ const LegalEntityDetailsPage = () => {
         productId: product.id,
         assignmentId,
         assignmentNo,
+        importArticle: row.supplierArticle || product.supplierArticle || undefined,
+        importBarcode: row.barcode || product.barcode || undefined,
         marketplace: row.marketplace,
         sourceWarehouse: row.sourceWarehouse,
         shippingMethod: "fbo",
@@ -1112,6 +1160,9 @@ const LegalEntityDetailsPage = () => {
     }
     const currentAll = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? outbound ?? [];
     const { durable, supabaseOk } = await persistOutboundDurably(currentAll);
+    queryClient.setQueryData(["wms", "outbound"], currentAll);
+    await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+    await queryClient.refetchQueries({ queryKey: ["wms", "outbound"] });
     if (!durable) {
       setOutboundPersistStatus("fail");
       toast.error(

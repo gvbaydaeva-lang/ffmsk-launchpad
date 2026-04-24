@@ -213,6 +213,9 @@ export type OutboundShipment = {
   assignmentId?: string | null;
   /** Человекочитаемый номер задания (сводка в «Отгрузке») */
   assignmentNo?: string | null;
+  /** Подписи из Excel при импорте (если каталог временно не сопоставился) */
+  importArticle?: string | null;
+  importBarcode?: string | null;
   marketplace: Marketplace;
   sourceWarehouse: string;
   shippingMethod: "fbo" | "fbs" | "self";

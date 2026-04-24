@@ -118,7 +118,23 @@ type OutboundDbRow = {
   created_at: string;
   assignment_id?: string | null;
   assignment_no?: string | null;
+  import_article?: string | null;
+  import_barcode?: string | null;
 };
+
+function normalizeBoxesFromDb(raw: unknown): OutboundShipment["boxes"] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw as OutboundShipment["boxes"];
+  if (typeof raw === "string") {
+    try {
+      const v = JSON.parse(raw) as unknown;
+      return Array.isArray(v) ? (v as OutboundShipment["boxes"]) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
 
 function toDb(row: OutboundShipment): OutboundDbRow {
   return {
@@ -142,36 +158,51 @@ function toDb(row: OutboundShipment): OutboundDbRow {
     created_at: row.createdAt,
     assignment_id: row.assignmentId ?? null,
     assignment_no: row.assignmentNo ?? null,
+    import_article: row.importArticle ?? null,
+    import_barcode: row.importBarcode ?? null,
   };
 }
 
-function fromDb(row: OutboundDbRow): OutboundShipment {
+function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipment {
+  const legalEntityId = row.legal_entity_id ?? row.legalEntityId ?? "";
   return {
     id: row.id,
-    legalEntityId: row.legal_entity_id,
-    productId: row.product_id,
+    legalEntityId,
+    productId: row.product_id ?? (row as { productId?: string }).productId ?? "",
     marketplace: row.marketplace,
-    sourceWarehouse: row.source_warehouse,
-    shippingMethod: row.shipping_method,
-    boxBarcode: row.box_barcode,
-    gateBarcode: row.gate_barcode,
-    supplyNumber: row.supply_number,
-    expiryDate: row.expiry_date,
-    packedUnits: row.packed_units,
-    plannedUnits: row.planned_units,
-    plannedShipDate: row.planned_ship_date,
-    shippedUnits: row.shipped_units,
+    sourceWarehouse: row.source_warehouse ?? (row as { sourceWarehouse?: string }).sourceWarehouse ?? "",
+    shippingMethod: row.shipping_method ?? (row as { shippingMethod?: OutboundShipment["shippingMethod"] }).shippingMethod ?? "fbo",
+    boxBarcode: row.box_barcode ?? "",
+    gateBarcode: row.gate_barcode ?? "",
+    supplyNumber: row.supply_number ?? "",
+    expiryDate: row.expiry_date ?? "",
+    packedUnits: row.packed_units ?? 0,
+    plannedUnits: row.planned_units ?? 0,
+    plannedShipDate: row.planned_ship_date ?? null,
+    shippedUnits: row.shipped_units ?? null,
     status: row.status,
-    boxes: row.boxes ?? [],
-    activeBoxId: row.active_box_id,
-    createdAt: row.created_at,
+    boxes: normalizeBoxesFromDb(row.boxes),
+    activeBoxId: row.active_box_id ?? null,
+    createdAt: row.created_at ?? new Date().toISOString(),
     assignmentId: row.assignment_id ?? undefined,
     assignmentNo: row.assignment_no ?? undefined,
+    importArticle: row.import_article ?? undefined,
+    importBarcode: row.import_barcode ?? undefined,
   };
 }
 
-function stripAssignmentForLegacySupabase(row: OutboundDbRow): Omit<OutboundDbRow, "assignment_id" | "assignment_no"> {
-  const { assignment_id: _a, assignment_no: _n, ...rest } = row;
+/** Колонки, которых может не быть в старой схеме Supabase */
+function stripExtendedForLegacySupabase(row: OutboundDbRow): Omit<
+  OutboundDbRow,
+  "assignment_id" | "assignment_no" | "import_article" | "import_barcode"
+> {
+  const {
+    assignment_id: _a,
+    assignment_no: _n,
+    import_article: _ia,
+    import_barcode: _ib,
+    ...rest
+  } = row;
   return rest;
 }
 
@@ -179,11 +210,14 @@ export async function fetchMockOutboundShipments(): Promise<OutboundShipment[]> 
   await delay(120);
   if (hasSupabase && supabase) {
     const { data, error } = await supabase.from("outbound_shipments").select("*").order("created_at", { ascending: false });
-    if (!error && data) {
+    if (!error && Array.isArray(data)) {
       const mapped = (data as OutboundDbRow[]).map(fromDb);
-      writeOutboundStorage(mapped);
-      void writeOutboundIndexed(mapped);
-      return mapped;
+      // Пустой ответ облака не затирает IndexedDB / LS: иначе при пустой таблице или RLS строки «пропадают» из UI.
+      if (mapped.length > 0) {
+        writeOutboundStorage(mapped);
+        void writeOutboundIndexed(mapped);
+        return mapped;
+      }
     }
   }
   const fromIdb = await readOutboundIndexed();
@@ -231,7 +265,7 @@ export async function persistOutboundDurably(rows: OutboundShipment[]): Promise<
   const payload = rows.map(toDb);
   let { error } = await supabase.from("outbound_shipments").upsert(payload, { onConflict: "id" });
   if (error) {
-    const stripped = payload.map(stripAssignmentForLegacySupabase);
+    const stripped = payload.map(stripExtendedForLegacySupabase);
     const second = await supabase.from("outbound_shipments").upsert(stripped, { onConflict: "id" });
     error = second.error;
   }
