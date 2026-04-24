@@ -212,6 +212,11 @@ export type OutboundShipment = {
   marketplace: Marketplace;
   sourceWarehouse: string;
   shippingMethod: "fbo" | "fbs" | "self";
+  boxBarcode: string;
+  gateBarcode: string;
+  supplyNumber: string;
+  expiryDate: string;
+  packedUnits: number;
   plannedUnits: number;
   shippedUnits: number | null;
   status: "создано" | "к отгрузке" | "отгружено";

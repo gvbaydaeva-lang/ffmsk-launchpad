@@ -2,10 +2,12 @@ import * as React from "react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Link } from "react-router-dom";
-import { PackagePlus } from "lucide-react";
+import { Download, QrCode, ScanLine } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import * as XLSX from "xlsx";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,18 +18,20 @@ import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { canChangeOutboundStatus, canCreateOutbound, useUserRole } from "@/contexts/UserRoleContext";
+import { canChangeOutboundStatus, useUserRole } from "@/contexts/UserRoleContext";
 import { useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace } from "@/types/domain";
 
 const ShippingPage = () => {
-  const { data, isLoading, error, createOutbound, setOutboundStatus, isCreatingOutbound, isUpdatingOutbound } = useOutboundShipments();
+  const { data, isLoading, error, setOutboundStatus, isUpdatingOutbound, updateOutboundDraft } = useOutboundShipments();
   const { data: entities } = useLegalEntities();
   const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
   const { role } = useUserRole();
-  const [open, setOpen] = React.useState(false);
+  const [scanValue, setScanValue] = React.useState<Record<string, string>>({});
+  const [scanError, setScanError] = React.useState<Record<string, boolean>>({});
+  const [qrOpenFor, setQrOpenFor] = React.useState<string | null>(null);
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [form, setForm] = React.useState({
     legalEntityId: "le-2",
@@ -55,33 +59,54 @@ const ShippingPage = () => {
     [filtered],
   );
 
-  const products = React.useMemo(
-    () => (catalog ?? []).filter((x) => x.legalEntityId === form.legalEntityId && x.stockOnHand > 0),
-    [catalog, form.legalEntityId],
-  );
   const productMap = React.useMemo(() => new Map((catalog ?? []).map((p) => [p.id, p])), [catalog]);
+  const qrRow = qrOpenFor ? filtered.find((x) => x.id === qrOpenFor) ?? null : null;
 
-  const onCreate = async () => {
-    const qty = Number(form.plannedUnits);
-    const product = productMap.get(form.productId);
-    if (!product || !Number.isFinite(qty) || qty <= 0) return toast.error("Выберите товар и количество");
-    if (qty > product.stockOnHand) return toast.error("Недостаточно остатка на складе");
-    try {
-      await createOutbound({
-        legalEntityId: form.legalEntityId,
-        productId: form.productId,
-        marketplace: form.marketplace,
-        sourceWarehouse: form.sourceWarehouse,
-        shippingMethod: form.shippingMethod,
-        plannedUnits: qty,
-        shippedUnits: null,
-        status: "создано",
-      });
-      toast.success("Задание на отгрузку создано");
-      setOpen(false);
-    } catch {
-      toast.error("Не удалось создать отгрузку");
+  const onCreateBox = async (id: string) => {
+    const row = filtered.find((x) => x.id === id);
+    if (!row) return;
+    if (row.boxBarcode) return;
+    await updateOutboundDraft({
+      id,
+      patch: { boxBarcode: `BOX-${Date.now().toString().slice(-8)}`, status: "к отгрузке" },
+    });
+    toast.success("Короб создан. Можно наполнять.");
+  };
+
+  const onPackScan = async (id: string) => {
+    const row = filtered.find((x) => x.id === id);
+    if (!row) return;
+    const product = productMap.get(row.productId);
+    const scanned = (scanValue[id] ?? "").trim();
+    if (!row.boxBarcode) return toast.error("Сначала создайте короб");
+    if (!scanned) return toast.error("Введите или отсканируйте баркод товара");
+    if (!product || scanned !== product.barcode) {
+      setScanError((s) => ({ ...s, [id]: true }));
+      return toast.error("Товар не из плана отгрузки");
     }
+    if (row.packedUnits + 1 > row.plannedUnits) {
+      setScanError((s) => ({ ...s, [id]: true }));
+      return toast.error("Превышение плана наполнения");
+    }
+    setScanError((s) => ({ ...s, [id]: false }));
+    await updateOutboundDraft({ id, patch: { packedUnits: row.packedUnits + 1 } });
+    setScanValue((s) => ({ ...s, [id]: "" }));
+  };
+
+  const exportPackingExcel = () => {
+    const rowsExport = filtered
+      .filter((x) => x.boxBarcode)
+      .map((x) => ({
+        "Баркод товара": productMap.get(x.productId)?.barcode ?? "",
+        "Кол-во товаров": x.packedUnits || 0,
+        "ШК короба": x.boxBarcode,
+        "Срок годности": x.expiryDate || "",
+      }));
+    if (!rowsExport.length) return toast.error("Нет данных для выгрузки");
+    const ws = XLSX.utils.json_to_sheet(rowsExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Упаковка");
+    XLSX.writeFile(wb, "shk-excel-export.xlsx");
   };
 
   const advanceStatus = async (id: string, current: "создано" | "к отгрузке" | "отгружено", plannedUnits: number) => {
@@ -111,75 +136,10 @@ const ShippingPage = () => {
               <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
             </SelectContent>
           </Select>
-          <Dialog open={open} onOpenChange={setOpen}>
-            {canCreateOutbound(role) && (
-              <DialogTrigger asChild>
-                <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
-                  <PackagePlus className="h-4 w-4" />
-                  Новая отгрузка
-                </Button>
-              </DialogTrigger>
-            )}
-            <DialogContent>
-              <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
-              <div className="grid gap-3 py-2">
-                <div className="grid gap-1.5">
-                  <Label>Юрлицо</Label>
-                  <Select value={form.legalEntityId} onValueChange={(v) => setForm((f) => ({ ...f, legalEntityId: v, productId: "" }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {entities?.map((e) => <SelectItem key={e.id} value={e.id}>{e.shortName}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Товар из остатков</Label>
-                  <Select value={form.productId} onValueChange={(v) => setForm((f) => ({ ...f, productId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Выберите товар" /></SelectTrigger>
-                    <SelectContent>
-                      {products.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>{p.brand} · {p.name} · остаток {p.stockOnHand}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Количество к выдаче</Label>
-                  <Input type="number" min={1} value={form.plannedUnits} onChange={(e) => setForm((f) => ({ ...f, plannedUnits: e.target.value }))} />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>С какого склада</Label>
-                  <Input value={form.sourceWarehouse} onChange={(e) => setForm((f) => ({ ...f, sourceWarehouse: e.target.value }))} />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Маркетплейс</Label>
-                  <Select value={form.marketplace} onValueChange={(v) => setForm((f) => ({ ...f, marketplace: v as Marketplace }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="wb">Wildberries</SelectItem>
-                      <SelectItem value="ozon">Ozon</SelectItem>
-                      <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Способ отгрузки</Label>
-                  <Select value={form.shippingMethod} onValueChange={(v) => setForm((f) => ({ ...f, shippingMethod: v as "fbo" | "fbs" | "self" }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="fbo">FBO</SelectItem>
-                      <SelectItem value="fbs">FBS</SelectItem>
-                      <SelectItem value="self">Самовывоз</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setOpen(false)}>Отмена</Button>
-                <Button onClick={() => void onCreate()} disabled={isCreatingOutbound}>{isCreatingOutbound ? "Сохранение..." : "Создать"}</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <Button variant="outline" className="gap-2" onClick={exportPackingExcel}>
+            <Download className="h-4 w-4" />
+            Экспорт shk-excel
+          </Button>
         </div>
       </div>
 
@@ -206,6 +166,11 @@ const ShippingPage = () => {
                   <TableHead>Площадка</TableHead>
                   <TableHead>Метод</TableHead>
                   <TableHead className="text-right">Количество к отгрузке</TableHead>
+                  <TableHead className="text-right">Упаковано</TableHead>
+                  <TableHead>ШК короба</TableHead>
+                  <TableHead>ШК пропуска</TableHead>
+                  <TableHead>Номер поставки</TableHead>
+                  <TableHead>Срок годности</TableHead>
                   <TableHead>Статус</TableHead>
                   <TableHead>Создано</TableHead>
                   <TableHead className="text-right">Действие</TableHead>
@@ -213,7 +178,7 @@ const ShippingPage = () => {
               </TableHeader>
               <TableBody>
                 {lineRows.map((row) => (
-                  <TableRow key={row.lineId}>
+                  <TableRow key={row.lineId} className={scanError[row.id] ? "bg-red-50" : undefined}>
                     <TableCell>
                       <Link to={`/legal-entities/${row.legalEntityId}?tab=shipping`} className="hover:underline">
                         {entities?.find((e) => e.id === row.legalEntityId)?.shortName ?? row.legalEntityId}
@@ -225,9 +190,47 @@ const ShippingPage = () => {
                     <TableCell><MarketplaceBadge marketplace={row.marketplace} /></TableCell>
                     <TableCell className="uppercase text-xs">{row.shippingMethod}</TableCell>
                     <TableCell className="text-right tabular-nums">{row.lineQty}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <span className={row.packedUnits > row.plannedUnits ? "text-red-600 font-semibold" : ""}>{row.packedUnits}</span>
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        className="h-8 font-mono"
+                        value={row.boxBarcode}
+                        onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { boxBarcode: e.target.value } })}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input className="h-8" value={row.gateBarcode} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { gateBarcode: e.target.value } })} />
+                    </TableCell>
+                    <TableCell>
+                      <Input className="h-8" value={row.supplyNumber} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { supplyNumber: e.target.value } })} />
+                    </TableCell>
+                    <TableCell>
+                      <Input className="h-8" type="date" value={row.expiryDate} onChange={(e) => void updateOutboundDraft({ id: row.id, patch: { expiryDate: e.target.value } })} />
+                    </TableCell>
                     <TableCell><Badge variant={row.status === "отгружено" ? "default" : "secondary"}>{row.status}</Badge></TableCell>
                     <TableCell>{format(parseISO(row.createdAt), "d MMM yyyy HH:mm", { locale: ru })}</TableCell>
                     <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="outline" onClick={() => void onCreateBox(row.id)}>
+                          Короб
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setQrOpenFor(row.id)} disabled={!row.boxBarcode}>
+                          <QrCode className="h-3.5 w-3.5" />
+                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            className="h-8 w-28 font-mono"
+                            placeholder="Скан баркода"
+                            value={scanValue[row.id] ?? ""}
+                            onChange={(e) => setScanValue((s) => ({ ...s, [row.id]: e.target.value }))}
+                          />
+                          <Button size="sm" variant="outline" onClick={() => void onPackScan(row.id)}>
+                            <ScanLine className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
                       {row.status !== "отгружено" && canChangeOutboundStatus(role) ? (
                         <Button size="sm" variant="outline" onClick={() => void advanceStatus(row.id, row.status, row.plannedUnits)} disabled={isUpdatingOutbound}>
                           {row.status === "создано" ? "К отгрузке" : "Отгружено"}
@@ -243,6 +246,21 @@ const ShippingPage = () => {
           )}
         </CardContent>
       </Card>
+      <Dialog open={Boolean(qrRow)} onOpenChange={(v) => !v && setQrOpenFor(null)}>
+        <DialogContent className="sm:max-w-md">
+          <style>{`@media print{ @page { size: 58mm 40mm; margin:0; } body *{ visibility:hidden !important;} #box-qr-label,#box-qr-label *{ visibility:visible !important;} #box-qr-label{ position:fixed; left:0; top:0; } }`}</style>
+          <DialogHeader><DialogTitle>Печать QR этикетки 58x40</DialogTitle></DialogHeader>
+          {qrRow ? (
+            <div className="space-y-3">
+              <div id="box-qr-label" className="mx-auto flex h-[40mm] w-[58mm] flex-col items-center justify-center gap-2 border p-2">
+                <QRCodeSVG value={qrRow.boxBarcode} size={120} />
+                <p className="text-xs font-medium">{qrRow.sourceWarehouse}</p>
+              </div>
+              <Button onClick={() => window.print()}>Печать</Button>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

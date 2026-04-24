@@ -474,6 +474,11 @@ const LegalEntityDetailsPage = () => {
       marketplace: outboundDraft.marketplace,
       sourceWarehouse: outboundDraft.warehouse.trim() || "Склад Коледино",
       shippingMethod: outboundDraft.shippingMethod,
+      boxBarcode: "",
+      gateBarcode: "",
+      supplyNumber: "",
+      expiryDate: "",
+      packedUnits: 0,
       plannedUnits: qty,
       shippedUnits: null,
       status: "создано",
@@ -542,7 +547,12 @@ const LegalEntityDetailsPage = () => {
     const docNo = `ПТ-${Date.now().toString().slice(-6)}`;
     for (const row of inboundExcelRows) {
       const product = findProductByRow(row);
-      const qty = Number(row["Количество заявленное"]) || 0;
+      const qty =
+        Number(row["Количество заявленное"]) ||
+        Number(row["Кол-во"]) ||
+        Number(row["план "]) ||
+        Number(row["План"]) ||
+        0;
       if (!product || qty <= 0) {
         skipped += 1;
         continue;
@@ -597,6 +607,11 @@ const LegalEntityDetailsPage = () => {
         marketplace,
         sourceWarehouse: wh,
         shippingMethod: "fbo",
+        boxBarcode: "",
+        gateBarcode: "",
+        supplyNumber: "",
+        expiryDate: "",
+        packedUnits: 0,
         plannedUnits: qty,
         shippedUnits: null,
         status: "создано",

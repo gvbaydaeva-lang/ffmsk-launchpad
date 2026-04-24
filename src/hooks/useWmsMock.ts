@@ -210,12 +210,22 @@ export function useOutboundShipments() {
     },
   });
 
+  const updateDraft = useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<OutboundShipment> }) => {
+      const outbound = qc.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? (await fetchMockOutboundShipments());
+      return outbound.map((x) => (x.id === id ? { ...x, ...patch } : x));
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "outbound"], data),
+  });
+
   return {
     ...query,
     createOutbound: create.mutateAsync,
     isCreatingOutbound: create.isPending,
     setOutboundStatus: setStatus.mutateAsync,
     isUpdatingOutbound: setStatus.isPending,
+    updateOutboundDraft: updateDraft.mutateAsync,
+    isUpdatingOutboundDraft: updateDraft.isPending,
   };
 }
 

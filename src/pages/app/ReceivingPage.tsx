@@ -1,18 +1,9 @@
 import * as React from "react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
-import { Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,30 +14,18 @@ import { toast } from "sonner";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import MarketplaceBadge from "@/components/wms/MarketplaceBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { canChangeInboundStatus, canCreateInbound, useUserRole } from "@/contexts/UserRoleContext";
-import { useInboundSupplies, useLegalEntities, useProductCatalog } from "@/hooks/useWmsMock";
+import { canChangeInboundStatus, useUserRole } from "@/contexts/UserRoleContext";
+import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace } from "@/types/domain";
 
 const ReceivingPage = () => {
-  const { data, isLoading, error, createInbound, isCreating, setInboundStatus, isUpdatingInbound, updateInboundDraft } = useInboundSupplies();
+  const { data, isLoading, error, setInboundStatus, isUpdatingInbound, updateInboundDraft } = useInboundSupplies();
   const { data: entities } = useLegalEntities();
-  const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
   const { role } = useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
-  const [open, setOpen] = React.useState(false);
   const [actualDraft, setActualDraft] = React.useState<Record<string, string>>({});
-  const [form, setForm] = React.useState({
-    legalEntityId: "le-2" as string,
-    documentNo: "",
-    supplier: "",
-    productId: "",
-    destinationWarehouse: "Склад Коледино",
-    marketplace: "wb" as Marketplace,
-    expectedUnits: "",
-    eta: "",
-  });
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -82,80 +61,6 @@ const ReceivingPage = () => {
     [rows],
   );
 
-  const clientProducts = React.useMemo(
-    () => (catalog ?? []).filter((x) => x.legalEntityId === form.legalEntityId),
-    [catalog, form.legalEntityId],
-  );
-
-  const resetForm = () => {
-    setForm({
-      legalEntityId: "le-2",
-      documentNo: "",
-      supplier: "",
-      productId: "",
-      destinationWarehouse: "Склад Коледино",
-      marketplace: "wb",
-      expectedUnits: "",
-      eta: "",
-    });
-  };
-
-  const onCreate = async () => {
-    const units = Number(form.expectedUnits);
-    if (!form.documentNo.trim() || !form.supplier.trim() || !form.eta || !Number.isFinite(units) || units <= 0) {
-      toast.error("Заполните все поля корректно");
-      return;
-    }
-    const selectedProductId = form.productId || clientProducts[0]?.id;
-    if (!selectedProductId) {
-      toast.error("Выберите товар из каталога клиента");
-      return;
-    }
-    const draft: Omit<InboundSupply, "id"> = {
-      legalEntityId: form.legalEntityId,
-      documentNo: form.documentNo.trim(),
-      supplier: form.supplier.trim(),
-      items: [
-        {
-          productId: selectedProductId,
-          barcode: clientProducts.find((p) => p.id === selectedProductId)?.barcode ?? "",
-          supplierArticle: clientProducts.find((p) => p.id === selectedProductId)?.supplierArticle ?? "",
-          name: clientProducts.find((p) => p.id === selectedProductId)?.name ?? "",
-          color: clientProducts.find((p) => p.id === selectedProductId)?.color ?? "",
-          size: clientProducts.find((p) => p.id === selectedProductId)?.size ?? "",
-          plannedQuantity: units,
-          factualQuantity: 0,
-        },
-      ],
-      destinationWarehouse: form.destinationWarehouse,
-      marketplace: form.marketplace,
-      expectedUnits: units,
-      receivedUnits: null,
-      status: "ожидается",
-      eta: form.eta,
-    };
-    try {
-      await createInbound(draft);
-      toast.success("Приёмка создана");
-      setOpen(false);
-      resetForm();
-    } catch {
-      toast.error("Не удалось сохранить");
-    }
-  };
-
-  const advanceStatus = async (row: InboundSupply) => {
-    try {
-      if (row.status === "ожидается") {
-        await setInboundStatus({ id: row.id, status: "на приёмке" });
-      } else if (row.status === "на приёмке") {
-        await setInboundStatus({ id: row.id, status: "принято", receivedUnits: row.receivedUnits ?? row.expectedUnits });
-      }
-      toast.success("Статус обновлен");
-    } catch {
-      toast.error("Не удалось обновить статус");
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -176,118 +81,6 @@ const ReceivingPage = () => {
               <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
             </SelectContent>
           </Select>
-          <Dialog open={open} onOpenChange={setOpen}>
-            {canCreateInbound(role) && (
-              <DialogTrigger asChild>
-                <Button className="gap-2 bg-slate-900 text-white hover:bg-slate-800">
-                  <Plus className="h-4 w-4" />
-                  Создать приёмку
-                </Button>
-              </DialogTrigger>
-            )}
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Новая приёмка</DialogTitle>
-              </DialogHeader>
-              <div className="grid gap-3 py-2">
-                <div className="grid gap-1.5">
-                  <Label>Юрлицо</Label>
-                  <Select value={form.legalEntityId} onValueChange={(v) => setForm((f) => ({ ...f, legalEntityId: v }))}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {entities?.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>
-                          {e.shortName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="doc">Номер документа</Label>
-                  <Input
-                    id="doc"
-                    value={form.documentNo}
-                    onChange={(e) => setForm((f) => ({ ...f, documentNo: e.target.value }))}
-                    placeholder="ПТ-2026-0001"
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="sup">Поставщик</Label>
-                  <Input
-                    id="sup"
-                    value={form.supplier}
-                    onChange={(e) => setForm((f) => ({ ...f, supplier: e.target.value }))}
-                    placeholder="ООО «…»"
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Товар из каталога</Label>
-                  <Select value={form.productId} onValueChange={(v) => setForm((f) => ({ ...f, productId: v }))}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите товар" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clientProducts.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.brand} · {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="wh">Склад назначения</Label>
-                  <Input
-                    id="wh"
-                    value={form.destinationWarehouse}
-                    onChange={(e) => setForm((f) => ({ ...f, destinationWarehouse: e.target.value }))}
-                    placeholder="Склад Коледино"
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Маркетплейс</Label>
-                  <Select
-                    value={form.marketplace}
-                    onValueChange={(v) => setForm((f) => ({ ...f, marketplace: v as Marketplace }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="wb">Wildberries</SelectItem>
-                      <SelectItem value="ozon">Ozon</SelectItem>
-                      <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="exp">Ожидается единиц</Label>
-                  <Input
-                    id="exp"
-                    type="number"
-                    min={1}
-                    value={form.expectedUnits}
-                    onChange={(e) => setForm((f) => ({ ...f, expectedUnits: e.target.value }))}
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="eta">Ожидаемая дата</Label>
-                  <Input id="eta" type="date" value={form.eta} onChange={(e) => setForm((f) => ({ ...f, eta: e.target.value }))} />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" type="button" onClick={() => setOpen(false)}>
-                  Отмена
-                </Button>
-                <Button type="button" onClick={onCreate} disabled={isCreating}>
-                  {isCreating ? "Сохранение…" : "Создать"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
         </div>
       </div>
 
