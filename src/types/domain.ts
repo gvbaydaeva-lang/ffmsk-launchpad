@@ -221,6 +221,12 @@ export type OutboundShipment = {
   plannedShipDate: string | null;
   shippedUnits: number | null;
   status: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено";
+  boxes?: Array<{
+    id: string;
+    clientBoxBarcode: string;
+    scannedBarcodes: string[];
+  }>;
+  activeBoxId?: string | null;
   createdAt: string;
 };
 

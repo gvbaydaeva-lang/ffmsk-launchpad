@@ -10,7 +10,7 @@ import type {
   OrgUser,
   WarehouseInventoryRow,
 } from "@/types/domain";
-import { appendMockOutbound, fetchMockOutboundShipments } from "@/services/mockOutbound";
+import { appendMockOutbound, fetchMockOutboundShipments, saveMockOutbound } from "@/services/mockOutbound";
 import { appendMockInbound, fetchMockInboundSupplies, saveMockInbound } from "@/services/mockReceiving";
 import { closeOperationalDay } from "@/services/financeCloseDay";
 import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
@@ -196,6 +196,7 @@ export function useOutboundShipments() {
     onSuccess: ({ nextOutbound, nextCatalog }) => {
       qc.setQueryData(["wms", "outbound"], nextOutbound);
       qc.setQueryData(["wms", "product-catalog"], nextCatalog);
+      saveMockOutbound(nextOutbound);
       saveMockProductCatalog(nextCatalog);
     },
   });
@@ -230,6 +231,7 @@ export function useOutboundShipments() {
     onSuccess: ({ outbound, catalog }) => {
       qc.setQueryData(["wms", "outbound"], outbound);
       qc.setQueryData(["wms", "product-catalog"], catalog);
+      saveMockOutbound(outbound);
       saveMockProductCatalog(catalog);
     },
   });
@@ -239,7 +241,10 @@ export function useOutboundShipments() {
       const outbound = qc.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? (await fetchMockOutboundShipments());
       return outbound.map((x) => (x.id === id ? { ...x, ...patch } : x));
     },
-    onSuccess: (data) => qc.setQueryData(["wms", "outbound"], data),
+    onSuccess: (data) => {
+      qc.setQueryData(["wms", "outbound"], data);
+      saveMockOutbound(data);
+    },
   });
 
   return {

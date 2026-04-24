@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import Barcode from "react-barcode";
+import { QRCodeSVG } from "qrcode.react";
 import { Download, FileSpreadsheet, Plus, Printer, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -212,6 +213,11 @@ const LegalEntityDetailsPage = () => {
   const [outboundEditingRows, setOutboundEditingRows] = React.useState<Record<string, boolean>>({});
   const [inboundRowDrafts, setInboundRowDrafts] = React.useState<Record<string, InboundRowDraft>>({});
   const [outboundRowDrafts, setOutboundRowDrafts] = React.useState<Record<string, OutboundRowDraft>>({});
+  const [shippingSearch, setShippingSearch] = React.useState("");
+  const [shippingSort, setShippingSort] = React.useState<"article" | "barcode" | "size" | "color" | "marketplace" | "warehouse" | "plan" | "fact">("article");
+  const [scanDraftByShipment, setScanDraftByShipment] = React.useState<Record<string, string>>({});
+  const [scanErrorByShipment, setScanErrorByShipment] = React.useState<Record<string, boolean>>({});
+  const [qrBoxPayload, setQrBoxPayload] = React.useState<{ barcode: string; warehouse: string } | null>(null);
   const [form, setForm] = React.useState({
     category: "",
     photoUrl: "",
@@ -584,6 +590,125 @@ const LegalEntityDetailsPage = () => {
     setOutboundEditingRows((s) => ({ ...s, [shipmentId]: false }));
   };
 
+  const beepError = () => {
+    if (typeof window === "undefined") return;
+    const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "square";
+    oscillator.frequency.value = 880;
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = 0.12;
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.14);
+  };
+
+  const shippingRows = React.useMemo(() => {
+    const productById = new Map(rows.map((p) => [p.id, p]));
+    const s = shippingSearch.trim().toLowerCase();
+    const arr = outboundRows
+      .map((x) => {
+        const product = productById.get(x.productId);
+        const draft = outboundRowDrafts[x.id];
+        return {
+          shipment: x,
+          article: draft?.supplierArticle ?? product?.supplierArticle ?? "",
+          barcode: draft?.barcode ?? product?.barcode ?? "",
+          size: draft?.size ?? product?.size ?? "",
+          color: draft?.color ?? product?.color ?? "",
+          marketplace: draft?.marketplace ?? x.marketplace,
+          warehouse: x.sourceWarehouse,
+          plan: Number(draft?.plannedUnits ?? x.plannedUnits),
+          fact: Number(draft?.factualUnits ?? (x.shippedUnits ?? x.packedUnits ?? 0)),
+        };
+      })
+      .filter((r) => {
+        if (!s) return true;
+        return [r.article, r.barcode, r.size, r.color, r.marketplace, r.warehouse].some((v) => v.toLowerCase().includes(s));
+      });
+    return [...arr].sort((a, b) => {
+      if (shippingSort === "plan") return a.plan - b.plan;
+      if (shippingSort === "fact") return a.fact - b.fact;
+      return String(a[shippingSort]).localeCompare(String(b[shippingSort]), "ru");
+    });
+  }, [outboundRows, outboundRowDrafts, rows, shippingSearch, shippingSort]);
+
+  const onAddBox = async (shipmentId: string) => {
+    const row = outboundRows.find((x) => x.id === shipmentId);
+    if (!row) return;
+    const nextBox = {
+      id: `box-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      clientBoxBarcode: "",
+      scannedBarcodes: [] as string[],
+    };
+    await updateOutboundDraft({
+      id: shipmentId,
+      patch: {
+        boxes: [...(row.boxes ?? []), nextBox],
+        activeBoxId: nextBox.id,
+        status: "к отгрузке",
+      },
+    });
+    toast.success("Короб добавлен");
+  };
+
+  const onScanIntoActiveBox = async (shipmentId: string) => {
+    const row = outboundRows.find((x) => x.id === shipmentId);
+    const scanned = (scanDraftByShipment[shipmentId] ?? "").trim();
+    const barcode = outboundRowDrafts[shipmentId]?.barcode ?? rows.find((p) => p.id === row?.productId)?.barcode ?? "";
+    if (!row || !row.activeBoxId) return toast.error("Сначала добавьте короб");
+    if (!scanned) return toast.error("Введите баркод для сканирования");
+    if (scanned !== barcode) {
+      setScanErrorByShipment((s) => ({ ...s, [shipmentId]: true }));
+      beepError();
+      return toast.error("Баркод не входит в план отгрузки");
+    }
+    const boxes = row.boxes ?? [];
+    const active = boxes.find((b) => b.id === row.activeBoxId);
+    if (!active) return toast.error("Активный короб не найден");
+    const currentPacked = boxes.reduce((sum, b) => sum + b.scannedBarcodes.length, 0);
+    if (currentPacked + 1 > row.plannedUnits) {
+      setScanErrorByShipment((s) => ({ ...s, [shipmentId]: true }));
+      beepError();
+      return toast.error("Превышение плана");
+    }
+    const nextBoxes = boxes.map((b) => (b.id === row.activeBoxId ? { ...b, scannedBarcodes: [...b.scannedBarcodes, scanned] } : b));
+    setScanErrorByShipment((s) => ({ ...s, [shipmentId]: false }));
+    setScanDraftByShipment((s) => ({ ...s, [shipmentId]: "" }));
+    await updateOutboundDraft({
+      id: shipmentId,
+      patch: {
+        boxes: nextBoxes,
+        packedUnits: currentPacked + 1,
+      },
+    });
+  };
+
+  const exportPackingExcelFromBoxes = () => {
+    const rowsExport: Array<Record<string, string | number>> = [];
+    for (const out of outboundRows) {
+      const boxes = out.boxes ?? [];
+      for (const box of boxes) {
+        const count = box.scannedBarcodes.length;
+        if (!count) continue;
+        rowsExport.push({
+          "Баркод товара": outboundRowDrafts[out.id]?.barcode ?? rows.find((p) => p.id === out.productId)?.barcode ?? "",
+          "Кол-во товаров": count,
+          "ШК короба": box.clientBoxBarcode || box.id,
+          "Срок годности": out.expiryDate || "",
+        });
+      }
+    }
+    if (!rowsExport.length) return toast.error("Нет данных для выгрузки");
+    const ws = XLSX.utils.json_to_sheet(rowsExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Упаковка");
+    XLSX.writeFile(wb, "shk-excel-export.xlsx");
+  };
+
   const onUploadPhoto = async (idProduct: string, file: File) => {
     const url = URL.createObjectURL(file);
     await updateProduct({ id: idProduct, patch: { photoUrl: url } });
@@ -646,6 +771,8 @@ const LegalEntityDetailsPage = () => {
       plannedUnits: qty,
       shippedUnits: null,
       status: "готов к отгрузке (резерв)",
+      boxes: [],
+      activeBoxId: null,
     });
     toast.success("Задание на отгрузку создано");
     setCreateOutboundOpen(false);
@@ -836,6 +963,8 @@ const LegalEntityDetailsPage = () => {
         plannedUnits: qty,
         shippedUnits: null,
         status: "готов к отгрузке (резерв)",
+        boxes: [],
+        activeBoxId: null,
       });
       created += 1;
     }
@@ -1383,6 +1512,21 @@ const LegalEntityDetailsPage = () => {
               </Table>
             </CardContent>
           </Card>
+          <Dialog open={Boolean(qrBoxPayload)} onOpenChange={(v) => !v && setQrBoxPayload(null)}>
+            <DialogContent className="sm:max-w-md">
+              <style>{`@media print{ @page { size: 58mm 40mm; margin:0; } body *{ visibility:hidden !important;} #box-qr-label,#box-qr-label *{ visibility:visible !important;} #box-qr-label{ position:fixed; left:0; top:0; width:58mm; height:40mm; } }`}</style>
+              <DialogHeader><DialogTitle>Печать QR этикетки 58x40</DialogTitle></DialogHeader>
+              {qrBoxPayload ? (
+                <div className="space-y-3">
+                  <div id="box-qr-label" className="mx-auto flex h-[40mm] w-[58mm] flex-col items-center justify-center gap-2 border p-2">
+                    <QRCodeSVG value={qrBoxPayload.barcode} size={120} />
+                    <p className="text-xs font-medium">{qrBoxPayload.warehouse}</p>
+                  </div>
+                  <Button onClick={() => window.print()}>Печать</Button>
+                </div>
+              ) : null}
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="shipping">
@@ -1460,6 +1604,28 @@ const LegalEntityDetailsPage = () => {
               )}
             </div>
           </div>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Поиск по складу, артикулу, баркоду, цвету, размеру, площадке"
+              value={shippingSearch}
+              onChange={(e) => setShippingSearch(e.target.value)}
+              className="max-w-lg"
+            />
+            <Select value={shippingSort} onValueChange={(v) => setShippingSort(v as typeof shippingSort)}>
+              <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="article">Сортировка: Артикул</SelectItem>
+                <SelectItem value="barcode">Сортировка: Баркод</SelectItem>
+                <SelectItem value="size">Сортировка: Размер</SelectItem>
+                <SelectItem value="color">Сортировка: Цвет</SelectItem>
+                <SelectItem value="marketplace">Сортировка: Площадка</SelectItem>
+                <SelectItem value="warehouse">Сортировка: Склад</SelectItem>
+                <SelectItem value="plan">Сортировка: План</SelectItem>
+                <SelectItem value="fact">Сортировка: Факт</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" onClick={exportPackingExcelFromBoxes}>Экспорт shk-excel</Button>
+          </div>
           <Card className="border-slate-200">
             <CardContent className="p-0 sm:p-4">
               <Table>
@@ -1469,6 +1635,7 @@ const LegalEntityDetailsPage = () => {
                     <TableHead>Баркод</TableHead>
                     <TableHead>Размер</TableHead>
                     <TableHead>Цвет</TableHead>
+                    <TableHead>Склад</TableHead>
                     <TableHead>Площадка</TableHead>
                     <TableHead className="text-right">План</TableHead>
                     <TableHead className="text-right">Факт</TableHead>
@@ -1476,13 +1643,16 @@ const LegalEntityDetailsPage = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {outboundRows.map((x) => (
-                    <TableRow key={x.id}>
+                  {shippingRows.map((row) => {
+                    const x = row.shipment;
+                    const isEditing = Boolean(outboundEditingRows[x.id]);
+                    return (
+                    <TableRow key={x.id} className={scanErrorByShipment[x.id] ? "bg-red-100" : ""}>
                       <TableCell>
                         <Input
                           className="h-8"
-                          disabled={!outboundEditingRows[x.id]}
-                          value={outboundRowDrafts[x.id]?.supplierArticle ?? ""}
+                          disabled={!isEditing}
+                          value={row.article}
                           onChange={(e) =>
                             setOutboundRowDrafts((s) => ({
                               ...s,
@@ -1494,8 +1664,8 @@ const LegalEntityDetailsPage = () => {
                       <TableCell>
                         <Input
                           className="h-8 font-mono"
-                          disabled={!outboundEditingRows[x.id]}
-                          value={outboundRowDrafts[x.id]?.barcode ?? ""}
+                          disabled={!isEditing}
+                          value={row.barcode}
                           onChange={(e) =>
                             setOutboundRowDrafts((s) => ({
                               ...s,
@@ -1507,8 +1677,8 @@ const LegalEntityDetailsPage = () => {
                       <TableCell>
                         <Input
                           className="h-8"
-                          disabled={!outboundEditingRows[x.id]}
-                          value={outboundRowDrafts[x.id]?.size ?? ""}
+                          disabled={!isEditing}
+                          value={row.size}
                           onChange={(e) =>
                             setOutboundRowDrafts((s) => ({
                               ...s,
@@ -1520,8 +1690,8 @@ const LegalEntityDetailsPage = () => {
                       <TableCell>
                         <Input
                           className="h-8"
-                          disabled={!outboundEditingRows[x.id]}
-                          value={outboundRowDrafts[x.id]?.color ?? ""}
+                          disabled={!isEditing}
+                          value={row.color}
                           onChange={(e) =>
                             setOutboundRowDrafts((s) => ({
                               ...s,
@@ -1530,16 +1700,17 @@ const LegalEntityDetailsPage = () => {
                           }
                         />
                       </TableCell>
+                      <TableCell>{x.sourceWarehouse}</TableCell>
                       <TableCell>
                         <Select
-                          value={outboundRowDrafts[x.id]?.marketplace ?? x.marketplace}
+                          value={row.marketplace}
                           onValueChange={(v) =>
                             setOutboundRowDrafts((s) => ({
                               ...s,
                               [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), marketplace: v as "wb" | "ozon" | "yandex" },
                             }))
                           }
-                          disabled={!outboundEditingRows[x.id]}
+                          disabled={!isEditing}
                         >
                           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                           <SelectContent>
@@ -1554,8 +1725,8 @@ const LegalEntityDetailsPage = () => {
                           className="h-8 w-24 text-right"
                           type="number"
                           min={0}
-                          disabled={!outboundEditingRows[x.id]}
-                          value={outboundRowDrafts[x.id]?.plannedUnits ?? String(x.plannedUnits)}
+                          disabled={!isEditing}
+                          value={String(row.plan)}
                           onChange={(e) =>
                             setOutboundRowDrafts((s) => ({
                               ...s,
@@ -1569,8 +1740,8 @@ const LegalEntityDetailsPage = () => {
                           className="h-8 w-24 text-right"
                           type="number"
                           min={0}
-                          disabled={!outboundEditingRows[x.id]}
-                          value={outboundRowDrafts[x.id]?.factualUnits ?? String(x.shippedUnits ?? x.packedUnits)}
+                          disabled={!isEditing}
+                          value={String(row.fact)}
                           onChange={(e) =>
                             setOutboundRowDrafts((s) => ({
                               ...s,
@@ -1580,7 +1751,7 @@ const LegalEntityDetailsPage = () => {
                         />
                       </TableCell>
                       <TableCell className="text-right">
-                        {!outboundEditingRows[x.id] ? (
+                        {!isEditing ? (
                           <Button size="sm" variant="outline" disabled={!canChangeOutboundStatus(role)} onClick={() => setOutboundEditingRows((s) => ({ ...s, [x.id]: true }))}>
                             Редактировать
                           </Button>
@@ -1591,9 +1762,81 @@ const LegalEntityDetailsPage = () => {
                         )}
                       </TableCell>
                     </TableRow>
-                  ))}
+                  )})}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200">
+            <CardHeader><CardTitle className="text-base">Упаковщик (пошагово)</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {shippingRows.map((row) => {
+                const x = row.shipment;
+                const boxes = x.boxes ?? [];
+                const activeBox = boxes.find((b) => b.id === x.activeBoxId) ?? null;
+                return (
+                  <div key={`pack-${x.id}`} className="rounded-md border p-3">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm">
+                        {row.article || "—"} · {row.barcode || "—"} · План: {row.plan} · Упаковано: {x.packedUnits}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void onAddBox(x.id)}>Добавить короб</Button>
+                        <Input
+                          className="h-8 w-48 font-mono"
+                          placeholder="Скан баркода"
+                          value={scanDraftByShipment[x.id] ?? ""}
+                          onChange={(e) => setScanDraftByShipment((s) => ({ ...s, [x.id]: e.target.value }))}
+                        />
+                        <Button size="sm" onClick={() => void onScanIntoActiveBox(x.id)}>Сканировать в активный короб</Button>
+                      </div>
+                    </div>
+                    {activeBox && <p className="mb-2 text-xs text-slate-500">Активный короб: {activeBox.id}</p>}
+                    <div className="space-y-2">
+                      {boxes.map((box) => (
+                        <div key={box.id} className="grid gap-2 rounded border p-2 md:grid-cols-[1fr_1fr_1fr_auto_auto]">
+                          <Input
+                            disabled={!outboundEditingRows[x.id]}
+                            placeholder="ШК короба (из ЛК)"
+                            value={box.clientBoxBarcode}
+                            onChange={(e) =>
+                              void updateOutboundDraft({
+                                id: x.id,
+                                patch: {
+                                  boxes: boxes.map((b) => (b.id === box.id ? { ...b, clientBoxBarcode: e.target.value } : b)),
+                                },
+                              })
+                            }
+                          />
+                          <Input
+                            disabled={!outboundEditingRows[x.id]}
+                            placeholder="Номер поставки"
+                            value={x.supplyNumber}
+                            onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { supplyNumber: e.target.value } })}
+                          />
+                          <Input
+                            disabled={!outboundEditingRows[x.id]}
+                            placeholder="ШК пропуска"
+                            value={x.gateBarcode}
+                            onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { gateBarcode: e.target.value } })}
+                          />
+                          <Button size="sm" variant="outline" onClick={() => void updateOutboundDraft({ id: x.id, patch: { activeBoxId: box.id } })}>
+                            Открыть
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setQrBoxPayload({ barcode: box.clientBoxBarcode || box.id, warehouse: x.sourceWarehouse })}
+                          >
+                            QR
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
         </TabsContent>
