@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
+import { EXCEL_TABLE_BASE, EXCEL_TABLE_WRAP, STATIC_HEADER_BASE, excelRowBg } from "@/lib/excelTableStyles";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
@@ -104,7 +104,7 @@ const ReceivingPage = () => {
           <CardTitle className="font-display text-lg text-slate-900">Поставки</CardTitle>
           <CardDescription className="text-slate-500">Статусы: ожидается → на приёмке → принято</CardDescription>
         </CardHeader>
-        <CardContent className="p-0 sm:p-6">
+        <CardContent className="p-0 sm:p-2">
           {isLoading ? (
             <div className="space-y-2 p-6">
               <Skeleton className="h-10 w-full" />
@@ -113,32 +113,56 @@ const ReceivingPage = () => {
           ) : error ? (
             <p className="p-6 text-sm text-destructive">Не удалось загрузить список.</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="text-slate-600 cursor-pointer" onClick={() => onSort("entity")}>Юрлицо</TableHead>
-                  <TableHead className="text-right text-slate-600 cursor-pointer" onClick={() => onSort("planned")}>Общее кол-во (план)</TableHead>
-                  <TableHead className="text-right text-slate-600 cursor-pointer" onClick={() => onSort("fact")}>Общее кол-во (факт)</TableHead>
-                  <TableHead className="text-slate-600">Склад</TableHead>
-                  <TableHead className="text-slate-600">Статусы</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summaryRows.map((row) => (
-                  <TableRow key={row.legalEntityId} className="border-slate-100">
-                    <TableCell className="max-w-[160px] truncate text-slate-700 text-sm">
-                      <Link to={`/legal-entities/${row.legalEntityId}?tab=receiving`} className="font-medium hover:underline">
-                        {row.entity}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{row.planned}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.fact}</TableCell>
-                    <TableCell>{Array.from(row.warehouses).join(", ")}</TableCell>
-                    <TableCell>{Array.from(row.statuses).join(", ")}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className={EXCEL_TABLE_WRAP}>
+              <table className={EXCEL_TABLE_BASE}>
+                <thead>
+                  <tr>
+                    <th
+                      className={`${STATIC_HEADER_BASE} min-w-[160px] cursor-pointer whitespace-nowrap`}
+                      onClick={() => onSort("entity")}
+                    >
+                      Юрлицо
+                    </th>
+                    <th
+                      className={`${STATIC_HEADER_BASE} w-[120px] cursor-pointer text-right tabular-nums`}
+                      onClick={() => onSort("planned")}
+                    >
+                      План
+                    </th>
+                    <th
+                      className={`${STATIC_HEADER_BASE} w-[120px] cursor-pointer text-right tabular-nums`}
+                      onClick={() => onSort("fact")}
+                    >
+                      Факт
+                    </th>
+                    <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`}>Склад</th>
+                    <th className={`${STATIC_HEADER_BASE} min-w-[120px]`}>Статусы</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaryRows.map((row, idx) => {
+                    const bg = excelRowBg(idx, false);
+                    const cell = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${bg}`;
+                    return (
+                      <tr key={row.legalEntityId}>
+                        <td className={`${cell} max-w-[220px]`}>
+                          <Link
+                            to={`/legal-entities/${row.legalEntityId}?tab=receiving`}
+                            className="block whitespace-nowrap font-medium text-slate-900 hover:underline"
+                          >
+                            {row.entity}
+                          </Link>
+                        </td>
+                        <td className={`${cell} text-right tabular-nums font-medium`}>{row.planned}</td>
+                        <td className={`${cell} text-right tabular-nums`}>{row.fact}</td>
+                        <td className={`${cell} whitespace-nowrap`}>{Array.from(row.warehouses).join(", ")}</td>
+                        <td className={cell}>{Array.from(row.statuses).join(", ")}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>

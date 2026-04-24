@@ -33,7 +33,19 @@ import {
   useUpdateLegalEntitySettings,
 } from "@/hooks/useWmsMock";
 import { persistOutboundDurably } from "@/services/mockOutbound";
-import type { Marketplace, OutboundShipment, ProductCatalogItem } from "@/types/domain";
+import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem } from "@/types/domain";
+import {
+  EXCEL_STICKY_NAME_TD,
+  EXCEL_STICKY_NAME_TH,
+  EXCEL_STICKY_PHOTO_TD,
+  EXCEL_STICKY_PHOTO_TH,
+  EXCEL_TABLE_BASE,
+  EXCEL_TABLE_WRAP,
+  STATIC_HEADER_BASE,
+  WAREHOUSE_COLUMN_CELL_BGS,
+  WAREHOUSE_HEADER_CLASSES,
+  excelRowBg,
+} from "@/lib/excelTableStyles";
 import { toast } from "sonner";
 
 const TEMPLATE_HEADERS = [
@@ -108,6 +120,24 @@ function buildOutboundRowDraftsFromShipments(
   return next;
 }
 
+function buildInboundRowDraftsFromRows(inboundRows: InboundSupply[]): Record<string, InboundRowDraft> {
+  const next: Record<string, InboundRowDraft> = {};
+  for (const inb of inboundRows) {
+    inb.items.forEach((it, idx) => {
+      next[`${inb.id}-${idx}`] = {
+        supplierArticle: it.supplierArticle,
+        barcode: it.barcode,
+        size: it.size,
+        color: it.color,
+        marketplace: inb.marketplace,
+        plannedQuantity: String(it.plannedQuantity),
+        factualQuantity: String(it.factualQuantity),
+      };
+    });
+  }
+  return next;
+}
+
 type InboundImportPreviewRow = {
   name: string;
   barcode: string;
@@ -142,6 +172,20 @@ type OutboundMatrixLine = {
   byWarehouse: Map<string, OutboundMatrixCell>;
   totalPlan: number;
   totalFact: number;
+};
+
+type InboundMatrixRowRef = { rowId: string; inboundId: string; rowIndex: number };
+type InboundMatrixCell = { rowRefs: InboundMatrixRowRef[] };
+type InboundMatrixLine = {
+  key: string;
+  leaderRowId: string;
+  name: string;
+  supplierArticle: string;
+  barcode: string;
+  color: string;
+  size: string;
+  marketplace: Marketplace;
+  byWarehouse: Map<string, InboundMatrixCell>;
 };
 
 function text(v: unknown) {
@@ -183,6 +227,16 @@ function digitsOnly(value: string) {
   return value.replace(/\D/g, "");
 }
 
+function inboundMatrixLineKey(it: InboundLineItem): string {
+  if (it.productId) return `p:${it.productId}`;
+  const b = normalizeCode(it.barcode);
+  const a = normalizeCode(it.supplierArticle);
+  const sz = normalizeCode(it.size);
+  const clr = normalizeCode(it.color);
+  const nm = normalizeCode(it.name);
+  return `o:${b}|${a}|${sz}|${clr}|${nm}`;
+}
+
 /** Стабильный псевдо-productId для строк импорта без позиции в каталоге (остаток не резервируется). */
 function orphanProductIdForImport(entityId: string, row: OutboundImportPreviewRow): string {
   const b = normalizeCode(row.barcode);
@@ -206,17 +260,6 @@ function matrixLineKey(sh: OutboundShipment, product: ProductCatalogItem | null)
   }
   return `o:${barcode}|${article}|${size}|${color}|${name}`;
 }
-
-const WAREHOUSE_HEADER_CLASSES = [
-  "border-b border-amber-300/70 bg-amber-200/95 text-amber-950",
-  "border-b border-orange-300/70 bg-orange-200/95 text-orange-950",
-  "border-b border-emerald-300/70 bg-emerald-200/95 text-emerald-950",
-  "border-b border-cyan-300/70 bg-cyan-200/95 text-cyan-950",
-  "border-b border-sky-300/70 bg-sky-200/95 text-sky-950",
-  "border-b border-violet-300/70 bg-violet-200/95 text-violet-950",
-] as const;
-
-const STATIC_HEADER_BASE = "border-b border-r border-slate-300/80 bg-teal-100/95 px-2 py-2 text-left font-semibold text-slate-800";
 
 function findCatalogProductForOutbound(
   row: { barcode: string; supplierArticle: string },
@@ -333,7 +376,7 @@ const LegalEntityDetailsPage = () => {
   const [printCopies, setPrintCopies] = React.useState("1");
   const [rowDrafts, setRowDrafts] = React.useState<Record<string, RowDraft>>({});
   const [catalogEditingRows, setCatalogEditingRows] = React.useState<Record<string, boolean>>({});
-  const [inboundEditingRows, setInboundEditingRows] = React.useState<Record<string, boolean>>({});
+  const [inboundMatrixEdit, setInboundMatrixEdit] = React.useState(false);
   /** Режим правки плана и полей отгрузки в матрице + поля коробов в сайдбаре упаковщика */
   const [shippingMatrixEdit, setShippingMatrixEdit] = React.useState(false);
   const [inboundRowDrafts, setInboundRowDrafts] = React.useState<Record<string, InboundRowDraft>>({});
@@ -444,21 +487,7 @@ const LegalEntityDetailsPage = () => {
   }, [rows]);
 
   React.useEffect(() => {
-    const next: Record<string, InboundRowDraft> = {};
-    for (const inb of inboundRows) {
-      inb.items.forEach((it, idx) => {
-        next[`${inb.id}-${idx}`] = {
-          supplierArticle: it.supplierArticle,
-          barcode: it.barcode,
-          size: it.size,
-          color: it.color,
-          marketplace: inb.marketplace,
-          plannedQuantity: String(it.plannedQuantity),
-          factualQuantity: String(it.factualQuantity),
-        };
-      });
-    }
-    setInboundRowDrafts(next);
+    setInboundRowDrafts(buildInboundRowDraftsFromRows(inboundRows));
   }, [inboundRows]);
 
   React.useEffect(() => {
@@ -678,7 +707,7 @@ const LegalEntityDetailsPage = () => {
     toast.success("Товар сохранен");
   };
 
-  const onSaveInboundRow = async (inboundId: string, rowIndex: number) => {
+  const onSaveInboundRow = async (inboundId: string, rowIndex: number, opts?: { quiet?: boolean }) => {
     const key = `${inboundId}-${rowIndex}`;
     const draft = inboundRowDrafts[key];
     const source = inboundRows.find((x) => x.id === inboundId);
@@ -697,8 +726,64 @@ const LegalEntityDetailsPage = () => {
         : it,
     );
     await updateInboundDraft({ id: inboundId, items: nextItems, marketplace: draft.marketplace });
-    toast.success("Строка приёмки сохранена");
-    setInboundEditingRows((s) => ({ ...s, [key]: false }));
+    if (!opts?.quiet) toast.success("Строка приёмки сохранена");
+  };
+
+  const handleSaveAllInboundDrafts = async () => {
+    for (const inb of inboundRows) {
+      for (let idx = 0; idx < inb.items.length; idx += 1) {
+        await onSaveInboundRow(inb.id, idx, { quiet: true });
+      }
+    }
+    setInboundMatrixEdit(false);
+    toast.success("Приёмки сохранены");
+  };
+
+  const cancelInboundMatrixEdit = () => {
+    setInboundRowDrafts(buildInboundRowDraftsFromRows(inboundRows));
+    setInboundMatrixEdit(false);
+  };
+
+  const patchInboundMatrixLineDrafts = (line: InboundMatrixLine, patch: Partial<InboundRowDraft>) => {
+    const ids: string[] = [];
+    line.byWarehouse.forEach((c) => c.rowRefs.forEach((r) => ids.push(r.rowId)));
+    setInboundRowDrafts((s) => {
+      const next = { ...s };
+      for (const id of ids) {
+        const cur = next[id];
+        if (!cur) continue;
+        next[id] = { ...cur, ...patch };
+      }
+      return next;
+    });
+  };
+
+  const setInboundDraftPlanned = (rowId: string, planned: string) => {
+    setInboundRowDrafts((s) => {
+      const cur = s[rowId];
+      if (!cur) return s;
+      return { ...s, [rowId]: { ...cur, plannedQuantity: planned } };
+    });
+  };
+
+  const setInboundDraftFactual = (rowId: string, factual: string) => {
+    setInboundRowDrafts((s) => {
+      const cur = s[rowId];
+      if (!cur) return s;
+      return { ...s, [rowId]: { ...cur, factualQuantity: factual } };
+    });
+  };
+
+  const effInboundPlanned = (inboundId: string, rowIndex: number) => {
+    const key = `${inboundId}-${rowIndex}`;
+    const src = inboundRows.find((x) => x.id === inboundId)?.items[rowIndex];
+    return Number(inboundRowDrafts[key]?.plannedQuantity ?? src?.plannedQuantity ?? 0) || 0;
+  };
+
+  const effInboundFactual = (inboundId: string, rowIndex: number) => {
+    const key = `${inboundId}-${rowIndex}`;
+    const src = inboundRows.find((x) => x.id === inboundId)?.items[rowIndex];
+    return Number(inboundRowDrafts[key]?.factualQuantity ?? src?.factualQuantity ?? 0) || 0;
   };
 
   const onSaveOutboundRow = async (shipmentId: string, opts?: { quiet?: boolean }) => {
@@ -917,6 +1002,49 @@ const LegalEntityDetailsPage = () => {
 
     return { warehouses, lines: matrixLines };
   }, [outboundRowsForUi, rows, catalog, shippingSearch, shippingSort]);
+
+  const receivingMatrix = React.useMemo(() => {
+    const warehousesSet = new Set<string>();
+    const lines = new Map<string, InboundMatrixLine>();
+    const flat = inboundRows.flatMap((inb) =>
+      inb.items.map((it, idx) => ({
+        rowId: `${inb.id}-${idx}`,
+        inboundId: inb.id,
+        rowIndex: idx,
+        item: it,
+        marketplace: inb.marketplace,
+        warehouse: inb.destinationWarehouse || "—",
+      })),
+    );
+    const filtered = flat.filter((x) => (showOnlyDiff ? x.item.plannedQuantity !== x.item.factualQuantity : true));
+
+    for (const x of filtered) {
+      warehousesSet.add(x.warehouse);
+      const key = inboundMatrixLineKey(x.item);
+      let line = lines.get(key);
+      if (!line) {
+        line = {
+          key,
+          leaderRowId: x.rowId,
+          name: x.item.name,
+          supplierArticle: x.item.supplierArticle,
+          barcode: x.item.barcode,
+          color: x.item.color,
+          size: x.item.size,
+          marketplace: x.marketplace,
+          byWarehouse: new Map(),
+        };
+        lines.set(key, line);
+      }
+      const cell = line.byWarehouse.get(x.warehouse) ?? { rowRefs: [] };
+      cell.rowRefs.push({ rowId: x.rowId, inboundId: x.inboundId, rowIndex: x.rowIndex });
+      line.byWarehouse.set(x.warehouse, cell);
+    }
+
+    const warehouses = Array.from(warehousesSet).sort((a, b) => a.localeCompare(b, "ru"));
+    const matrixLines = Array.from(lines.values()).sort((a, b) => a.supplierArticle.localeCompare(b.supplierArticle, "ru"));
+    return { warehouses, lines: matrixLines };
+  }, [inboundRows, showOnlyDiff]);
 
   const onAddBox = async (shipmentId: string) => {
     const row = outboundRowsForUi.find((x) => x.id === shipmentId);
@@ -1612,92 +1740,218 @@ const LegalEntityDetailsPage = () => {
             </DialogContent>
           </Dialog>
 
-          <Card className="border-slate-200">
-            <CardContent className="p-0 sm:p-4">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-14">Фото</TableHead>
-                    <TableHead>Товар</TableHead>
-                    <TableHead>Баркод</TableHead>
-                    <TableHead className="min-w-[10rem] whitespace-normal">Цвет</TableHead>
-                    <TableHead className="w-24">Размер</TableHead>
-                    <TableHead className="min-w-[10rem] whitespace-normal">Страна</TableHead>
-                    <TableHead className="min-w-[12rem] max-w-[20rem] whitespace-normal">Состав</TableHead>
-                    <TableHead className="text-right">Остаток</TableHead>
-                    <TableHead className="w-[9.5rem] shrink-0">Параметры</TableHead>
-                    <TableHead className="text-right">Действие</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {catalogRows.map((item) => {
-                    const draft = rowDrafts[item.id];
-                    const dirty = isDirty(item, draft);
-                    const isEditing = Boolean(catalogEditingRows[item.id]);
-                    return (
-                      <TableRow key={item.id}>
-                        <TableCell>{item.photoUrl ? <img src={item.photoUrl} alt={item.name} className="h-10 w-10 rounded-md border object-cover" /> : <div className="h-10 w-10 rounded-md border border-dashed bg-slate-50" />}</TableCell>
-                        <TableCell className="max-w-[220px] space-y-1">
-                          <button type="button" className="block truncate text-left font-medium hover:underline" onClick={() => openPrintDialog(item)}>{item.name}</button>
-                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.name ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), name: e.target.value } }))} />
-                        </TableCell>
-                        <TableCell className="font-mono text-xs"><button type="button" className="hover:underline" onClick={() => openPrintDialog(item)}>{item.barcode}</button></TableCell>
-                        <TableCell className="min-w-[10rem] max-w-[18rem] align-top">
-                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-auto min-h-7 w-full whitespace-normal text-xs" value={draft?.color ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), color: e.target.value } }))} />
-                        </TableCell>
-                        <TableCell className="w-24 align-top">
-                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-7 text-xs" value={draft?.size ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value } }))} />
-                        </TableCell>
-                        <TableCell className="min-w-[10rem] max-w-[18rem] align-top">
-                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-auto min-h-7 w-full whitespace-normal text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} />
-                        </TableCell>
-                        <TableCell className="min-w-[12rem] max-w-[22rem] align-top">
-                          <Input disabled={!canEditCatalog(role) || !isEditing} className="h-auto min-h-7 w-full whitespace-normal text-xs" value={draft?.composition ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value } }))} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <button type="button" className="text-sm font-medium hover:underline" onClick={() => setHistoryProductId(item.id)}>
-                            {item.stockOnHand}
-                          </button>
-                        </TableCell>
-                        <TableCell className="w-[9.5rem] shrink-0 space-y-0.5 text-[10px] leading-tight">
-                          <p className="line-clamp-2 text-slate-600">{paramsLabel(item)}</p>
-                          <div className="grid grid-cols-4 gap-0.5">
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="L" value={draft?.lengthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), lengthCm: e.target.value } }))} />
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="W" value={draft?.widthCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), widthCm: e.target.value } }))} />
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="H" value={draft?.heightCm ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), heightCm: e.target.value } }))} />
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="h-6 px-1 text-[10px]" placeholder="кг" type="number" step="0.01" value={draft?.weightKg ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), weightKg: e.target.value } }))} />
-                          </div>
-                          <Label className="mt-0.5 inline-flex cursor-pointer items-center gap-0.5 rounded border px-1 py-0.5 text-[10px]">
-                            <Upload className="h-3 w-3" />
-                            Фото
-                            <Input disabled={!canEditCatalog(role) || !isEditing} className="hidden" type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && void onUploadPhoto(item.id, e.target.files[0])} />
-                          </Label>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            className={isEditing && dirty ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-200 text-slate-700 hover:bg-slate-300"}
-                            disabled={!canEditCatalog(role) || isUpdatingProduct}
-                            onClick={() => {
-                              if (!isEditing) {
-                                setCatalogEditingRows((s) => ({ ...s, [item.id]: true }));
-                                return;
+          <Card className="border-slate-200 shadow-sm">
+            <CardContent className="p-0 sm:p-2">
+              <div className={EXCEL_TABLE_WRAP}>
+                <table className={EXCEL_TABLE_BASE}>
+                  <thead>
+                    <tr>
+                      <th className={EXCEL_STICKY_PHOTO_TH}>Фото</th>
+                      <th className={EXCEL_STICKY_NAME_TH}>Товар</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[120px] whitespace-nowrap font-mono`}>Артикул</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap font-mono`}>Баркод</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[88px] whitespace-nowrap text-center`}>Цвет</th>
+                      <th className={`${STATIC_HEADER_BASE} w-[64px] whitespace-nowrap text-center`}>Размер</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[100px] whitespace-nowrap`}>Страна</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`}>Состав</th>
+                      <th className={`${STATIC_HEADER_BASE} w-[72px] text-right tabular-nums`}>Остаток</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[108px] text-center`}>L×W×H / кг</th>
+                      <th className={`${STATIC_HEADER_BASE} w-[96px] text-right`}>Действие</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catalogRows.map((item, idx) => {
+                      const draft = rowDrafts[item.id];
+                      const dirty = isDirty(item, draft);
+                      const isEditing = Boolean(catalogEditingRows[item.id]);
+                      const rowBg = excelRowBg(idx, false);
+                      const cell = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${rowBg}`;
+                      return (
+                        <tr key={item.id}>
+                          <td className={`${EXCEL_STICKY_PHOTO_TD} ${rowBg} text-center`}>
+                            {item.photoUrl ? (
+                              <img src={item.photoUrl} alt="" className="mx-auto h-7 w-7 rounded border object-cover" />
+                            ) : (
+                              <div className="mx-auto h-7 w-7 rounded border border-dashed bg-slate-100" />
+                            )}
+                          </td>
+                          <td className={`${EXCEL_STICKY_NAME_TD} ${rowBg} align-top`}>
+                            <div className="space-y-0.5">
+                              <button
+                                type="button"
+                                className="block max-w-full whitespace-nowrap text-left font-medium hover:underline"
+                                onClick={() => openPrintDialog(item)}
+                              >
+                                {item.name}
+                              </button>
+                              <Input
+                                disabled={!canEditCatalog(role) || !isEditing}
+                                className="h-6 w-full min-w-0 text-[11px]"
+                                value={draft?.name ?? ""}
+                                onChange={(e) =>
+                                  setRowDrafts((s) => ({
+                                    ...s,
+                                    [item.id]: { ...(s[item.id] ?? rowToDraft(item)), name: e.target.value },
+                                  }))
+                                }
+                              />
+                            </div>
+                          </td>
+                          <td className={`${cell} whitespace-nowrap font-mono`}>{item.supplierArticle || "—"}</td>
+                          <td className={`${cell} whitespace-nowrap font-mono`}>
+                            <button type="button" className="hover:underline" onClick={() => openPrintDialog(item)}>
+                              {item.barcode}
+                            </button>
+                          </td>
+                          <td className={`${cell} min-w-[88px] align-top`}>
+                            <Input
+                              disabled={!canEditCatalog(role) || !isEditing}
+                              className="h-6 min-h-6 w-full text-[11px] leading-tight"
+                              value={draft?.color ?? ""}
+                              onChange={(e) =>
+                                setRowDrafts((s) => ({
+                                  ...s,
+                                  [item.id]: { ...(s[item.id] ?? rowToDraft(item)), color: e.target.value },
+                                }))
                               }
-                              if (dirty) {
-                                void onRowAction(item).then(() => setCatalogEditingRows((s) => ({ ...s, [item.id]: false })));
-                                return;
+                            />
+                          </td>
+                          <td className={`${cell} w-[64px] text-center align-top`}>
+                            <Input
+                              disabled={!canEditCatalog(role) || !isEditing}
+                              className="mx-auto h-6 w-full min-w-0 text-center text-[11px]"
+                              value={draft?.size ?? ""}
+                              onChange={(e) =>
+                                setRowDrafts((s) => ({
+                                  ...s,
+                                  [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value },
+                                }))
                               }
-                              setCatalogEditingRows((s) => ({ ...s, [item.id]: false }));
-                            }}
-                          >
-                            {isEditing ? (dirty ? "Сохранить" : "Готово") : "Редактировать"}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                            />
+                          </td>
+                          <td className={`${cell} min-w-[100px] align-top`}>
+                            <Input
+                              disabled={!canEditCatalog(role) || !isEditing}
+                              className="h-6 min-h-6 w-full text-[11px] leading-tight"
+                              value={draft?.countryOfOrigin ?? ""}
+                              onChange={(e) =>
+                                setRowDrafts((s) => ({
+                                  ...s,
+                                  [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value },
+                                }))
+                              }
+                            />
+                          </td>
+                          <td className={`${cell} min-w-[140px] max-w-[220px] align-top`}>
+                            <Input
+                              disabled={!canEditCatalog(role) || !isEditing}
+                              className="h-6 min-h-6 w-full text-[11px] leading-snug"
+                              value={draft?.composition ?? ""}
+                              onChange={(e) =>
+                                setRowDrafts((s) => ({
+                                  ...s,
+                                  [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value },
+                                }))
+                              }
+                            />
+                          </td>
+                          <td className={`${cell} text-right tabular-nums font-medium`}>
+                            <button type="button" className="hover:underline" onClick={() => setHistoryProductId(item.id)}>
+                              {item.stockOnHand}
+                            </button>
+                          </td>
+                          <td className={`${cell} align-top`}>
+                            <p className="mb-0.5 line-clamp-2 text-[10px] leading-tight text-slate-600">{paramsLabel(item)}</p>
+                            <div className="grid grid-cols-4 gap-0.5">
+                              <Input
+                                disabled={!canEditCatalog(role) || !isEditing}
+                                className="h-6 px-0.5 text-[10px]"
+                                placeholder="L"
+                                value={draft?.lengthCm ?? ""}
+                                onChange={(e) =>
+                                  setRowDrafts((s) => ({
+                                    ...s,
+                                    [item.id]: { ...(s[item.id] ?? rowToDraft(item)), lengthCm: e.target.value },
+                                  }))
+                                }
+                              />
+                              <Input
+                                disabled={!canEditCatalog(role) || !isEditing}
+                                className="h-6 px-0.5 text-[10px]"
+                                placeholder="W"
+                                value={draft?.widthCm ?? ""}
+                                onChange={(e) =>
+                                  setRowDrafts((s) => ({
+                                    ...s,
+                                    [item.id]: { ...(s[item.id] ?? rowToDraft(item)), widthCm: e.target.value },
+                                  }))
+                                }
+                              />
+                              <Input
+                                disabled={!canEditCatalog(role) || !isEditing}
+                                className="h-6 px-0.5 text-[10px]"
+                                placeholder="H"
+                                value={draft?.heightCm ?? ""}
+                                onChange={(e) =>
+                                  setRowDrafts((s) => ({
+                                    ...s,
+                                    [item.id]: { ...(s[item.id] ?? rowToDraft(item)), heightCm: e.target.value },
+                                  }))
+                                }
+                              />
+                              <Input
+                                disabled={!canEditCatalog(role) || !isEditing}
+                                className="h-6 px-0.5 text-[10px]"
+                                placeholder="кг"
+                                type="number"
+                                step="0.01"
+                                value={draft?.weightKg ?? ""}
+                                onChange={(e) =>
+                                  setRowDrafts((s) => ({
+                                    ...s,
+                                    [item.id]: { ...(s[item.id] ?? rowToDraft(item)), weightKg: e.target.value },
+                                  }))
+                                }
+                              />
+                            </div>
+                            <Label className="mt-0.5 inline-flex cursor-pointer items-center gap-0.5 rounded border border-slate-200 bg-white px-0.5 py-0.5 text-[10px]">
+                              <Upload className="h-3 w-3" />
+                              Фото
+                              <Input
+                                disabled={!canEditCatalog(role) || !isEditing}
+                                className="hidden"
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => e.target.files?.[0] && void onUploadPhoto(item.id, e.target.files[0])}
+                              />
+                            </Label>
+                          </td>
+                          <td className={`${cell} text-right`}>
+                            <Button
+                              size="sm"
+                              className={`h-7 px-2 text-[11px] ${isEditing && dirty ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-100 text-slate-800 hover:bg-slate-200"}`}
+                              disabled={!canEditCatalog(role) || isUpdatingProduct}
+                              onClick={() => {
+                                if (!isEditing) {
+                                  setCatalogEditingRows((s) => ({ ...s, [item.id]: true }));
+                                  return;
+                                }
+                                if (dirty) {
+                                  void onRowAction(item).then(() => setCatalogEditingRows((s) => ({ ...s, [item.id]: false })));
+                                  return;
+                                }
+                                setCatalogEditingRows((s) => ({ ...s, [item.id]: false }));
+                              }}
+                            >
+                              {isEditing ? (dirty ? "Сохранить" : "Готово") : "Редактировать"}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -1893,130 +2147,209 @@ const LegalEntityDetailsPage = () => {
               )}
             </div>
           </div>
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <Button variant={showOnlyDiff ? "default" : "outline"} size="sm" onClick={() => setShowOnlyDiff((v) => !v)}>
               {showOnlyDiff ? "Показать все" : "Только расхождения"}
             </Button>
+            {canChangeInboundStatus(role) &&
+              (!inboundMatrixEdit ? (
+                <Button variant="secondary" size="sm" onClick={() => setInboundMatrixEdit(true)}>
+                  Редактировать
+                </Button>
+              ) : (
+                <>
+                  <Button size="sm" onClick={() => void handleSaveAllInboundDrafts()} disabled={isUpdatingInbound}>
+                    {isUpdatingInbound ? "Сохранение..." : "Сохранить всё"}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => cancelInboundMatrixEdit()} disabled={isUpdatingInbound}>
+                    Отмена
+                  </Button>
+                </>
+              ))}
           </div>
-          <Card className="border-slate-200">
-            <CardContent className="p-0 sm:p-4">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Артикул</TableHead>
-                    <TableHead>Баркод</TableHead>
-                    <TableHead>Размер</TableHead>
-                    <TableHead>Цвет</TableHead>
-                    <TableHead>Площадка</TableHead>
-                    <TableHead className="text-right">План</TableHead>
-                    <TableHead className="text-right">Факт</TableHead>
-                    <TableHead className="text-right">Действие</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inboundRows
-                    .flatMap((x) =>
-                      x.items.map((it, idx) => ({
-                        rowId: `${x.id}-${idx}`,
-                        inboundId: x.id,
-                        rowIndex: idx,
-                        item: it,
-                        status: x.status,
-                        marketplace: x.marketplace,
-                      })),
-                    )
-                    .filter((x) => (showOnlyDiff ? x.item.plannedQuantity !== x.item.factualQuantity : true))
-                    .map((x) => (
-                    <TableRow key={x.rowId}>
-                      <TableCell>
-                        <Input
-                          className="h-8"
-                          disabled={!inboundEditingRows[x.rowId]}
-                          value={inboundRowDrafts[x.rowId]?.supplierArticle ?? x.item.supplierArticle}
-                          onChange={(e) => setInboundRowDrafts((s) => ({ ...s, [x.rowId]: { ...(s[x.rowId] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedQuantity: "0", factualQuantity: "0" }), supplierArticle: e.target.value } }))}
-                        />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        <Input
-                          className="h-8 font-mono"
-                          disabled={!inboundEditingRows[x.rowId]}
-                          value={inboundRowDrafts[x.rowId]?.barcode ?? x.item.barcode}
-                          onChange={(e) => setInboundRowDrafts((s) => ({ ...s, [x.rowId]: { ...(s[x.rowId] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedQuantity: "0", factualQuantity: "0" }), barcode: e.target.value } }))}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          className="h-8"
-                          disabled={!inboundEditingRows[x.rowId]}
-                          value={inboundRowDrafts[x.rowId]?.size ?? x.item.size}
-                          onChange={(e) => setInboundRowDrafts((s) => ({ ...s, [x.rowId]: { ...(s[x.rowId] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedQuantity: "0", factualQuantity: "0" }), size: e.target.value } }))}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          className="h-8"
-                          disabled={!inboundEditingRows[x.rowId]}
-                          value={inboundRowDrafts[x.rowId]?.color ?? x.item.color}
-                          onChange={(e) => setInboundRowDrafts((s) => ({ ...s, [x.rowId]: { ...(s[x.rowId] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedQuantity: "0", factualQuantity: "0" }), color: e.target.value } }))}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={inboundRowDrafts[x.rowId]?.marketplace ?? x.marketplace}
-                          onValueChange={(v) =>
-                            setInboundRowDrafts((s) => ({
-                              ...s,
-                              [x.rowId]: {
-                                ...(s[x.rowId] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedQuantity: "0", factualQuantity: "0" }),
-                                marketplace: v as "wb" | "ozon" | "yandex",
-                              },
-                            }))
-                          }
-                          disabled={!inboundEditingRows[x.rowId]}
+          <Card className="border-slate-200 shadow-sm">
+            <CardContent className="p-0 sm:p-2">
+              <div className={EXCEL_TABLE_WRAP}>
+                <table className={EXCEL_TABLE_BASE}>
+                  <thead>
+                    <tr>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap`}>Название</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[132px] whitespace-nowrap`}>Артикул</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[150px] whitespace-nowrap font-mono`}>Баркод</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[72px] whitespace-nowrap text-center`}>Цвет</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[56px] whitespace-nowrap text-center`}>Размер</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[64px] whitespace-nowrap text-center`}>МП</th>
+                      <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>План всего</th>
+                      <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>Факт всего</th>
+                      {receivingMatrix.warehouses.map((wh, wi) => (
+                        <th
+                          key={wh}
+                          className={`${WAREHOUSE_HEADER_CLASSES[wi % WAREHOUSE_HEADER_CLASSES.length]} border-r border-slate-300 px-1.5 py-1 text-center text-[11px] font-semibold whitespace-nowrap min-w-[96px]`}
                         >
-                          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="wb">WB</SelectItem>
-                            <SelectItem value="ozon">Ozon</SelectItem>
-                            <SelectItem value="yandex">Яндекс</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <Input
-                          className="h-8 w-24 text-right"
-                          type="number"
-                          min={0}
-                          disabled={!inboundEditingRows[x.rowId]}
-                          value={inboundRowDrafts[x.rowId]?.plannedQuantity ?? String(x.item.plannedQuantity)}
-                          onChange={(e) => setInboundRowDrafts((s) => ({ ...s, [x.rowId]: { ...(s[x.rowId] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedQuantity: "0", factualQuantity: "0" }), plannedQuantity: e.target.value } }))}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <Input
-                          className="h-8 w-24 text-right"
-                          type="number"
-                          min={0}
-                          disabled={!inboundEditingRows[x.rowId]}
-                          value={inboundRowDrafts[x.rowId]?.factualQuantity ?? String(x.item.factualQuantity)}
-                          onChange={(e) => setInboundRowDrafts((s) => ({ ...s, [x.rowId]: { ...(s[x.rowId] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedQuantity: "0", factualQuantity: "0" }), factualQuantity: e.target.value } }))}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {!inboundEditingRows[x.rowId] ? (
-                          <Button size="sm" variant="outline" disabled={!canChangeInboundStatus(role)} onClick={() => setInboundEditingRows((s) => ({ ...s, [x.rowId]: true }))}>
-                            Редактировать
-                          </Button>
-                        ) : (
-                          <Button size="sm" onClick={() => void onSaveInboundRow(x.inboundId, x.rowIndex)} disabled={isUpdatingInbound}>
-                            Сохранить
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                          {wh}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receivingMatrix.lines.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={8 + receivingMatrix.warehouses.length}
+                          className="border-b border-slate-200 px-3 py-8 text-center text-muted-foreground text-[11px]"
+                        >
+                          Нет строк приёмки для отображения
+                        </td>
+                      </tr>
+                    ) : (
+                      receivingMatrix.lines.map((line, idx) => {
+                        const ld = inboundRowDrafts[line.leaderRowId];
+                        let rowAlert = false;
+                        line.byWarehouse.forEach((c) => {
+                          c.rowRefs.forEach((r) => {
+                            if (effInboundPlanned(r.inboundId, r.rowIndex) !== effInboundFactual(r.inboundId, r.rowIndex)) {
+                              rowAlert = true;
+                            }
+                          });
+                        });
+                        let totalPlan = 0;
+                        let totalFact = 0;
+                        line.byWarehouse.forEach((c) => {
+                          c.rowRefs.forEach((r) => {
+                            totalPlan += effInboundPlanned(r.inboundId, r.rowIndex);
+                            totalFact += effInboundFactual(r.inboundId, r.rowIndex);
+                          });
+                        });
+                        const rowBg = excelRowBg(idx, rowAlert);
+                        const cellBase = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${rowBg}`;
+                        const mpLabel =
+                          line.marketplace === "wb" ? "WB" : line.marketplace === "ozon" ? "Ozon" : "Яндекс";
+                        return (
+                          <tr key={line.key}>
+                            <td className={`${cellBase} whitespace-nowrap`}>
+                              <span className="block whitespace-nowrap">{(line.name || "").trim() || "—"}</span>
+                            </td>
+                            <td className={`${cellBase} whitespace-nowrap`}>
+                              {inboundMatrixEdit ? (
+                                <Input
+                                  className="h-7 min-w-[120px] border-slate-300 bg-white px-1.5 text-[11px]"
+                                  value={ld?.supplierArticle ?? ""}
+                                  onChange={(e) => patchInboundMatrixLineDrafts(line, { supplierArticle: e.target.value })}
+                                />
+                              ) : (
+                                <span className="block whitespace-nowrap">{(ld?.supplierArticle ?? line.supplierArticle) || "—"}</span>
+                              )}
+                            </td>
+                            <td className={`${cellBase} whitespace-nowrap font-mono`}>
+                              {inboundMatrixEdit ? (
+                                <Input
+                                  className="h-7 min-w-[130px] border-slate-300 bg-white px-1.5 text-[11px] font-mono"
+                                  value={ld?.barcode ?? ""}
+                                  onChange={(e) => patchInboundMatrixLineDrafts(line, { barcode: e.target.value })}
+                                />
+                              ) : (
+                                <span className="block whitespace-nowrap">{(ld?.barcode ?? line.barcode) || "—"}</span>
+                              )}
+                            </td>
+                            <td className={`${cellBase} whitespace-nowrap text-center`}>
+                              {inboundMatrixEdit ? (
+                                <Input
+                                  className="mx-auto h-7 w-full min-w-[64px] border-slate-300 bg-white px-1 text-center text-[11px]"
+                                  value={ld?.color ?? ""}
+                                  onChange={(e) => patchInboundMatrixLineDrafts(line, { color: e.target.value })}
+                                />
+                              ) : (
+                                <span>{(ld?.color ?? line.color) || "—"}</span>
+                              )}
+                            </td>
+                            <td className={`${cellBase} whitespace-nowrap text-center`}>
+                              {inboundMatrixEdit ? (
+                                <Input
+                                  className="mx-auto h-7 w-full min-w-[48px] border-slate-300 bg-white px-1 text-center text-[11px]"
+                                  value={ld?.size ?? ""}
+                                  onChange={(e) => patchInboundMatrixLineDrafts(line, { size: e.target.value })}
+                                />
+                              ) : (
+                                <span>{(ld?.size ?? line.size) || "—"}</span>
+                              )}
+                            </td>
+                            <td className={`${cellBase} text-center`}>
+                              {inboundMatrixEdit ? (
+                                <Select
+                                  value={ld?.marketplace ?? line.marketplace}
+                                  onValueChange={(v) =>
+                                    patchInboundMatrixLineDrafts(line, { marketplace: v as "wb" | "ozon" | "yandex" })
+                                  }
+                                >
+                                  <SelectTrigger className="mx-auto h-7 min-w-[72px] px-1 text-[11px]">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="wb">WB</SelectItem>
+                                    <SelectItem value="ozon">Ozon</SelectItem>
+                                    <SelectItem value="yandex">Яндекс</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                mpLabel
+                              )}
+                            </td>
+                            <td className={`${cellBase} text-center tabular-nums font-medium`}>{totalPlan}</td>
+                            <td className={`${cellBase} text-center tabular-nums`}>{totalFact}</td>
+                            {receivingMatrix.warehouses.map((wh, wi) => {
+                              const cell = line.byWarehouse.get(wh);
+                              const whBg = WAREHOUSE_COLUMN_CELL_BGS[wi % WAREHOUSE_COLUMN_CELL_BGS.length];
+                              const whCell = `${cellBase} text-center tabular-nums ${whBg}`;
+                              if (!cell || cell.rowRefs.length === 0) {
+                                return (
+                                  <td key={wh} className={whCell}>
+                                    —
+                                  </td>
+                                );
+                              }
+                              const sumP = cell.rowRefs.reduce((s, r) => s + effInboundPlanned(r.inboundId, r.rowIndex), 0);
+                              const sumF = cell.rowRefs.reduce((s, r) => s + effInboundFactual(r.inboundId, r.rowIndex), 0);
+                              if (inboundMatrixEdit && cell.rowRefs.length === 1) {
+                                const r = cell.rowRefs[0];
+                                return (
+                                  <td key={wh} className={`${whCell} align-top`}>
+                                    <div className="flex flex-col gap-0.5 py-0.5">
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        className="h-6 w-full min-w-[72px] border-slate-300 bg-white px-1 text-center text-[10px] tabular-nums"
+                                        title="План"
+                                        value={String(effInboundPlanned(r.inboundId, r.rowIndex))}
+                                        onChange={(e) => setInboundDraftPlanned(r.rowId, e.target.value)}
+                                      />
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        className="h-6 w-full min-w-[72px] border-slate-300 bg-white px-1 text-center text-[10px] tabular-nums"
+                                        title="Факт"
+                                        value={String(effInboundFactual(r.inboundId, r.rowIndex))}
+                                        onChange={(e) => setInboundDraftFactual(r.rowId, e.target.value)}
+                                      />
+                                    </div>
+                                  </td>
+                                );
+                              }
+                              return (
+                                <td key={wh} className={whCell}>
+                                  <div className="leading-tight">
+                                    <div>П: {sumP}</div>
+                                    <div className="text-muted-foreground">Ф: {sumF}</div>
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
           <Dialog open={Boolean(qrBoxPayload)} onOpenChange={(v) => !v && setQrBoxPayload(null)}>
@@ -2177,8 +2510,8 @@ const LegalEntityDetailsPage = () => {
           <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch">
             <Card className="min-w-0 flex-1 border-slate-200 shadow-sm">
               <CardContent className="p-0 sm:p-2">
-                <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
-                  <table className="w-full border-collapse text-[11px] leading-tight text-slate-800">
+                <div className={EXCEL_TABLE_WRAP}>
+                  <table className={EXCEL_TABLE_BASE}>
                     <thead>
                       <tr>
                         <th className={`${STATIC_HEADER_BASE} min-w-[200px] whitespace-nowrap`}>Название</th>
@@ -2456,22 +2789,40 @@ const LegalEntityDetailsPage = () => {
         </TabsContent>
 
         <TabsContent value="history">
-          <Card className="border-slate-200">
-            <CardContent className="p-0 sm:p-4">
-              <Table>
-                <TableHeader><TableRow><TableHead>Дата</TableHead><TableHead>Сотрудник</TableHead><TableHead>Действие</TableHead><TableHead>Товар / документ</TableHead><TableHead className="text-right">Кол-во</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {ops.map((ev) => (
-                    <TableRow key={ev.id}>
-                      <TableCell>{format(parseISO(ev.dateIso), "d MMM yyyy HH:mm", { locale: ru })}</TableCell>
-                      <TableCell>{ev.actor}</TableCell>
-                      <TableCell>{ev.action}</TableCell>
-                      <TableCell className="max-w-[280px] truncate">{ev.productLabel}</TableCell>
-                      <TableCell className="text-right tabular-nums">{ev.quantity.toLocaleString("ru-RU")}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+          <Card className="border-slate-200 shadow-sm">
+            <CardContent className="p-0 sm:p-2">
+              <div className={EXCEL_TABLE_WRAP}>
+                <table className={EXCEL_TABLE_BASE}>
+                  <thead>
+                    <tr>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[132px] whitespace-nowrap`}>Дата</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[100px] whitespace-nowrap`}>Сотрудник</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[120px] whitespace-nowrap`}>Действие</th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[200px]`}>Товар / документ</th>
+                      <th className={`${STATIC_HEADER_BASE} w-[88px] text-right tabular-nums`}>Кол-во</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ops.map((ev, idx) => {
+                      const rowBg = excelRowBg(idx, false);
+                      const cell = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${rowBg}`;
+                      return (
+                        <tr key={ev.id}>
+                          <td className={`${cell} whitespace-nowrap tabular-nums`}>
+                            {format(parseISO(ev.dateIso), "d MMM yyyy HH:mm", { locale: ru })}
+                          </td>
+                          <td className={`${cell} whitespace-nowrap`}>{ev.actor}</td>
+                          <td className={`${cell} whitespace-nowrap`}>{ev.action}</td>
+                          <td className={`${cell} max-w-[320px] whitespace-nowrap`}>{ev.productLabel}</td>
+                          <td className={`${cell} text-right tabular-nums font-medium`}>
+                            {ev.quantity.toLocaleString("ru-RU")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
