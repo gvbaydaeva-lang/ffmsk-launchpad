@@ -33,7 +33,7 @@ import {
   useUpdateLegalEntitySettings,
 } from "@/hooks/useWmsMock";
 import { persistOutboundDurably } from "@/services/mockOutbound";
-import type { OutboundShipment, ProductCatalogItem } from "@/types/domain";
+import type { Marketplace, OutboundShipment, ProductCatalogItem } from "@/types/domain";
 import { toast } from "sonner";
 
 const TEMPLATE_HEADERS = [
@@ -74,6 +74,7 @@ type InboundRowDraft = {
 };
 
 type OutboundRowDraft = {
+  productName: string;
   supplierArticle: string;
   barcode: string;
   size: string;
@@ -82,6 +83,30 @@ type OutboundRowDraft = {
   plannedUnits: string;
   factualUnits: string;
 };
+
+function buildOutboundRowDraftsFromShipments(
+  outboundRowsForUi: OutboundShipment[],
+  entityCatalogRows: ProductCatalogItem[],
+  globalCatalog: ProductCatalogItem[] | undefined,
+): Record<string, OutboundRowDraft> {
+  const byEntity = new Map(entityCatalogRows.map((p) => [p.id, p]));
+  const byGlobal = new Map((globalCatalog ?? []).map((p) => [p.id, p]));
+  const next: Record<string, OutboundRowDraft> = {};
+  for (const out of outboundRowsForUi) {
+    const product = byEntity.get(out.productId) ?? byGlobal.get(out.productId) ?? null;
+    next[out.id] = {
+      productName: (product?.name || out.importName || "").trim() || out.importName || "",
+      supplierArticle: (product?.supplierArticle || out.importArticle || "").trim() || out.importArticle || "",
+      barcode: (product?.barcode || out.importBarcode || "").trim() || out.importBarcode || "",
+      size: (product?.size || out.importSize || "").trim() || out.importSize || "",
+      color: (product?.color || out.importColor || "").trim() || out.importColor || "",
+      marketplace: out.marketplace,
+      plannedUnits: String(out.plannedUnits),
+      factualUnits: String(out.shippedUnits ?? out.packedUnits ?? 0),
+    };
+  }
+  return next;
+}
 
 type InboundImportPreviewRow = {
   name: string;
@@ -93,6 +118,7 @@ type InboundImportPreviewRow = {
 };
 
 type OutboundImportPreviewRow = {
+  name: string;
   barcode: string;
   supplierArticle: string;
   color: string;
@@ -100,6 +126,22 @@ type OutboundImportPreviewRow = {
   plannedUnits: number;
   sourceWarehouse: string;
   marketplace: "wb" | "ozon" | "yandex";
+};
+
+type OutboundMatrixCell = { shipments: OutboundShipment[]; planned: number; fact: number };
+type OutboundMatrixLine = {
+  key: string;
+  /** Первая строка отгрузки в группе — черновики названия/артикула вешаем на неё */
+  leaderShipmentId: string;
+  name: string;
+  article: string;
+  barcode: string;
+  color: string;
+  size: string;
+  marketplace: Marketplace;
+  byWarehouse: Map<string, OutboundMatrixCell>;
+  totalPlan: number;
+  totalFact: number;
 };
 
 function text(v: unknown) {
@@ -145,10 +187,36 @@ function digitsOnly(value: string) {
 function orphanProductIdForImport(entityId: string, row: OutboundImportPreviewRow): string {
   const b = normalizeCode(row.barcode);
   const a = normalizeCode(row.supplierArticle);
-  const w = normalizeCode(row.sourceWarehouse);
-  const key = `${b}|${a}|${w}`.replace(/[^a-z0-9|]+/gi, "").slice(0, 120) || "line";
+  const sz = normalizeCode(row.size);
+  const clr = normalizeCode(row.color);
+  const nm = normalizeCode(row.name);
+  const wh = normalizeCode(row.sourceWarehouse);
+  const key = `${b}|${a}|${sz}|${clr}|${nm}|${wh}`.replace(/[^a-z0-9|]+/gi, "").slice(0, 160) || "line";
   return `orphan:${entityId.trim()}:${key}`;
 }
+
+function matrixLineKey(sh: OutboundShipment, product: ProductCatalogItem | null): string {
+  const article = (sh.importArticle || product?.supplierArticle || "").trim().toLowerCase();
+  const barcode = (sh.importBarcode || product?.barcode || "").trim().toLowerCase();
+  const size = (sh.importSize || product?.size || "").trim().toLowerCase();
+  const color = (sh.importColor || product?.color || "").trim().toLowerCase();
+  const name = (sh.importName || product?.name || "").trim().toLowerCase();
+  if (!sh.productId.startsWith("orphan:")) {
+    return `c:${sh.productId}`;
+  }
+  return `o:${barcode}|${article}|${size}|${color}|${name}`;
+}
+
+const WAREHOUSE_HEADER_CLASSES = [
+  "border-b border-amber-300/70 bg-amber-200/95 text-amber-950",
+  "border-b border-orange-300/70 bg-orange-200/95 text-orange-950",
+  "border-b border-emerald-300/70 bg-emerald-200/95 text-emerald-950",
+  "border-b border-cyan-300/70 bg-cyan-200/95 text-cyan-950",
+  "border-b border-sky-300/70 bg-sky-200/95 text-sky-950",
+  "border-b border-violet-300/70 bg-violet-200/95 text-violet-950",
+] as const;
+
+const STATIC_HEADER_BASE = "border-b border-r border-slate-300/80 bg-teal-100/95 px-2 py-2 text-left font-semibold text-slate-800";
 
 function findCatalogProductForOutbound(
   row: { barcode: string; supplierArticle: string },
@@ -266,7 +334,8 @@ const LegalEntityDetailsPage = () => {
   const [rowDrafts, setRowDrafts] = React.useState<Record<string, RowDraft>>({});
   const [catalogEditingRows, setCatalogEditingRows] = React.useState<Record<string, boolean>>({});
   const [inboundEditingRows, setInboundEditingRows] = React.useState<Record<string, boolean>>({});
-  const [outboundEditingRows, setOutboundEditingRows] = React.useState<Record<string, boolean>>({});
+  /** Режим правки плана и полей отгрузки в матрице + поля коробов в сайдбаре упаковщика */
+  const [shippingMatrixEdit, setShippingMatrixEdit] = React.useState(false);
   const [inboundRowDrafts, setInboundRowDrafts] = React.useState<Record<string, InboundRowDraft>>({});
   const [outboundRowDrafts, setOutboundRowDrafts] = React.useState<Record<string, OutboundRowDraft>>({});
   const [shippingSearch, setShippingSearch] = React.useState("");
@@ -393,22 +462,7 @@ const LegalEntityDetailsPage = () => {
   }, [inboundRows]);
 
   React.useEffect(() => {
-    const byEntity = new Map(rows.map((p) => [p.id, p]));
-    const byGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
-    const next: Record<string, OutboundRowDraft> = {};
-    for (const out of outboundRowsForUi) {
-      const product = byEntity.get(out.productId) ?? byGlobal.get(out.productId) ?? null;
-      next[out.id] = {
-        supplierArticle: (product?.supplierArticle || out.importArticle || "").trim() || out.importArticle || "",
-        barcode: (product?.barcode || out.importBarcode || "").trim() || out.importBarcode || "",
-        size: product?.size ?? "",
-        color: product?.color ?? "",
-        marketplace: out.marketplace,
-        plannedUnits: String(out.plannedUnits),
-        factualUnits: String(out.shippedUnits ?? out.packedUnits ?? 0),
-      };
-    }
-    setOutboundRowDrafts(next);
+    setOutboundRowDrafts(buildOutboundRowDraftsFromShipments(outboundRowsForUi, rows, catalog));
   }, [outboundRowsForUi, rows, catalog]);
 
   React.useEffect(() => {
@@ -647,7 +701,7 @@ const LegalEntityDetailsPage = () => {
     setInboundEditingRows((s) => ({ ...s, [key]: false }));
   };
 
-  const onSaveOutboundRow = async (shipmentId: string) => {
+  const onSaveOutboundRow = async (shipmentId: string, opts?: { quiet?: boolean }) => {
     const draft = outboundRowDrafts[shipmentId];
     const source = outboundRowsForUi.find((x) => x.id === shipmentId);
     if (!draft || !source) return;
@@ -658,13 +712,15 @@ const LegalEntityDetailsPage = () => {
         plannedUnits: Number(draft.plannedUnits) || 0,
         packedUnits: Number(draft.factualUnits) || 0,
         shippedUnits: Number(draft.factualUnits) || null,
+        importName: draft.productName.trim() || undefined,
         importArticle: draft.supplierArticle.trim() || undefined,
         importBarcode: draft.barcode.trim() || undefined,
+        importSize: draft.size.trim() || undefined,
+        importColor: draft.color.trim() || undefined,
       },
     });
     if (source.productId.startsWith("orphan:")) {
-      toast.success("Строка отгрузки сохранена (без привязки к каталогу)");
-      setOutboundEditingRows((s) => ({ ...s, [shipmentId]: false }));
+      if (!opts?.quiet) toast.success("Строка отгрузки сохранена (без привязки к каталогу)");
       return;
     }
     const product = rows.find((p) => p.id === source.productId);
@@ -679,9 +735,48 @@ const LegalEntityDetailsPage = () => {
         },
       });
     }
-    toast.success("Строка отгрузки сохранена");
-    setOutboundEditingRows((s) => ({ ...s, [shipmentId]: false }));
+    if (!opts?.quiet) toast.success("Строка отгрузки сохранена");
   };
+
+  const handleSaveAllShippingDrafts = async () => {
+    for (const sh of outboundRowsForUi) {
+      if (outboundRowDrafts[sh.id]) await onSaveOutboundRow(sh.id, { quiet: true });
+    }
+    setShippingMatrixEdit(false);
+    toast.success("Отгрузки сохранены");
+  };
+
+  const cancelShippingMatrixEdit = () => {
+    setOutboundRowDrafts(buildOutboundRowDraftsFromShipments(outboundRowsForUi, rows, catalog));
+    setShippingMatrixEdit(false);
+  };
+
+  const patchOutboundMatrixLineDrafts = (line: OutboundMatrixLine, patch: Partial<OutboundRowDraft>) => {
+    const ids: string[] = [];
+    line.byWarehouse.forEach((c) => c.shipments.forEach((sh) => ids.push(sh.id)));
+    setOutboundRowDrafts((s) => {
+      const next = { ...s };
+      for (const id of ids) {
+        const cur = next[id];
+        if (!cur) continue;
+        next[id] = { ...cur, ...patch };
+      }
+      return next;
+    });
+  };
+
+  const setShipmentDraftPlanned = (shipmentId: string, planned: string) => {
+    setOutboundRowDrafts((s) => {
+      const cur = s[shipmentId];
+      if (!cur) return s;
+      return { ...s, [shipmentId]: { ...cur, plannedUnits: planned } };
+    });
+  };
+
+  const effOutboundPlanned = (sh: OutboundShipment) =>
+    Number(outboundRowDrafts[sh.id]?.plannedUnits ?? sh.plannedUnits) || 0;
+  const effOutboundFact = (sh: OutboundShipment) =>
+    Number(outboundRowDrafts[sh.id]?.factualUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
 
   const beepError = () => {
     if (typeof window === "undefined") return;
@@ -700,7 +795,6 @@ const LegalEntityDetailsPage = () => {
   };
 
   const shippingRows = React.useMemo(() => {
-    console.log("RENDER ROWS:", outboundRowsForUi);
     const productByEntity = new Map(rows.map((p) => [p.id, p]));
     const productByGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
     const s = shippingSearch.trim().toLowerCase();
@@ -718,12 +812,15 @@ const LegalEntityDetailsPage = () => {
           (product?.barcode || "").trim() ||
           (x.importBarcode || "").trim() ||
           "";
+        const name =
+          (draft?.productName || "").trim() || (product?.name || "").trim() || (x.importName || "").trim() || "";
         return {
           shipment: x,
+          name,
           article,
           barcode,
-          size: draft?.size ?? product?.size ?? "",
-          color: draft?.color ?? product?.color ?? "",
+          size: (draft?.size || "").trim() || product?.size || x.importSize || "",
+          color: (draft?.color || "").trim() || product?.color || x.importColor || "",
           marketplace: draft?.marketplace ?? x.marketplace,
           warehouse: x.sourceWarehouse,
           plan: Number(draft?.plannedUnits ?? x.plannedUnits ?? 0) || 0,
@@ -732,7 +829,9 @@ const LegalEntityDetailsPage = () => {
       })
       .filter((r) => {
         if (!s) return true;
-        return [r.article, r.barcode, r.size, r.color, r.marketplace, r.warehouse].some((v) => v.toLowerCase().includes(s));
+        return [r.name, r.article, r.barcode, r.size, r.color, r.marketplace, r.warehouse].some((v) =>
+          String(v).toLowerCase().includes(s),
+        );
       });
     return [...arr].sort((a, b) => {
       if (shippingSort === "plan") return a.plan - b.plan;
@@ -740,6 +839,84 @@ const LegalEntityDetailsPage = () => {
       return String(a[shippingSort]).localeCompare(String(b[shippingSort]), "ru");
     });
   }, [outboundRowsForUi, outboundRowDrafts, rows, catalog, shippingSearch, shippingSort]);
+
+  const shippingMatrix = React.useMemo(() => {
+    const productByEntity = new Map(rows.map((p) => [p.id, p]));
+    const productByGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
+    const warehousesSet = new Set<string>();
+    const lines = new Map<string, OutboundMatrixLine>();
+    const search = shippingSearch.trim().toLowerCase();
+
+    for (const sh of outboundRowsForUi) {
+      warehousesSet.add(sh.sourceWarehouse || "—");
+      const product = productByEntity.get(sh.productId) ?? productByGlobal.get(sh.productId) ?? null;
+      const key = matrixLineKey(sh, product);
+      const name = sh.importName || product?.name || "";
+      const article = sh.importArticle || product?.supplierArticle || "";
+      const barcode = sh.importBarcode || product?.barcode || "";
+      const color = sh.importColor || product?.color || "";
+      const size = sh.importSize || product?.size || "";
+      const wh = sh.sourceWarehouse || "—";
+
+      let line = lines.get(key);
+      if (!line) {
+        line = {
+          key,
+          leaderShipmentId: sh.id,
+          name,
+          article,
+          barcode,
+          color,
+          size,
+          marketplace: sh.marketplace,
+          byWarehouse: new Map(),
+          totalPlan: 0,
+          totalFact: 0,
+        };
+        lines.set(key, line);
+      }
+      const cell = line.byWarehouse.get(wh) ?? { shipments: [], planned: 0, fact: 0 };
+      cell.shipments.push(sh);
+      cell.planned += sh.plannedUnits;
+      cell.fact += sh.shippedUnits ?? sh.packedUnits ?? 0;
+      line.byWarehouse.set(wh, cell);
+      line.totalPlan += sh.plannedUnits;
+      line.totalFact += sh.shippedUnits ?? sh.packedUnits ?? 0;
+    }
+
+    const warehouses = Array.from(warehousesSet).sort((a, b) => a.localeCompare(b, "ru"));
+    let matrixLines = Array.from(lines.values());
+
+    if (search) {
+      matrixLines = matrixLines.filter(
+        (line) =>
+          [line.name, line.article, line.barcode, line.color, line.size, line.marketplace].some((f) =>
+            String(f).toLowerCase().includes(search),
+          ) || Array.from(line.byWarehouse.keys()).some((w) => w.toLowerCase().includes(search)),
+      );
+    }
+
+    matrixLines.sort((a, b) => {
+      if (shippingSort === "plan") return a.totalPlan - b.totalPlan;
+      if (shippingSort === "fact") return a.totalFact - b.totalFact;
+      if (shippingSort === "barcode") return a.barcode.localeCompare(b.barcode, "ru");
+      if (shippingSort === "size") return a.size.localeCompare(b.size, "ru");
+      if (shippingSort === "color") return a.color.localeCompare(b.color, "ru");
+      if (shippingSort === "marketplace") return a.marketplace.localeCompare(b.marketplace, "ru");
+      if (shippingSort === "warehouse") {
+        const wa = Array.from(a.byWarehouse.keys())
+          .sort((x, y) => x.localeCompare(y, "ru"))
+          .join("|");
+        const wb = Array.from(b.byWarehouse.keys())
+          .sort((x, y) => x.localeCompare(y, "ru"))
+          .join("|");
+        return wa.localeCompare(wb, "ru");
+      }
+      return a.article.localeCompare(b.article, "ru");
+    });
+
+    return { warehouses, lines: matrixLines };
+  }, [outboundRowsForUi, rows, catalog, shippingSearch, shippingSort]);
 
   const onAddBox = async (shipmentId: string) => {
     const row = outboundRowsForUi.find((x) => x.id === shipmentId);
@@ -1013,6 +1190,7 @@ const LegalEntityDetailsPage = () => {
       const mpRaw = text(pickByAliases(row, ["Маркетплейс", "Площадка"])).toLowerCase();
       const marketplace = mpRaw === "ozon" ? "ozon" : mpRaw === "yandex" ? "yandex" : "wb";
       return {
+        name: text(pickByAliases(row, ["Название", "Название товара", "Name", "name"])),
         barcode: text(
           pickByAliases(row, [
             "Баркод",
@@ -1135,7 +1313,14 @@ const LegalEntityDetailsPage = () => {
       }
       const prev = deduped.get(key);
       if (!prev) deduped.set(key, { ...row });
-      else deduped.set(key, { ...prev, plannedUnits: prev.plannedUnits + (row.plannedUnits || 0) });
+      else
+        deduped.set(key, {
+          ...prev,
+          plannedUnits: prev.plannedUnits + (row.plannedUnits || 0),
+          name: prev.name || row.name,
+          size: prev.size || row.size,
+          color: prev.color || row.color,
+        });
     }
     const stockLeft = new Map<string, number>();
     for (const p of rows) stockLeft.set(p.id, p.stockOnHand);
@@ -1158,8 +1343,11 @@ const LegalEntityDetailsPage = () => {
           patch: {
             plannedUnits: existing.plannedUnits + planned,
             marketplace: row.marketplace,
+            importName: text(row.name) || existing.importName,
             importArticle: text(row.supplierArticle) || existing.importArticle,
             importBarcode: text(row.barcode) || existing.importBarcode,
+            importSize: text(row.size) || existing.importSize,
+            importColor: text(row.color) || existing.importColor,
           },
         });
         mergedWithExisting += 1;
@@ -1170,8 +1358,11 @@ const LegalEntityDetailsPage = () => {
         productId: orphanPid,
         assignmentId,
         assignmentNo,
+        importName: text(row.name) || undefined,
         importArticle: text(row.supplierArticle) || undefined,
         importBarcode: text(row.barcode) || undefined,
+        importSize: text(row.size) || undefined,
+        importColor: text(row.color) || undefined,
         marketplace: row.marketplace,
         sourceWarehouse: row.sourceWarehouse,
         shippingMethod: "fbo",
@@ -1224,8 +1415,11 @@ const LegalEntityDetailsPage = () => {
           patch: {
             plannedUnits: existing.plannedUnits + qty,
             marketplace: row.marketplace,
+            importName: text(row.name) || existing.importName,
             importArticle: text(row.supplierArticle) || existing.importArticle,
             importBarcode: text(row.barcode) || existing.importBarcode,
+            importSize: text(row.size) || existing.importSize,
+            importColor: text(row.color) || existing.importColor,
           },
         });
         mergedWithExisting += 1;
@@ -1236,8 +1430,11 @@ const LegalEntityDetailsPage = () => {
         productId: product.id,
         assignmentId,
         assignmentNo,
+        importName: text(row.name) || product.name || undefined,
         importArticle: text(row.supplierArticle) || product.supplierArticle || undefined,
         importBarcode: text(row.barcode) || product.barcode || undefined,
+        importSize: text(row.size) || product.size || undefined,
+        importColor: text(row.color) || product.color || undefined,
         marketplace: row.marketplace,
         sourceWarehouse: row.sourceWarehouse,
         shippingMethod: "fbo",
@@ -1944,7 +2141,9 @@ const LegalEntityDetailsPage = () => {
               className="max-w-lg"
             />
             <Select value={shippingSort} onValueChange={(v) => setShippingSort(v as typeof shippingSort)}>
-              <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-[220px]">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="article">Сортировка: Артикул</SelectItem>
                 <SelectItem value="barcode">Сортировка: Баркод</SelectItem>
@@ -1956,227 +2155,304 @@ const LegalEntityDetailsPage = () => {
                 <SelectItem value="fact">Сортировка: Факт</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" onClick={exportPackingExcelFromBoxes}>Экспорт shk-excel</Button>
+            <Button variant="outline" onClick={exportPackingExcelFromBoxes}>
+              Экспорт shk-excel
+            </Button>
+            {canChangeOutboundStatus(role) &&
+              (!shippingMatrixEdit ? (
+                <Button variant="secondary" onClick={() => setShippingMatrixEdit(true)}>
+                  Редактировать
+                </Button>
+              ) : (
+                <>
+                  <Button onClick={() => void handleSaveAllShippingDrafts()} disabled={isUpdatingOutbound}>
+                    {isUpdatingOutbound ? "Сохранение..." : "Сохранить всё"}
+                  </Button>
+                  <Button variant="outline" onClick={() => cancelShippingMatrixEdit()} disabled={isUpdatingOutbound}>
+                    Отмена
+                  </Button>
+                </>
+              ))}
           </div>
-          <Card className="border-slate-200">
-            <CardContent className="p-0 sm:p-4">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Артикул</TableHead>
-                    <TableHead>Баркод</TableHead>
-                    <TableHead>Размер</TableHead>
-                    <TableHead>Цвет</TableHead>
-                    <TableHead>Склад</TableHead>
-                    <TableHead>Площадка</TableHead>
-                    <TableHead className="text-right">План</TableHead>
-                    <TableHead className="text-right">Факт</TableHead>
-                    <TableHead className="text-right">Действие</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch">
+            <Card className="min-w-0 flex-1 border-slate-200 shadow-sm">
+              <CardContent className="p-0 sm:p-2">
+                <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
+                  <table className="w-full border-collapse text-[11px] leading-tight text-slate-800">
+                    <thead>
+                      <tr>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[200px] whitespace-nowrap`}>Название</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`}>Артикул</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap font-mono`}>Баркод</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[72px] whitespace-nowrap`}>Цвет</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[56px] whitespace-nowrap`}>Размер</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[64px] whitespace-nowrap`}>МП</th>
+                        <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>План всего</th>
+                        <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>Факт всего</th>
+                        {shippingMatrix.warehouses.map((wh, wi) => (
+                          <th
+                            key={wh}
+                            className={`${WAREHOUSE_HEADER_CLASSES[wi % WAREHOUSE_HEADER_CLASSES.length]} border-r border-slate-300/60 px-2 py-2 text-center font-semibold whitespace-nowrap min-w-[88px]`}
+                          >
+                            {wh}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shippingMatrix.lines.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={8 + shippingMatrix.warehouses.length}
+                            className="border-b border-slate-200 px-3 py-8 text-center text-muted-foreground"
+                          >
+                            Нет строк отгрузки для отображения
+                          </td>
+                        </tr>
+                      ) : (
+                        shippingMatrix.lines.map((line, idx) => {
+                          const ld = outboundRowDrafts[line.leaderShipmentId];
+                          let rowAlert = false;
+                          line.byWarehouse.forEach((c) => {
+                            c.shipments.forEach((sh) => {
+                              if (scanErrorByShipment[sh.id]) rowAlert = true;
+                              if (effOutboundFact(sh) > effOutboundPlanned(sh)) rowAlert = true;
+                            });
+                          });
+                          let totalPlanDraft = 0;
+                          let totalFactDraft = 0;
+                          line.byWarehouse.forEach((c) => {
+                            c.shipments.forEach((sh) => {
+                              totalPlanDraft += effOutboundPlanned(sh);
+                              totalFactDraft += effOutboundFact(sh);
+                            });
+                          });
+                          const zebra = idx % 2 === 0 ? "bg-white" : "bg-slate-50/95";
+                          const rowBg = rowAlert ? "bg-red-100/85 dark:bg-red-950/35" : zebra;
+                          const cellBase = `border-b border-r border-slate-200 px-2 py-1.5 align-middle ${rowBg}`;
+                          const mpLabel =
+                            line.marketplace === "wb" ? "WB" : line.marketplace === "ozon" ? "Ozon" : "Яндекс";
+                          return (
+                            <tr key={line.key}>
+                              <td className={`${cellBase} whitespace-nowrap`}>
+                                {shippingMatrixEdit ? (
+                                  <Input
+                                    className="h-7 min-w-[180px] border-slate-300 bg-white px-1.5 text-[11px]"
+                                    value={ld?.productName ?? ""}
+                                    onChange={(e) => patchOutboundMatrixLineDrafts(line, { productName: e.target.value })}
+                                  />
+                                ) : (
+                                  <span className="block whitespace-nowrap">{(ld?.productName ?? line.name) || "—"}</span>
+                                )}
+                              </td>
+                              <td className={`${cellBase} whitespace-nowrap`}>
+                                {shippingMatrixEdit ? (
+                                  <Input
+                                    className="h-7 min-w-[120px] border-slate-300 bg-white px-1.5 text-[11px]"
+                                    value={ld?.supplierArticle ?? ""}
+                                    onChange={(e) => patchOutboundMatrixLineDrafts(line, { supplierArticle: e.target.value })}
+                                  />
+                                ) : (
+                                  <span className="block whitespace-nowrap">{(ld?.supplierArticle ?? line.article) || "—"}</span>
+                                )}
+                              </td>
+                              <td className={`${cellBase} whitespace-nowrap font-mono`}>
+                                {shippingMatrixEdit ? (
+                                  <Input
+                                    className="h-7 min-w-[140px] border-slate-300 bg-white px-1.5 text-[11px] font-mono"
+                                    value={ld?.barcode ?? ""}
+                                    onChange={(e) => patchOutboundMatrixLineDrafts(line, { barcode: e.target.value })}
+                                  />
+                                ) : (
+                                  <span className="block whitespace-nowrap">{(ld?.barcode ?? line.barcode) || "—"}</span>
+                                )}
+                              </td>
+                              <td className={`${cellBase} whitespace-nowrap text-center`}>
+                                {shippingMatrixEdit ? (
+                                  <Input
+                                    className="h-7 w-full min-w-[64px] border-slate-300 bg-white px-1 text-[11px] text-center"
+                                    value={ld?.color ?? ""}
+                                    onChange={(e) => patchOutboundMatrixLineDrafts(line, { color: e.target.value })}
+                                  />
+                                ) : (
+                                  <span>{(ld?.color ?? line.color) || "—"}</span>
+                                )}
+                              </td>
+                              <td className={`${cellBase} whitespace-nowrap text-center`}>
+                                {shippingMatrixEdit ? (
+                                  <Input
+                                    className="h-7 w-full min-w-[48px] border-slate-300 bg-white px-1 text-[11px] text-center"
+                                    value={ld?.size ?? ""}
+                                    onChange={(e) => patchOutboundMatrixLineDrafts(line, { size: e.target.value })}
+                                  />
+                                ) : (
+                                  <span>{(ld?.size ?? line.size) || "—"}</span>
+                                )}
+                              </td>
+                              <td className={`${cellBase} text-center`}>
+                                {shippingMatrixEdit ? (
+                                  <Select
+                                    value={ld?.marketplace ?? line.marketplace}
+                                    onValueChange={(v) =>
+                                      patchOutboundMatrixLineDrafts(line, { marketplace: v as "wb" | "ozon" | "yandex" })
+                                    }
+                                  >
+                                    <SelectTrigger className="h-7 min-w-[72px] px-1 text-[11px]">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="wb">WB</SelectItem>
+                                      <SelectItem value="ozon">Ozon</SelectItem>
+                                      <SelectItem value="yandex">Яндекс</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                ) : (
+                                  mpLabel
+                                )}
+                              </td>
+                              <td className={`${cellBase} text-center tabular-nums font-medium`}>{totalPlanDraft}</td>
+                              <td className={`${cellBase} text-center tabular-nums`}>{totalFactDraft}</td>
+                              {shippingMatrix.warehouses.map((wh) => {
+                                const cell = line.byWarehouse.get(wh);
+                                const whCell = `${cellBase} text-center tabular-nums`;
+                                if (!cell || cell.shipments.length === 0) {
+                                  return (
+                                    <td key={wh} className={whCell}>
+                                      —
+                                    </td>
+                                  );
+                                }
+                                const sumPlan = cell.shipments.reduce((s, sh) => s + effOutboundPlanned(sh), 0);
+                                if (shippingMatrixEdit && cell.shipments.length === 1) {
+                                  const sh = cell.shipments[0];
+                                  return (
+                                    <td key={wh} className={whCell}>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                        value={String(effOutboundPlanned(sh))}
+                                        onChange={(e) => setShipmentDraftPlanned(sh.id, e.target.value)}
+                                      />
+                                    </td>
+                                  );
+                                }
+                                return (
+                                  <td key={wh} className={whCell}>
+                                    {sumPlan}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <aside className="w-full shrink-0 xl:w-[400px] xl:max-w-[42vw]">
+              <Card className="border-slate-200 shadow-sm xl:sticky xl:top-4">
+                <CardHeader className="py-3">
+                  <CardTitle className="text-sm font-semibold">Упаковщик</CardTitle>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    Сканирование и короба — рядом с таблицей, без прокрутки вниз страницы.
+                  </p>
+                </CardHeader>
+                <CardContent className="max-h-[min(70vh,720px)] space-y-3 overflow-y-auto pr-1 text-[11px]">
                   {shippingRows.map((row) => {
                     const x = row.shipment;
-                    const isEditing = Boolean(outboundEditingRows[x.id]);
+                    const boxes = x.boxes ?? [];
+                    const activeBox = boxes.find((b) => b.id === x.activeBoxId) ?? null;
                     return (
-                    <TableRow
-                      key={x.id}
-                      className={
-                        scanErrorByShipment[x.id] || x.packedUnits > x.plannedUnits ? "bg-red-100 dark:bg-red-950/40" : ""
-                      }
-                    >
-                      <TableCell>
-                        <Input
-                          className="h-8"
-                          disabled={!isEditing}
-                          value={row.article}
-                          onChange={(e) =>
-                            setOutboundRowDrafts((s) => ({
-                              ...s,
-                              [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), supplierArticle: e.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          className="h-8 font-mono"
-                          disabled={!isEditing}
-                          value={row.barcode}
-                          onChange={(e) =>
-                            setOutboundRowDrafts((s) => ({
-                              ...s,
-                              [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), barcode: e.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          className="h-8"
-                          disabled={!isEditing}
-                          value={row.size}
-                          onChange={(e) =>
-                            setOutboundRowDrafts((s) => ({
-                              ...s,
-                              [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), size: e.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          className="h-8"
-                          disabled={!isEditing}
-                          value={row.color}
-                          onChange={(e) =>
-                            setOutboundRowDrafts((s) => ({
-                              ...s,
-                              [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), color: e.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>{x.sourceWarehouse}</TableCell>
-                      <TableCell>
-                        <Select
-                          value={row.marketplace}
-                          onValueChange={(v) =>
-                            setOutboundRowDrafts((s) => ({
-                              ...s,
-                              [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), marketplace: v as "wb" | "ozon" | "yandex" },
-                            }))
-                          }
-                          disabled={!isEditing}
-                        >
-                          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="wb">WB</SelectItem>
-                            <SelectItem value="ozon">Ozon</SelectItem>
-                            <SelectItem value="yandex">Яндекс</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <Input
-                          className="h-8 w-24 text-right"
-                          type="number"
-                          min={0}
-                          disabled={!isEditing}
-                          value={String(row.plan)}
-                          onChange={(e) =>
-                            setOutboundRowDrafts((s) => ({
-                              ...s,
-                              [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), plannedUnits: e.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <Input
-                          className="h-8 w-24 text-right"
-                          type="number"
-                          min={0}
-                          disabled={!isEditing}
-                          value={String(row.fact)}
-                          onChange={(e) =>
-                            setOutboundRowDrafts((s) => ({
-                              ...s,
-                              [x.id]: { ...(s[x.id] ?? { supplierArticle: "", barcode: "", size: "", color: "", marketplace: x.marketplace, plannedUnits: "0", factualUnits: "0" }), factualUnits: e.target.value },
-                            }))
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {!isEditing ? (
-                          <Button size="sm" variant="outline" disabled={!canChangeOutboundStatus(role)} onClick={() => setOutboundEditingRows((s) => ({ ...s, [x.id]: true }))}>
-                            Редактировать
+                      <div key={`pack-${x.id}`} className="rounded-md border border-slate-200 bg-slate-50/50 p-2.5">
+                        <div className="mb-2 space-y-1">
+                          <p className="whitespace-nowrap font-medium text-slate-800">
+                            {row.article || "—"} · <span className="font-mono">{row.barcode || "—"}</span>
+                          </p>
+                          <p className="text-muted-foreground">
+                            План: {row.plan} · Упаковано: {x.packedUnits} · {x.sourceWarehouse}
+                          </p>
+                        </div>
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void onAddBox(x.id)}>
+                            Добавить короб
                           </Button>
-                        ) : (
-                          <Button size="sm" onClick={() => void onSaveOutboundRow(x.id)} disabled={isUpdatingOutbound}>
-                            Сохранить
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  )})}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200">
-            <CardHeader><CardTitle className="text-base">Упаковщик (пошагово)</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              {shippingRows.map((row) => {
-                const x = row.shipment;
-                const boxes = x.boxes ?? [];
-                const activeBox = boxes.find((b) => b.id === x.activeBoxId) ?? null;
-                return (
-                  <div key={`pack-${x.id}`} className="rounded-md border p-3">
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm">
-                        {row.article || "—"} · {row.barcode || "—"} · План: {row.plan} · Упаковано: {x.packedUnits}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" onClick={() => void onAddBox(x.id)}>Добавить короб</Button>
-                        <Input
-                          className="h-8 w-48 font-mono"
-                          placeholder={activeBox ? "Скан баркода" : "Сначала «Открыть» короб"}
-                          disabled={!activeBox}
-                          value={scanDraftByShipment[x.id] ?? ""}
-                          onChange={(e) => setScanDraftByShipment((s) => ({ ...s, [x.id]: e.target.value }))}
-                        />
-                        <Button size="sm" onClick={() => void onScanIntoActiveBox(x.id)}>Сканировать в активный короб</Button>
-                      </div>
-                    </div>
-                    {activeBox && <p className="mb-2 text-xs text-slate-500">Активный короб: {activeBox.id}</p>}
-                    <div className="space-y-2">
-                      {boxes.map((box) => (
-                        <div key={box.id} className="grid gap-2 rounded border p-2 md:grid-cols-[1fr_1fr_1fr_auto_auto]">
                           <Input
-                            disabled={!outboundEditingRows[x.id]}
-                            placeholder="ШК короба (из ЛК)"
-                            value={box.clientBoxBarcode}
-                            onChange={(e) =>
-                              void updateOutboundDraft({
-                                id: x.id,
-                                patch: {
-                                  boxes: boxes.map((b) => (b.id === box.id ? { ...b, clientBoxBarcode: e.target.value } : b)),
-                                },
-                              })
-                            }
+                            className="h-7 min-w-[140px] flex-1 font-mono text-[11px]"
+                            placeholder={activeBox ? "Скан баркода" : "Сначала «Открыть» короб"}
+                            disabled={!activeBox}
+                            value={scanDraftByShipment[x.id] ?? ""}
+                            onChange={(e) => setScanDraftByShipment((s) => ({ ...s, [x.id]: e.target.value }))}
                           />
-                          <Input
-                            disabled={!outboundEditingRows[x.id]}
-                            placeholder="Номер поставки"
-                            value={x.supplyNumber}
-                            onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { supplyNumber: e.target.value } })}
-                          />
-                          <Input
-                            disabled={!outboundEditingRows[x.id]}
-                            placeholder="ШК пропуска"
-                            value={x.gateBarcode}
-                            onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { gateBarcode: e.target.value } })}
-                          />
-                          <Button size="sm" variant="outline" onClick={() => void updateOutboundDraft({ id: x.id, patch: { activeBoxId: box.id } })}>
-                            Открыть
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setQrBoxPayload({ barcode: box.clientBoxBarcode || box.id, warehouse: x.sourceWarehouse })}
-                          >
-                            QR
+                          <Button size="sm" className="h-7 text-[11px]" onClick={() => void onScanIntoActiveBox(x.id)}>
+                            В короб
                           </Button>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
+                        {activeBox && <p className="mb-2 text-[10px] text-slate-500">Активный короб: {activeBox.id}</p>}
+                        <div className="space-y-2">
+                          {boxes.map((box) => (
+                            <div key={box.id} className="grid gap-1.5 rounded border border-slate-200 bg-white p-2">
+                              <Input
+                                disabled={!shippingMatrixEdit}
+                                className="h-7 text-[11px]"
+                                placeholder="ШК короба (из ЛК)"
+                                value={box.clientBoxBarcode}
+                                onChange={(e) =>
+                                  void updateOutboundDraft({
+                                    id: x.id,
+                                    patch: {
+                                      boxes: boxes.map((b) => (b.id === box.id ? { ...b, clientBoxBarcode: e.target.value } : b)),
+                                    },
+                                  })
+                                }
+                              />
+                              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                                <Input
+                                  disabled={!shippingMatrixEdit}
+                                  className="h-7 text-[11px]"
+                                  placeholder="Номер поставки"
+                                  value={x.supplyNumber}
+                                  onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { supplyNumber: e.target.value } })}
+                                />
+                                <Input
+                                  disabled={!shippingMatrixEdit}
+                                  className="h-7 text-[11px]"
+                                  placeholder="ШК пропуска"
+                                  value={x.gateBarcode}
+                                  onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { gateBarcode: e.target.value } })}
+                                />
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-[11px]"
+                                  onClick={() => void updateOutboundDraft({ id: x.id, patch: { activeBoxId: box.id } })}
+                                >
+                                  Открыть
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-[11px]"
+                                  onClick={() => setQrBoxPayload({ barcode: box.clientBoxBarcode || box.id, warehouse: x.sourceWarehouse })}
+                                >
+                                  QR
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            </aside>
+          </div>
         </TabsContent>
 
         <TabsContent value="history">

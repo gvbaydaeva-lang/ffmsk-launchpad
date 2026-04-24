@@ -216,6 +216,9 @@ export type OutboundShipment = {
   /** Подписи из Excel при импорте (если каталог временно не сопоставился) */
   importArticle?: string | null;
   importBarcode?: string | null;
+  importName?: string | null;
+  importSize?: string | null;
+  importColor?: string | null;
   marketplace: Marketplace;
   sourceWarehouse: string;
   shippingMethod: "fbo" | "fbs" | "self";

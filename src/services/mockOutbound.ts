@@ -120,6 +120,9 @@ type OutboundDbRow = {
   assignment_no?: string | null;
   import_article?: string | null;
   import_barcode?: string | null;
+  import_name?: string | null;
+  import_size?: string | null;
+  import_color?: string | null;
 };
 
 function normalizeBoxesFromDb(raw: unknown): OutboundShipment["boxes"] {
@@ -160,6 +163,9 @@ function toDb(row: OutboundShipment): OutboundDbRow {
     assignment_no: row.assignmentNo ?? null,
     import_article: row.importArticle ?? null,
     import_barcode: row.importBarcode ?? null,
+    import_name: row.importName ?? null,
+    import_size: row.importSize ?? null,
+    import_color: row.importColor ?? null,
   };
 }
 
@@ -188,19 +194,31 @@ function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipme
     assignmentNo: row.assignment_no ?? undefined,
     importArticle: row.import_article ?? undefined,
     importBarcode: row.import_barcode ?? undefined,
+    importName: row.import_name ?? undefined,
+    importSize: row.import_size ?? undefined,
+    importColor: row.import_color ?? undefined,
   };
 }
 
 /** Колонки, которых может не быть в старой схеме Supabase */
 function stripExtendedForLegacySupabase(row: OutboundDbRow): Omit<
   OutboundDbRow,
-  "assignment_id" | "assignment_no" | "import_article" | "import_barcode"
+  | "assignment_id"
+  | "assignment_no"
+  | "import_article"
+  | "import_barcode"
+  | "import_name"
+  | "import_size"
+  | "import_color"
 > {
   const {
     assignment_id: _a,
     assignment_no: _n,
     import_article: _ia,
     import_barcode: _ib,
+    import_name: _in,
+    import_size: _is,
+    import_color: _ic,
     ...rest
   } = row;
   return rest;
