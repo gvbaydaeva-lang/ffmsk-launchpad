@@ -125,6 +125,7 @@ const LegalEntityDetailsPage = () => {
   const [open, setOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
   const [printOpen, setPrintOpen] = React.useState(false);
+  const [historyProductId, setHistoryProductId] = React.useState<string | null>(null);
   const [createInboundOpen, setCreateInboundOpen] = React.useState(false);
   const [createOutboundOpen, setCreateOutboundOpen] = React.useState(false);
   const [inboundExcelOpen, setInboundExcelOpen] = React.useState(false);
@@ -204,10 +205,11 @@ const LegalEntityDetailsPage = () => {
     return rows.filter((p) => p.name.toLowerCase().includes(s) || p.barcode.toLowerCase().includes(s));
   }, [rows, productSearch]);
   const copies = Math.max(1, Number(printCopies) || 1);
+  const historyProduct = historyProductId ? rows.find((p) => p.id === historyProductId) ?? null : null;
   const currentTab = searchParams.get("tab") ?? "catalog";
   const kpi = React.useMemo(
     () => ({
-      inTransit: inboundRows.filter((x) => x.status === "ожидается").reduce((s, x) => s + x.expectedUnits, 0),
+      inTransit: inboundRows.filter((x) => x.status !== "принято").reduce((s, x) => s + x.items.reduce((a, it) => a + it.plannedQuantity, 0), 0),
       onStock: rows.reduce((s, x) => s + x.stockOnHand, 0),
       reserved: outboundRows.filter((x) => x.status !== "отгружено").reduce((s, x) => s + x.plannedUnits, 0),
     }),
@@ -343,6 +345,7 @@ const LegalEntityDetailsPage = () => {
           weightKg: patch.weightKg,
           unitsPerPallet: 100,
           stockOnHand: 0,
+          receiptHistory: [],
           barcode: barcode || undefined,
         });
         created += 1;
@@ -374,6 +377,7 @@ const LegalEntityDetailsPage = () => {
       weightKg: num(form.weightKg),
       unitsPerPallet: Number(form.unitsPerPallet) || 100,
       stockOnHand: 0,
+      receiptHistory: [],
     });
     toast.success("Товар добавлен в каталог");
     setOpen(false);
@@ -427,11 +431,24 @@ const LegalEntityDetailsPage = () => {
     if (!entity || !selectedInboundProductId) return toast.error("Выберите товар");
     const qty = Number(inboundDraft.quantity);
     if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
+    const product = rows.find((p) => p.id === selectedInboundProductId);
+    if (!product) return toast.error("Товар не найден");
     await createInbound({
       legalEntityId: entity.id,
       documentNo: inboundDraft.documentNo.trim() || `ПТ-${Date.now().toString().slice(-6)}`,
       supplier: inboundDraft.supplier.trim() || "Клиент",
-      items: [{ productId: selectedInboundProductId, quantity: qty }],
+      items: [
+        {
+          productId: selectedInboundProductId,
+          barcode: product.barcode,
+          supplierArticle: product.supplierArticle,
+          name: product.name,
+          color: product.color,
+          size: product.size,
+          plannedQuantity: qty,
+          factualQuantity: 0,
+        },
+      ],
       destinationWarehouse: inboundDraft.warehouse.trim() || "Склад Коледино",
       marketplace: inboundDraft.marketplace,
       expectedUnits: qty,
@@ -534,7 +551,18 @@ const LegalEntityDetailsPage = () => {
         legalEntityId: entity.id,
         documentNo: docNo,
         supplier: "Импорт Excel",
-        items: [{ productId: product.id, quantity: qty }],
+        items: [
+          {
+            productId: product.id,
+            barcode: product.barcode,
+            supplierArticle: product.supplierArticle,
+            name: product.name,
+            color: product.color,
+            size: product.size,
+            plannedQuantity: qty,
+            factualQuantity: 0,
+          },
+        ],
         destinationWarehouse: "Склад Коледино",
         marketplace: "wb",
         expectedUnits: qty,
@@ -712,6 +740,7 @@ const LegalEntityDetailsPage = () => {
                     <TableHead>Размер</TableHead>
                     <TableHead>Страна</TableHead>
                     <TableHead>Состав</TableHead>
+                    <TableHead className="text-right">Остаток</TableHead>
                     <TableHead>Параметры</TableHead>
                     <TableHead>Фото</TableHead>
                     <TableHead className="text-right">Действие</TableHead>
@@ -733,6 +762,11 @@ const LegalEntityDetailsPage = () => {
                         <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.size ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), size: e.target.value } }))} /></TableCell>
                         <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.countryOfOrigin ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), countryOfOrigin: e.target.value } }))} /></TableCell>
                         <TableCell><Input disabled={!canEditCatalog(role)} className="h-7 text-xs" value={draft?.composition ?? ""} onChange={(e) => setRowDrafts((s) => ({ ...s, [item.id]: { ...(s[item.id] ?? rowToDraft(item)), composition: e.target.value } }))} /></TableCell>
+                        <TableCell className="text-right">
+                          <button type="button" className="text-sm font-medium hover:underline" onClick={() => setHistoryProductId(item.id)}>
+                            {item.stockOnHand}
+                          </button>
+                        </TableCell>
                         <TableCell className="min-w-[240px] space-y-1 text-xs">
                           <p className="text-slate-600">{paramsLabel(item)}</p>
                           <div className="grid grid-cols-4 gap-1">
@@ -828,6 +862,27 @@ const LegalEntityDetailsPage = () => {
                 <Button variant="outline" onClick={() => setPrintOpen(false)}>Закрыть</Button>
                 <Button type="button" className="gap-2" onClick={() => window.print()}><Printer className="h-4 w-4" />Печать</Button>
               </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={Boolean(historyProduct)} onOpenChange={(v) => !v && setHistoryProductId(null)}>
+            <DialogContent>
+              <DialogHeader><DialogTitle>История приходов</DialogTitle></DialogHeader>
+              {historyProduct ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-slate-700">Итого {historyProduct.stockOnHand} шт</p>
+                  <div className="space-y-1">
+                    {historyProduct.receiptHistory.length ? (
+                      historyProduct.receiptHistory.map((h, idx) => (
+                        <p key={`${h.documentNo}-${idx}`} className="text-sm">
+                          {format(parseISO(h.dateIso), "dd.MM.yy", { locale: ru })} — {h.documentNo} — {h.quantity} шт
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-sm text-slate-500">Приходов пока нет</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </DialogContent>
           </Dialog>
         </TabsContent>

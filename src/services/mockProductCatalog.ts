@@ -25,6 +25,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     barcode: "2000000001001",
     unitsPerPallet: 300,
     stockOnHand: 640,
+    receiptHistory: [],
   },
   {
     id: "prd-2",
@@ -46,6 +47,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     barcode: "2000000002002",
     unitsPerPallet: 240,
     stockOnHand: 480,
+    receiptHistory: [],
   },
   {
     id: "prd-3",
@@ -67,6 +69,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     barcode: "2000000003003",
     unitsPerPallet: 180,
     stockOnHand: 900,
+    receiptHistory: [],
   },
   {
     id: "prd-4",
@@ -88,6 +91,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     barcode: "2000000004004",
     unitsPerPallet: 1200,
     stockOnHand: 1200,
+    receiptHistory: [],
   },
   {
     id: "prd-5",
@@ -109,6 +113,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     barcode: "2000000004005",
     unitsPerPallet: 1500,
     stockOnHand: 780,
+    receiptHistory: [],
   },
   {
     id: "prd-6",
@@ -130,6 +135,7 @@ export const PRODUCT_CATALOG_SEED: ProductCatalogItem[] = [
     barcode: "2000000000000",
     unitsPerPallet: 64,
     stockOnHand: 320,
+    receiptHistory: [],
   },
 ];
 
@@ -144,7 +150,16 @@ export function appendMockProductCatalogItem(
 ): ProductCatalogItem[] {
   const id = `prd-${Date.now()}`;
   const generatedBarcode = draft.barcode?.trim() || `${Date.now()}`.slice(-13);
-  return [{ ...draft, category: draft.category || "Без категории", id, barcode: generatedBarcode }, ...current];
+  return [
+    {
+      ...draft,
+      category: draft.category || "Без категории",
+      receiptHistory: draft.receiptHistory ?? [],
+      id,
+      barcode: generatedBarcode,
+    },
+    ...current,
+  ];
 }
 
 export function updateMockProductCatalogItem(

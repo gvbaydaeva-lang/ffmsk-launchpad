@@ -109,8 +109,14 @@ export type InboundSupply = {
 };
 
 export type InboundLineItem = {
-  productId: string;
-  quantity: number;
+  productId?: string;
+  barcode: string;
+  supplierArticle: string;
+  name: string;
+  color: string;
+  size: string;
+  plannedQuantity: number;
+  factualQuantity: number;
 };
 
 /** Тарифы фулфилмента по клиенту (договорные ставки) */
@@ -192,6 +198,11 @@ export type ProductCatalogItem = {
   barcode: string;
   unitsPerPallet: number;
   stockOnHand: number;
+  receiptHistory: Array<{
+    dateIso: string;
+    documentNo: string;
+    quantity: number;
+  }>;
 };
 
 export type OutboundShipment = {

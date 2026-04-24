@@ -43,6 +43,17 @@ const ShippingPage = () => {
     if (legalEntityId === "all") return base;
     return base.filter((x) => x.legalEntityId === legalEntityId);
   }, [data, mp, legalEntityId]);
+  const lineRows = React.useMemo(
+    () =>
+      filtered.flatMap((x) =>
+        Array.from({ length: Math.max(1, x.plannedUnits) }).map((_, idx) => ({
+          ...x,
+          lineId: `${x.id}-${idx + 1}`,
+          lineQty: 1,
+        })),
+      ),
+    [filtered],
+  );
 
   const products = React.useMemo(
     () => (catalog ?? []).filter((x) => x.legalEntityId === form.legalEntityId && x.stockOnHand > 0),
@@ -201,8 +212,8 @@ const ShippingPage = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((row) => (
-                  <TableRow key={row.id}>
+                {lineRows.map((row) => (
+                  <TableRow key={row.lineId}>
                     <TableCell>
                       <Link to={`/legal-entities/${row.legalEntityId}?tab=shipping`} className="hover:underline">
                         {entities?.find((e) => e.id === row.legalEntityId)?.shortName ?? row.legalEntityId}
@@ -213,7 +224,7 @@ const ShippingPage = () => {
                     <TableCell className="font-mono text-xs">{productMap.get(row.productId)?.barcode ?? "—"}</TableCell>
                     <TableCell><MarketplaceBadge marketplace={row.marketplace} /></TableCell>
                     <TableCell className="uppercase text-xs">{row.shippingMethod}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.plannedUnits}</TableCell>
+                    <TableCell className="text-right tabular-nums">{row.lineQty}</TableCell>
                     <TableCell><Badge variant={row.status === "отгружено" ? "default" : "secondary"}>{row.status}</Badge></TableCell>
                     <TableCell>{format(parseISO(row.createdAt), "d MMM yyyy HH:mm", { locale: ru })}</TableCell>
                     <TableCell className="text-right">

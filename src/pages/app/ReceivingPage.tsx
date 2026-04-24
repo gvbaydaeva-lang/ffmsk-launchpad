@@ -29,7 +29,7 @@ import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace } from "@/types/domain";
 
 const ReceivingPage = () => {
-  const { data, isLoading, error, createInbound, isCreating, setInboundStatus, isUpdatingInbound } = useInboundSupplies();
+  const { data, isLoading, error, createInbound, isCreating, setInboundStatus, isUpdatingInbound, updateInboundDraft } = useInboundSupplies();
   const { data: entities } = useLegalEntities();
   const { data: catalog } = useProductCatalog();
   const { legalEntityId } = useAppFilters();
@@ -58,18 +58,22 @@ const ReceivingPage = () => {
     if (legalEntityId === "all") return base;
     return base.filter((r) => r.legalEntityId === legalEntityId);
   }, [data, mp, legalEntityId]);
-  const productMap = React.useMemo(() => new Map((catalog ?? []).map((p) => [p.id, p])), [catalog]);
   const lineRows = React.useMemo(
     () =>
       rows.flatMap((r) =>
         r.items.map((it, idx) => ({
-          lineId: `${r.id}-${it.productId}-${idx}`,
+          lineId: `${r.id}-${it.productId ?? it.barcode}-${idx}`,
           inboundId: r.id,
           documentNo: r.documentNo,
           legalEntityId: r.legalEntityId,
           productId: it.productId,
-          declaredQty: it.quantity,
-          actualQty: r.receivedUnits ?? null,
+          title: it.name,
+          barcode: it.barcode,
+          article: it.supplierArticle,
+          color: it.color,
+          size: it.size,
+          declaredQty: it.plannedQuantity,
+          actualQty: it.factualQuantity,
           status: r.status,
           marketplace: r.marketplace,
           warehouse: r.destinationWarehouse,
@@ -111,7 +115,18 @@ const ReceivingPage = () => {
       legalEntityId: form.legalEntityId,
       documentNo: form.documentNo.trim(),
       supplier: form.supplier.trim(),
-      items: [{ productId: selectedProductId, quantity: units }],
+      items: [
+        {
+          productId: selectedProductId,
+          barcode: clientProducts.find((p) => p.id === selectedProductId)?.barcode ?? "",
+          supplierArticle: clientProducts.find((p) => p.id === selectedProductId)?.supplierArticle ?? "",
+          name: clientProducts.find((p) => p.id === selectedProductId)?.name ?? "",
+          color: clientProducts.find((p) => p.id === selectedProductId)?.color ?? "",
+          size: clientProducts.find((p) => p.id === selectedProductId)?.size ?? "",
+          plannedQuantity: units,
+          factualQuantity: 0,
+        },
+      ],
       destinationWarehouse: form.destinationWarehouse,
       marketplace: form.marketplace,
       expectedUnits: units,
@@ -307,20 +322,67 @@ const ReceivingPage = () => {
               </TableHeader>
               <TableBody>
                 {lineRows.map((row) => {
-                  const product = productMap.get(row.productId);
                   const actualValue = actualDraft[row.lineId] ?? (row.actualQty != null ? String(row.actualQty) : "");
+                  const draftItems = rows.find((x) => x.id === row.inboundId)?.items ?? [];
+                  const diffClass =
+                    Number(actualValue || 0) < row.declaredQty
+                      ? "bg-amber-50"
+                      : Number(actualValue || 0) > row.declaredQty
+                        ? "bg-red-50"
+                        : "bg-emerald-50";
                   return (
-                  <TableRow key={row.lineId} className="border-slate-100">
+                  <TableRow key={row.lineId} className={`border-slate-100 ${diffClass}`}>
                     <TableCell className="max-w-[160px] truncate text-slate-700 text-sm">
                       <Link to={`/legal-entities/${row.legalEntityId}?tab=receiving`} className="hover:underline">
                         {entityName(row.legalEntityId)}
                       </Link>
                     </TableCell>
                     <TableCell className="max-w-[260px] truncate text-slate-800">
-                      {product ? `${product.name} · ${product.supplierArticle || "—"}` : row.productId}
+                      <Input
+                        className="h-8"
+                        value={row.title}
+                        onChange={(e) =>
+                          void updateInboundDraft({
+                            id: row.inboundId,
+                            items: draftItems.map((it, idx) =>
+                              `${row.inboundId}-${it.productId ?? it.barcode}-${idx}` === row.lineId ? { ...it, name: e.target.value } : it,
+                            ),
+                          })
+                        }
+                      />
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{product?.barcode ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums text-slate-900">{row.declaredQty}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <Input
+                        className="h-8 font-mono"
+                        value={row.barcode}
+                        onChange={(e) =>
+                          void updateInboundDraft({
+                            id: row.inboundId,
+                            items: draftItems.map((it, idx) =>
+                              `${row.inboundId}-${it.productId ?? it.barcode}-${idx}` === row.lineId ? { ...it, barcode: e.target.value } : it,
+                            ),
+                          })
+                        }
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-900">
+                      <Input
+                        type="number"
+                        min={0}
+                        className="h-8 w-24 text-right"
+                        value={row.declaredQty}
+                        onChange={(e) =>
+                          void updateInboundDraft({
+                            id: row.inboundId,
+                            items: draftItems.map((it, idx) =>
+                              `${row.inboundId}-${it.productId ?? it.barcode}-${idx}` === row.lineId
+                                ? { ...it, plannedQuantity: Number(e.target.value) || 0 }
+                                : it,
+                            ),
+                          })
+                        }
+                      />
+                    </TableCell>
                     <TableCell className="text-right tabular-nums text-slate-500">
                       {canChangeInboundStatus(role) ? (
                         <Input
@@ -328,7 +390,18 @@ const ReceivingPage = () => {
                           min={0}
                           className="h-8 w-24 text-right"
                           value={actualValue}
-                          onChange={(e) => setActualDraft((s) => ({ ...s, [row.lineId]: e.target.value }))}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setActualDraft((s) => ({ ...s, [row.lineId]: val }));
+                            void updateInboundDraft({
+                              id: row.inboundId,
+                              items: draftItems.map((it, idx) =>
+                                `${row.inboundId}-${it.productId ?? it.barcode}-${idx}` === row.lineId
+                                  ? { ...it, factualQuantity: Number(val) || 0 }
+                                  : it,
+                              ),
+                            });
+                          }}
                         />
                       ) : (
                         row.actualQty ?? "—"

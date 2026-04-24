@@ -56,9 +56,9 @@ const LegalEntitiesPage = () => {
     >();
     for (const e of data ?? []) map.set(e.id, { inTransit: 0, onStock: 0, reserved: 0 });
     for (const x of inbound ?? []) {
-      if (x.status === "ожидается") {
+      if (x.status !== "принято") {
         const acc = map.get(x.legalEntityId);
-        if (acc) acc.inTransit += x.expectedUnits;
+        if (acc) acc.inTransit += x.items.reduce((s, it) => s + it.plannedQuantity, 0);
       }
     }
     for (const p of catalog ?? []) {

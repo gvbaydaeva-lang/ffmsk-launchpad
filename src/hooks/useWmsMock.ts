@@ -114,11 +114,15 @@ export function useInboundSupplies() {
       let nextCatalog = catalog;
       const becomesAccepted = row.status !== "принято" && args.status === "принято";
       if (becomesAccepted) {
-        const qty = args.receivedUnits ?? row.receivedUnits ?? row.expectedUnits;
-        const productId = row.items[0]?.productId;
-        if (productId) {
-          nextCatalog = catalog.map((p) => (p.id === productId ? { ...p, stockOnHand: p.stockOnHand + qty } : p));
-        }
+        const dateIso = new Date().toISOString();
+        nextCatalog = catalog.map((p) => {
+          const hit = row.items.find((it) => (it.productId ? it.productId === p.id : it.barcode === p.barcode || it.supplierArticle === p.supplierArticle));
+          if (!hit) return p;
+          const qty = hit.factualQuantity || hit.plannedQuantity || 0;
+          const receiptHistory = [...p.receiptHistory, { dateIso, documentNo: row.documentNo, quantity: qty }];
+          const stockOnHand = receiptHistory.reduce((s, h) => s + h.quantity, 0);
+          return { ...p, receiptHistory, stockOnHand };
+        });
       }
       return { inbound: nextInbound, catalog: nextCatalog };
     },
@@ -128,12 +132,31 @@ export function useInboundSupplies() {
     },
   });
 
+  const updateDraft = useMutation({
+    mutationFn: async (args: { id: string; items: InboundSupply["items"] }) => {
+      const inbound = qc.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? (await fetchMockInboundSupplies());
+      return inbound.map((x) =>
+        x.id === args.id
+          ? {
+              ...x,
+              items: args.items,
+              expectedUnits: args.items.reduce((s, it) => s + it.plannedQuantity, 0),
+              receivedUnits: args.items.reduce((s, it) => s + it.factualQuantity, 0),
+            }
+          : x,
+      );
+    },
+    onSuccess: (data) => qc.setQueryData(["wms", "inbound"], data),
+  });
+
   return {
     ...query,
     createInbound: create.mutateAsync,
     isCreating: create.isPending,
     setInboundStatus: setStatus.mutateAsync,
     isUpdatingInbound: setStatus.isPending,
+    updateInboundDraft: updateDraft.mutateAsync,
+    isUpdatingInboundDraft: updateDraft.isPending,
   };
 }
 
