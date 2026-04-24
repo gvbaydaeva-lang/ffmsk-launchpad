@@ -180,6 +180,12 @@ export function useOutboundShipments() {
     mutationFn: async (draft: Omit<OutboundShipment, "id" | "createdAt">) => {
       const outbound = qc.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? (await fetchMockOutboundShipments());
       const catalog = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
+      /** Импорт без позиции в каталоге — строка только для плана/упаковки, остаток не трогаем */
+      const isOrphanImportLine = draft.productId.startsWith("orphan:");
+      if (isOrphanImportLine) {
+        const nextOutbound = appendMockOutbound(outbound, draft);
+        return { nextOutbound, nextCatalog: catalog };
+      }
       const product = catalog.find((p) => p.id === draft.productId);
       if (!product || product.stockOnHand < draft.plannedUnits) {
         throw new Error("insufficient_stock");
@@ -222,7 +228,8 @@ export function useOutboundShipments() {
 
       let nextCatalog = catalog;
       const becomesShipped = row.status !== "отгружено" && args.status === "отгружено";
-      if (becomesShipped) {
+      const isOrphanImportLine = row.productId.startsWith("orphan:");
+      if (becomesShipped && !isOrphanImportLine) {
         nextCatalog = catalog.map((p) =>
           p.id === row.productId ? { ...p, stockOnHand: Math.max(0, p.stockOnHand - qty) } : p,
         );

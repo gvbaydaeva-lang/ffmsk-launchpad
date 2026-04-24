@@ -141,6 +141,15 @@ function digitsOnly(value: string) {
   return value.replace(/\D/g, "");
 }
 
+/** Стабильный псевдо-productId для строк импорта без позиции в каталоге (остаток не резервируется). */
+function orphanProductIdForImport(entityId: string, row: OutboundImportPreviewRow): string {
+  const b = normalizeCode(row.barcode);
+  const a = normalizeCode(row.supplierArticle);
+  const w = normalizeCode(row.sourceWarehouse);
+  const key = `${b}|${a}|${w}`.replace(/[^a-z0-9|]+/gi, "").slice(0, 120) || "line";
+  return `orphan:${entityId.trim()}:${key}`;
+}
+
 function findCatalogProductForOutbound(
   row: { barcode: string; supplierArticle: string },
   catalogRows: ProductCatalogItem[],
@@ -310,6 +319,8 @@ const LegalEntityDetailsPage = () => {
 
   const entity = React.useMemo(() => legal?.find((x) => x.id === id), [legal, id]);
   const entityIdNorm = id.trim();
+  /** Временная отладка: ?outboundDebug=1 — в таблице «Отгрузки» все строки из кэша без фильтра по юрлицу */
+  const outboundDebugAll = searchParams.get("outboundDebug") === "1";
   const rows = React.useMemo(
     () => (catalog ?? []).filter((x) => (x.legalEntityId ?? "").trim() === entityIdNorm),
     [catalog, entityIdNorm],
@@ -319,6 +330,10 @@ const LegalEntityDetailsPage = () => {
   const outboundRows = React.useMemo(
     () => (outbound ?? []).filter((x) => (x.legalEntityId ?? "").trim() === entityIdNorm),
     [outbound, entityIdNorm],
+  );
+  const outboundRowsForUi = React.useMemo(
+    () => (outboundDebugAll ? (outbound ?? []) : outboundRows) as OutboundShipment[],
+    [outbound, outboundDebugAll, outboundRows],
   );
   const filteredProducts = React.useMemo(() => {
     const s = productSearch.trim().toLowerCase();
@@ -381,11 +396,11 @@ const LegalEntityDetailsPage = () => {
     const byEntity = new Map(rows.map((p) => [p.id, p]));
     const byGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
     const next: Record<string, OutboundRowDraft> = {};
-    for (const out of outboundRows) {
+    for (const out of outboundRowsForUi) {
       const product = byEntity.get(out.productId) ?? byGlobal.get(out.productId) ?? null;
       next[out.id] = {
-        supplierArticle: product?.supplierArticle ?? out.importArticle ?? "",
-        barcode: product?.barcode ?? out.importBarcode ?? "",
+        supplierArticle: (product?.supplierArticle || out.importArticle || "").trim() || out.importArticle || "",
+        barcode: (product?.barcode || out.importBarcode || "").trim() || out.importBarcode || "",
         size: product?.size ?? "",
         color: product?.color ?? "",
         marketplace: out.marketplace,
@@ -394,7 +409,7 @@ const LegalEntityDetailsPage = () => {
       };
     }
     setOutboundRowDrafts(next);
-  }, [outboundRows, rows, catalog]);
+  }, [outboundRowsForUi, rows, catalog]);
 
   React.useEffect(() => {
     console.log("[wms:outbound] загрузка на страницу юрлица", {
@@ -634,7 +649,7 @@ const LegalEntityDetailsPage = () => {
 
   const onSaveOutboundRow = async (shipmentId: string) => {
     const draft = outboundRowDrafts[shipmentId];
-    const source = outboundRows.find((x) => x.id === shipmentId);
+    const source = outboundRowsForUi.find((x) => x.id === shipmentId);
     if (!draft || !source) return;
     await updateOutboundDraft({
       id: shipmentId,
@@ -643,8 +658,15 @@ const LegalEntityDetailsPage = () => {
         plannedUnits: Number(draft.plannedUnits) || 0,
         packedUnits: Number(draft.factualUnits) || 0,
         shippedUnits: Number(draft.factualUnits) || null,
+        importArticle: draft.supplierArticle.trim() || undefined,
+        importBarcode: draft.barcode.trim() || undefined,
       },
     });
+    if (source.productId.startsWith("orphan:")) {
+      toast.success("Строка отгрузки сохранена (без привязки к каталогу)");
+      setOutboundEditingRows((s) => ({ ...s, [shipmentId]: false }));
+      return;
+    }
     const product = rows.find((p) => p.id === source.productId);
     if (product) {
       await updateProduct({
@@ -678,23 +700,34 @@ const LegalEntityDetailsPage = () => {
   };
 
   const shippingRows = React.useMemo(() => {
+    console.log("RENDER ROWS:", outboundRowsForUi);
     const productByEntity = new Map(rows.map((p) => [p.id, p]));
     const productByGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
     const s = shippingSearch.trim().toLowerCase();
-    const arr = outboundRows
+    const arr = outboundRowsForUi
       .map((x) => {
         const product = productByEntity.get(x.productId) ?? productByGlobal.get(x.productId) ?? null;
         const draft = outboundRowDrafts[x.id];
+        const article =
+          (draft?.supplierArticle || "").trim() ||
+          (product?.supplierArticle || "").trim() ||
+          (x.importArticle || "").trim() ||
+          "";
+        const barcode =
+          (draft?.barcode || "").trim() ||
+          (product?.barcode || "").trim() ||
+          (x.importBarcode || "").trim() ||
+          "";
         return {
           shipment: x,
-          article: draft?.supplierArticle ?? product?.supplierArticle ?? x.importArticle ?? "",
-          barcode: draft?.barcode ?? product?.barcode ?? x.importBarcode ?? "",
+          article,
+          barcode,
           size: draft?.size ?? product?.size ?? "",
           color: draft?.color ?? product?.color ?? "",
           marketplace: draft?.marketplace ?? x.marketplace,
           warehouse: x.sourceWarehouse,
-          plan: Number(draft?.plannedUnits ?? x.plannedUnits),
-          fact: Number(draft?.factualUnits ?? (x.shippedUnits ?? x.packedUnits ?? 0)),
+          plan: Number(draft?.plannedUnits ?? x.plannedUnits ?? 0) || 0,
+          fact: Number(draft?.factualUnits ?? (x.shippedUnits ?? x.packedUnits ?? 0)) || 0,
         };
       })
       .filter((r) => {
@@ -706,10 +739,10 @@ const LegalEntityDetailsPage = () => {
       if (shippingSort === "fact") return a.fact - b.fact;
       return String(a[shippingSort]).localeCompare(String(b[shippingSort]), "ru");
     });
-  }, [outboundRows, outboundRowDrafts, rows, catalog, shippingSearch, shippingSort]);
+  }, [outboundRowsForUi, outboundRowDrafts, rows, catalog, shippingSearch, shippingSort]);
 
   const onAddBox = async (shipmentId: string) => {
-    const row = outboundRows.find((x) => x.id === shipmentId);
+    const row = outboundRowsForUi.find((x) => x.id === shipmentId);
     if (!row) return;
     const nextBox = {
       id: `box-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -741,9 +774,13 @@ const LegalEntityDetailsPage = () => {
   };
 
   const onScanIntoActiveBox = async (shipmentId: string) => {
-    const row = outboundRows.find((x) => x.id === shipmentId);
+    const row = outboundRowsForUi.find((x) => x.id === shipmentId);
     const scanned = (scanDraftByShipment[shipmentId] ?? "").trim();
-    const barcode = outboundRowDrafts[shipmentId]?.barcode ?? rows.find((p) => p.id === row?.productId)?.barcode ?? "";
+    const barcode =
+      outboundRowDrafts[shipmentId]?.barcode ??
+      rows.find((p) => p.id === row?.productId)?.barcode ??
+      row?.importBarcode ??
+      "";
     if (!row || !row.activeBoxId) {
       return toast.error(
         (row.boxes ?? []).length ? "Выберите активный короб — кнопка «Открыть»" : "Сначала нажмите «Добавить короб»",
@@ -778,9 +815,13 @@ const LegalEntityDetailsPage = () => {
 
   const exportPackingExcelFromBoxes = () => {
     const rowsExport: Array<Record<string, string | number>> = [];
-    for (const out of outboundRows) {
+    for (const out of outboundRowsForUi) {
       const boxes = out.boxes ?? [];
-      const productBarcode = outboundRowDrafts[out.id]?.barcode ?? rows.find((p) => p.id === out.productId)?.barcode ?? "";
+      const productBarcode =
+        outboundRowDrafts[out.id]?.barcode ??
+        rows.find((p) => p.id === out.productId)?.barcode ??
+        out.importBarcode ??
+        "";
       for (const box of boxes) {
         const boxSk = box.clientBoxBarcode || box.id;
         for (const scanned of box.scannedBarcodes) {
@@ -848,7 +889,7 @@ const LegalEntityDetailsPage = () => {
     if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
     if (!product || qty > product.stockOnHand) return toast.error("Количество превышает остаток");
     await createOutbound({
-      legalEntityId: entity.id,
+      legalEntityId: entity.id.trim(),
       productId: selectedOutboundProductId,
       marketplace: outboundDraft.marketplace,
       sourceWarehouse: outboundDraft.warehouse.trim() || "Склад Коледино",
@@ -1098,18 +1139,72 @@ const LegalEntityDetailsPage = () => {
     }
     const stockLeft = new Map<string, number>();
     for (const p of rows) stockLeft.set(p.id, p.stockOnHand);
+    const entityIdTrim = entity.id.trim();
+
+    const mergeOrCreateOrphan = async (row: OutboundImportPreviewRow, planned: number) => {
+      const orphanPid = orphanProductIdForImport(entityIdTrim, row);
+      const fresh = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? [];
+      const existing = fresh.find(
+        (x) =>
+          (x.legalEntityId ?? "").trim() === entityIdTrim &&
+          x.productId === orphanPid &&
+          x.status !== "отгружено" &&
+          x.sourceWarehouse === row.sourceWarehouse &&
+          x.assignmentId === assignmentId,
+      );
+      if (existing) {
+        await updateOutboundDraft({
+          id: existing.id,
+          patch: {
+            plannedUnits: existing.plannedUnits + planned,
+            marketplace: row.marketplace,
+            importArticle: text(row.supplierArticle) || existing.importArticle,
+            importBarcode: text(row.barcode) || existing.importBarcode,
+          },
+        });
+        mergedWithExisting += 1;
+        return;
+      }
+      await createOutbound({
+        legalEntityId: entityIdTrim,
+        productId: orphanPid,
+        assignmentId,
+        assignmentNo,
+        importArticle: text(row.supplierArticle) || undefined,
+        importBarcode: text(row.barcode) || undefined,
+        marketplace: row.marketplace,
+        sourceWarehouse: row.sourceWarehouse,
+        shippingMethod: "fbo",
+        boxBarcode: "",
+        gateBarcode: "",
+        supplyNumber: "",
+        expiryDate: "",
+        packedUnits: 0,
+        plannedShipDate: null,
+        plannedUnits: planned,
+        shippedUnits: null,
+        status: "готов к отгрузке (резерв)",
+        boxes: [],
+        activeBoxId: null,
+      });
+      created += 1;
+    };
 
     for (const row of deduped.values()) {
-      const product = findCatalogProductForOutbound(row, rows);
       const wantQty = Number(row.plannedUnits) || 0;
-      if (!product || wantQty <= 0) {
+      if (wantQty <= 0) {
         skipped += 1;
+        continue;
+      }
+      const product = findCatalogProductForOutbound(row, rows);
+      if (!product) {
+        await mergeOrCreateOrphan(row, wantQty);
         continue;
       }
       const available = stockLeft.get(product.id) ?? 0;
       const qty = Math.min(wantQty, available);
       if (qty <= 0) {
-        skipped += 1;
+        await mergeOrCreateOrphan(row, wantQty);
         continue;
       }
       stockLeft.set(product.id, available - qty);
@@ -1117,7 +1212,7 @@ const LegalEntityDetailsPage = () => {
       const allOutbound = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? [];
       const existing = allOutbound.find(
         (x) =>
-          x.legalEntityId === entity.id &&
+          (x.legalEntityId ?? "").trim() === entityIdTrim &&
           x.productId === product.id &&
           x.status !== "отгружено" &&
           x.sourceWarehouse === row.sourceWarehouse &&
@@ -1129,18 +1224,20 @@ const LegalEntityDetailsPage = () => {
           patch: {
             plannedUnits: existing.plannedUnits + qty,
             marketplace: row.marketplace,
+            importArticle: text(row.supplierArticle) || existing.importArticle,
+            importBarcode: text(row.barcode) || existing.importBarcode,
           },
         });
         mergedWithExisting += 1;
         continue;
       }
       await createOutbound({
-        legalEntityId: entity.id,
+        legalEntityId: entityIdTrim,
         productId: product.id,
         assignmentId,
         assignmentNo,
-        importArticle: row.supplierArticle || product.supplierArticle || undefined,
-        importBarcode: row.barcode || product.barcode || undefined,
+        importArticle: text(row.supplierArticle) || product.supplierArticle || undefined,
+        importBarcode: text(row.barcode) || product.barcode || undefined,
         marketplace: row.marketplace,
         sourceWarehouse: row.sourceWarehouse,
         shippingMethod: "fbo",
@@ -1160,7 +1257,8 @@ const LegalEntityDetailsPage = () => {
     }
     const currentAll = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? outbound ?? [];
     const { durable, supabaseOk } = await persistOutboundDurably(currentAll);
-    queryClient.setQueryData(["wms", "outbound"], currentAll);
+    const latestOutbound = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? currentAll;
+    queryClient.setQueryData(["wms", "outbound"], [...latestOutbound]);
     await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
     await queryClient.refetchQueries({ queryKey: ["wms", "outbound"] });
     if (!durable) {
@@ -1742,6 +1840,12 @@ const LegalEntityDetailsPage = () => {
         </TabsContent>
 
         <TabsContent value="shipping">
+          {outboundDebugAll ? (
+            <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+              <strong>Отладка:</strong> в таблице показаны все отгрузки из хранилища (без фильтра по юрлицу). Уберите из URL параметр{" "}
+              <code className="rounded bg-white px-1 py-0.5">outboundDebug=1</code>.
+            </p>
+          ) : null}
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-600">Задания на отгрузку по клиенту</p>
             <div className="flex items-center gap-2">
