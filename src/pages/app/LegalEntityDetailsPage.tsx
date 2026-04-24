@@ -6,6 +6,7 @@ import { ru } from "date-fns/locale/ru";
 import Barcode from "react-barcode";
 import { QRCodeSVG } from "qrcode.react";
 import { Download, FileSpreadsheet, Plus, Printer, Upload } from "lucide-react";
+import { ExcelColumnFilterMenu, ExcelThWithFilter } from "@/components/wms/ExcelColumnFilterMenu";
 import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -186,6 +187,9 @@ type InboundMatrixLine = {
   size: string;
   marketplace: Marketplace;
   byWarehouse: Map<string, InboundMatrixCell>;
+  /** Итоги по черновикам и строкам (для фильтра «расхождения» и подсветки) */
+  totalPlan: number;
+  totalFact: number;
 };
 
 function text(v: unknown) {
@@ -371,7 +375,14 @@ const LegalEntityDetailsPage = () => {
   });
   const [quickBarcode, setQuickBarcode] = React.useState("");
   const [catalogSearch, setCatalogSearch] = React.useState("");
-  const [catalogSort, setCatalogSort] = React.useState<"name" | "barcode" | "article">("name");
+  const [catalogSort, setCatalogSort] = React.useState<"name" | "barcode" | "article" | "stock">("name");
+  const [catalogSortDir, setCatalogSortDir] = React.useState<"asc" | "desc">("asc");
+  const [catalogColFilters, setCatalogColFilters] = React.useState<Record<string, string>>({});
+  const [catalogPhotoViewer, setCatalogPhotoViewer] = React.useState<string | null>(null);
+  const [recvColFilters, setRecvColFilters] = React.useState<Record<string, string>>({});
+  const [recvSortKey, setRecvSortKey] = React.useState<"name" | "article" | "barcode" | "color" | "size" | "mp" | "plan" | "fact">("article");
+  const [recvSortDir, setRecvSortDir] = React.useState<"asc" | "desc">("asc");
+  const [shipColFilters, setShipColFilters] = React.useState<Record<string, string>>({});
   const [showOnlyDiff, setShowOnlyDiff] = React.useState(false);
   const [printCopies, setPrintCopies] = React.useState("1");
   const [rowDrafts, setRowDrafts] = React.useState<Record<string, RowDraft>>({});
@@ -382,7 +393,10 @@ const LegalEntityDetailsPage = () => {
   const [inboundRowDrafts, setInboundRowDrafts] = React.useState<Record<string, InboundRowDraft>>({});
   const [outboundRowDrafts, setOutboundRowDrafts] = React.useState<Record<string, OutboundRowDraft>>({});
   const [shippingSearch, setShippingSearch] = React.useState("");
-  const [shippingSort, setShippingSort] = React.useState<"article" | "barcode" | "size" | "color" | "marketplace" | "warehouse" | "plan" | "fact">("article");
+  const [shippingSort, setShippingSort] = React.useState<
+    "name" | "article" | "barcode" | "size" | "color" | "marketplace" | "warehouse" | "plan" | "fact"
+  >("article");
+  const [shipSortDir, setShipSortDir] = React.useState<"asc" | "desc">("asc");
   const [scanDraftByShipment, setScanDraftByShipment] = React.useState<Record<string, string>>({});
   const [scanErrorByShipment, setScanErrorByShipment] = React.useState<Record<string, boolean>>({});
   const [qrBoxPayload, setQrBoxPayload] = React.useState<{ barcode: string; warehouse: string } | null>(null);
@@ -454,20 +468,37 @@ const LegalEntityDetailsPage = () => {
   }, [rows, productSearch]);
   const catalogRows = React.useMemo(() => {
     const s = catalogSearch.trim().toLowerCase();
+    const cf = catalogColFilters;
+    const colHas = (key: string, val: string) => {
+      const q = (cf[key] ?? "").trim().toLowerCase();
+      if (!q) return true;
+      return val.toLowerCase().includes(q);
+    };
     let arr = rows.filter(
       (p) =>
-        !s ||
-        p.name.toLowerCase().includes(s) ||
-        p.barcode.toLowerCase().includes(s) ||
-        p.supplierArticle.toLowerCase().includes(s),
+        (!s ||
+          p.name.toLowerCase().includes(s) ||
+          p.barcode.toLowerCase().includes(s) ||
+          p.supplierArticle.toLowerCase().includes(s)) &&
+        colHas("photo", p.photoUrl ?? "") &&
+        colHas("name", p.name) &&
+        colHas("article", p.supplierArticle) &&
+        colHas("barcode", p.barcode) &&
+        colHas("color", p.color) &&
+        colHas("size", p.size) &&
+        colHas("country", p.countryOfOrigin) &&
+        colHas("composition", p.composition) &&
+        colHas("stock", String(p.stockOnHand)),
     );
+    const d = catalogSortDir === "asc" ? 1 : -1;
     arr = [...arr].sort((a, b) => {
-      if (catalogSort === "barcode") return a.barcode.localeCompare(b.barcode, "ru");
-      if (catalogSort === "article") return a.supplierArticle.localeCompare(b.supplierArticle, "ru");
-      return a.name.localeCompare(b.name, "ru");
+      if (catalogSort === "stock") return (a.stockOnHand - b.stockOnHand) * d;
+      if (catalogSort === "barcode") return a.barcode.localeCompare(b.barcode, "ru") * d;
+      if (catalogSort === "article") return a.supplierArticle.localeCompare(b.supplierArticle, "ru") * d;
+      return a.name.localeCompare(b.name, "ru") * d;
     });
     return arr;
-  }, [rows, catalogSearch, catalogSort]);
+  }, [rows, catalogSearch, catalogSort, catalogSortDir, catalogColFilters]);
   const copies = Math.max(1, Number(printCopies) || 1);
   const historyProduct = historyProductId ? rows.find((p) => p.id === historyProductId) ?? null : null;
   const currentTab = searchParams.get("tab") ?? "catalog";
@@ -918,12 +949,14 @@ const LegalEntityDetailsPage = () => {
           String(v).toLowerCase().includes(s),
         );
       });
+    const sd = shipSortDir === "asc" ? 1 : -1;
     return [...arr].sort((a, b) => {
-      if (shippingSort === "plan") return a.plan - b.plan;
-      if (shippingSort === "fact") return a.fact - b.fact;
-      return String(a[shippingSort]).localeCompare(String(b[shippingSort]), "ru");
+      if (shippingSort === "plan") return (a.plan - b.plan) * sd;
+      if (shippingSort === "fact") return (a.fact - b.fact) * sd;
+      if (shippingSort === "name") return a.name.localeCompare(b.name, "ru") * sd;
+      return String(a[shippingSort]).localeCompare(String(b[shippingSort]), "ru") * sd;
     });
-  }, [outboundRowsForUi, outboundRowDrafts, rows, catalog, shippingSearch, shippingSort]);
+  }, [outboundRowsForUi, outboundRowDrafts, rows, catalog, shippingSearch, shippingSort, shipSortDir]);
 
   const shippingMatrix = React.useMemo(() => {
     const productByEntity = new Map(rows.map((p) => [p.id, p]));
@@ -936,11 +969,11 @@ const LegalEntityDetailsPage = () => {
       warehousesSet.add(sh.sourceWarehouse || "—");
       const product = productByEntity.get(sh.productId) ?? productByGlobal.get(sh.productId) ?? null;
       const key = matrixLineKey(sh, product);
-      const name = sh.importName || product?.name || "";
-      const article = sh.importArticle || product?.supplierArticle || "";
-      const barcode = sh.importBarcode || product?.barcode || "";
-      const color = sh.importColor || product?.color || "";
-      const size = sh.importSize || product?.size || "";
+      const name = (product?.name || "").trim() || (sh.importName || "").trim() || "";
+      const article = (product?.supplierArticle || "").trim() || (sh.importArticle || "").trim() || "";
+      const barcode = (product?.barcode || "").trim() || (sh.importBarcode || "").trim() || "";
+      const color = (product?.color || "").trim() || (sh.importColor || "").trim() || "";
+      const size = (product?.size || "").trim() || (sh.importSize || "").trim() || "";
       const wh = sh.sourceWarehouse || "—";
 
       let line = lines.get(key);
@@ -959,6 +992,12 @@ const LegalEntityDetailsPage = () => {
           totalFact: 0,
         };
         lines.set(key, line);
+      } else {
+        line.name = (line.name || "").trim() || (name || "").trim() || line.name;
+        line.article = (line.article || "").trim() || (article || "").trim() || line.article;
+        line.barcode = (line.barcode || "").trim() || (barcode || "").trim() || line.barcode;
+        line.color = (line.color || "").trim() || (color || "").trim() || line.color;
+        line.size = (line.size || "").trim() || (size || "").trim() || line.size;
       }
       const cell = line.byWarehouse.get(wh) ?? { shipments: [], planned: 0, fact: 0 };
       cell.shipments.push(sh);
@@ -981,13 +1020,33 @@ const LegalEntityDetailsPage = () => {
       );
     }
 
+    const sf = shipColFilters;
+    const shipColOk = (key: string, val: string) => {
+      const q = (sf[key] ?? "").trim().toLowerCase();
+      if (!q) return true;
+      return String(val).toLowerCase().includes(q);
+    };
+    matrixLines = matrixLines.filter(
+      (line) =>
+        shipColOk("name", line.name) &&
+        shipColOk("article", line.article) &&
+        shipColOk("barcode", line.barcode) &&
+        shipColOk("color", line.color) &&
+        shipColOk("size", line.size) &&
+        shipColOk("mp", line.marketplace) &&
+        shipColOk("plan", String(line.totalPlan)) &&
+        shipColOk("fact", String(line.totalFact)),
+    );
+
+    const sd = shipSortDir === "asc" ? 1 : -1;
     matrixLines.sort((a, b) => {
-      if (shippingSort === "plan") return a.totalPlan - b.totalPlan;
-      if (shippingSort === "fact") return a.totalFact - b.totalFact;
-      if (shippingSort === "barcode") return a.barcode.localeCompare(b.barcode, "ru");
-      if (shippingSort === "size") return a.size.localeCompare(b.size, "ru");
-      if (shippingSort === "color") return a.color.localeCompare(b.color, "ru");
-      if (shippingSort === "marketplace") return a.marketplace.localeCompare(b.marketplace, "ru");
+      if (shippingSort === "plan") return (a.totalPlan - b.totalPlan) * sd;
+      if (shippingSort === "fact") return (a.totalFact - b.totalFact) * sd;
+      if (shippingSort === "name") return a.name.localeCompare(b.name, "ru") * sd;
+      if (shippingSort === "barcode") return a.barcode.localeCompare(b.barcode, "ru") * sd;
+      if (shippingSort === "size") return a.size.localeCompare(b.size, "ru") * sd;
+      if (shippingSort === "color") return a.color.localeCompare(b.color, "ru") * sd;
+      if (shippingSort === "marketplace") return a.marketplace.localeCompare(b.marketplace, "ru") * sd;
       if (shippingSort === "warehouse") {
         const wa = Array.from(a.byWarehouse.keys())
           .sort((x, y) => x.localeCompare(y, "ru"))
@@ -995,15 +1054,26 @@ const LegalEntityDetailsPage = () => {
         const wb = Array.from(b.byWarehouse.keys())
           .sort((x, y) => x.localeCompare(y, "ru"))
           .join("|");
-        return wa.localeCompare(wb, "ru");
+        return wa.localeCompare(wb, "ru") * sd;
       }
-      return a.article.localeCompare(b.article, "ru");
+      return a.article.localeCompare(b.article, "ru") * sd;
     });
 
     return { warehouses, lines: matrixLines };
-  }, [outboundRowsForUi, rows, catalog, shippingSearch, shippingSort]);
+  }, [outboundRowsForUi, rows, catalog, shippingSearch, shippingSort, shipSortDir, shipColFilters]);
 
   const receivingMatrix = React.useMemo(() => {
+    const draftP = (inboundId: string, rowIndex: number) => {
+      const k = `${inboundId}-${rowIndex}`;
+      const src = inboundRows.find((i) => i.id === inboundId)?.items[rowIndex];
+      return Number(inboundRowDrafts[k]?.plannedQuantity ?? src?.plannedQuantity ?? 0) || 0;
+    };
+    const draftF = (inboundId: string, rowIndex: number) => {
+      const k = `${inboundId}-${rowIndex}`;
+      const src = inboundRows.find((i) => i.id === inboundId)?.items[rowIndex];
+      return Number(inboundRowDrafts[k]?.factualQuantity ?? src?.factualQuantity ?? 0) || 0;
+    };
+
     const warehousesSet = new Set<string>();
     const lines = new Map<string, InboundMatrixLine>();
     const flat = inboundRows.flatMap((inb) =>
@@ -1016,9 +1086,8 @@ const LegalEntityDetailsPage = () => {
         warehouse: inb.destinationWarehouse || "—",
       })),
     );
-    const filtered = flat.filter((x) => (showOnlyDiff ? x.item.plannedQuantity !== x.item.factualQuantity : true));
 
-    for (const x of filtered) {
+    for (const x of flat) {
       warehousesSet.add(x.warehouse);
       const key = inboundMatrixLineKey(x.item);
       let line = lines.get(key);
@@ -1033,18 +1102,72 @@ const LegalEntityDetailsPage = () => {
           size: x.item.size,
           marketplace: x.marketplace,
           byWarehouse: new Map(),
+          totalPlan: 0,
+          totalFact: 0,
         };
         lines.set(key, line);
+      } else {
+        const nm = (x.item.name || "").trim();
+        if (!(line.name || "").trim() && nm) line.name = nm;
+        if (!(line.supplierArticle || "").trim() && (x.item.supplierArticle || "").trim()) line.supplierArticle = x.item.supplierArticle;
+        if (!(line.barcode || "").trim() && (x.item.barcode || "").trim()) line.barcode = x.item.barcode;
+        if (!(line.color || "").trim() && (x.item.color || "").trim()) line.color = x.item.color;
+        if (!(line.size || "").trim() && (x.item.size || "").trim()) line.size = x.item.size;
       }
       const cell = line.byWarehouse.get(x.warehouse) ?? { rowRefs: [] };
       cell.rowRefs.push({ rowId: x.rowId, inboundId: x.inboundId, rowIndex: x.rowIndex });
       line.byWarehouse.set(x.warehouse, cell);
     }
 
+    let matrixLines: InboundMatrixLine[] = Array.from(lines.values()).map((line) => {
+      let tp = 0;
+      let tf = 0;
+      line.byWarehouse.forEach((c) => {
+        c.rowRefs.forEach((r) => {
+          tp += draftP(r.inboundId, r.rowIndex);
+          tf += draftF(r.inboundId, r.rowIndex);
+        });
+      });
+      return { ...line, totalPlan: tp, totalFact: tf };
+    });
+
+    if (showOnlyDiff) {
+      matrixLines = matrixLines.filter((l) => l.totalPlan !== l.totalFact);
+    }
+
+    const rf = recvColFilters;
+    const recvColOk = (key: string, val: string) => {
+      const q = (rf[key] ?? "").trim().toLowerCase();
+      if (!q) return true;
+      return String(val).toLowerCase().includes(q);
+    };
+    matrixLines = matrixLines.filter(
+      (line) =>
+        recvColOk("name", line.name) &&
+        recvColOk("article", line.supplierArticle) &&
+        recvColOk("barcode", line.barcode) &&
+        recvColOk("color", line.color) &&
+        recvColOk("size", line.size) &&
+        recvColOk("mp", line.marketplace) &&
+        recvColOk("plan", String(line.totalPlan)) &&
+        recvColOk("fact", String(line.totalFact)),
+    );
+
+    const dir = recvSortDir === "asc" ? 1 : -1;
+    matrixLines.sort((a, b) => {
+      if (recvSortKey === "name") return a.name.localeCompare(b.name, "ru") * dir;
+      if (recvSortKey === "barcode") return a.barcode.localeCompare(b.barcode, "ru") * dir;
+      if (recvSortKey === "color") return a.color.localeCompare(b.color, "ru") * dir;
+      if (recvSortKey === "size") return a.size.localeCompare(b.size, "ru") * dir;
+      if (recvSortKey === "mp") return a.marketplace.localeCompare(b.marketplace, "ru") * dir;
+      if (recvSortKey === "plan") return (a.totalPlan - b.totalPlan) * dir;
+      if (recvSortKey === "fact") return (a.totalFact - b.totalFact) * dir;
+      return a.supplierArticle.localeCompare(b.supplierArticle, "ru") * dir;
+    });
+
     const warehouses = Array.from(warehousesSet).sort((a, b) => a.localeCompare(b, "ru"));
-    const matrixLines = Array.from(lines.values()).sort((a, b) => a.supplierArticle.localeCompare(b.supplierArticle, "ru"));
     return { warehouses, lines: matrixLines };
-  }, [inboundRows, showOnlyDiff]);
+  }, [inboundRows, inboundRowDrafts, showOnlyDiff, recvColFilters, recvSortKey, recvSortDir]);
 
   const onAddBox = async (shipmentId: string) => {
     const row = outboundRowsForUi.find((x) => x.id === shipmentId);
@@ -1715,12 +1838,19 @@ const LegalEntityDetailsPage = () => {
               onChange={(e) => setCatalogSearch(e.target.value)}
               className="max-w-md"
             />
-            <Select value={catalogSort} onValueChange={(v) => setCatalogSort(v as "name" | "barcode" | "article")}>
+            <Select
+              value={catalogSort}
+              onValueChange={(v) => {
+                setCatalogSort(v as typeof catalogSort);
+                setCatalogSortDir("asc");
+              }}
+            >
               <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="name">Сортировка: Название А-Я</SelectItem>
-                <SelectItem value="barcode">Сортировка: Баркод 0-9</SelectItem>
-                <SelectItem value="article">Сортировка: Артикул А-Я</SelectItem>
+                <SelectItem value="barcode">Сортировка: Баркод</SelectItem>
+                <SelectItem value="article">Сортировка: Артикул</SelectItem>
+                <SelectItem value="stock">Сортировка: Остаток</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1746,17 +1876,131 @@ const LegalEntityDetailsPage = () => {
                 <table className={EXCEL_TABLE_BASE}>
                   <thead>
                     <tr>
-                      <th className={EXCEL_STICKY_PHOTO_TH}>Фото</th>
-                      <th className={EXCEL_STICKY_NAME_TH}>Товар</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[120px] whitespace-nowrap font-mono`}>Артикул</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap font-mono`}>Баркод</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[88px] whitespace-nowrap text-center`}>Цвет</th>
-                      <th className={`${STATIC_HEADER_BASE} w-[64px] whitespace-nowrap text-center`}>Размер</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[100px] whitespace-nowrap`}>Страна</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`}>Состав</th>
-                      <th className={`${STATIC_HEADER_BASE} w-[72px] text-right tabular-nums`}>Остаток</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[108px] text-center`}>L×W×H / кг</th>
-                      <th className={`${STATIC_HEADER_BASE} w-[96px] text-right`}>Действие</th>
+                      <th className={`${EXCEL_STICKY_PHOTO_TH}`}>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <span>Фото</span>
+                          <ExcelColumnFilterMenu
+                            title="Фото (URL)"
+                            searchValue={catalogColFilters.photo ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, photo: v }))}
+                          />
+                        </div>
+                      </th>
+                      <ExcelThWithFilter className={EXCEL_STICKY_NAME_TH} label="Товар">
+                        <ExcelColumnFilterMenu
+                          title="Товар"
+                          searchValue={catalogColFilters.name ?? ""}
+                          onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, name: v }))}
+                          onSortAscText={() => {
+                            setCatalogSort("name");
+                            setCatalogSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setCatalogSort("name");
+                            setCatalogSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[120px] whitespace-nowrap font-mono`}>
+                        <div className="flex items-center justify-between gap-0.5">
+                          <span>Артикул</span>
+                          <ExcelColumnFilterMenu
+                            title="Артикул"
+                            searchValue={catalogColFilters.article ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, article: v }))}
+                            onSortAscText={() => {
+                              setCatalogSort("article");
+                              setCatalogSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setCatalogSort("article");
+                              setCatalogSortDir("desc");
+                            }}
+                          />
+                        </div>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap font-mono`}>
+                        <div className="flex items-center justify-between gap-0.5">
+                          <span>Баркод</span>
+                          <ExcelColumnFilterMenu
+                            title="Баркод"
+                            searchValue={catalogColFilters.barcode ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, barcode: v }))}
+                            onSortAscText={() => {
+                              setCatalogSort("barcode");
+                              setCatalogSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setCatalogSort("barcode");
+                              setCatalogSortDir("desc");
+                            }}
+                          />
+                        </div>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[88px] whitespace-nowrap text-center`}>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <span>Цвет</span>
+                          <ExcelColumnFilterMenu
+                            title="Цвет"
+                            searchValue={catalogColFilters.color ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, color: v }))}
+                          />
+                        </div>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} w-[64px] whitespace-nowrap text-center`}>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <span>Размер</span>
+                          <ExcelColumnFilterMenu
+                            title="Размер"
+                            searchValue={catalogColFilters.size ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, size: v }))}
+                          />
+                        </div>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[100px] whitespace-nowrap`}>
+                        <div className="flex items-center justify-between gap-0.5">
+                          <span>Страна</span>
+                          <ExcelColumnFilterMenu
+                            title="Страна"
+                            searchValue={catalogColFilters.country ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, country: v }))}
+                          />
+                        </div>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`}>
+                        <div className="flex items-center justify-between gap-0.5">
+                          <span>Состав</span>
+                          <ExcelColumnFilterMenu
+                            title="Состав"
+                            searchValue={catalogColFilters.composition ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, composition: v }))}
+                          />
+                        </div>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} w-[72px] text-right tabular-nums`}>
+                        <div className="flex items-center justify-end gap-0.5">
+                          <span>Остаток</span>
+                          <ExcelColumnFilterMenu
+                            title="Остаток"
+                            searchValue={catalogColFilters.stock ?? ""}
+                            onSearchChange={(v) => setCatalogColFilters((s) => ({ ...s, stock: v }))}
+                            onSortAscNum={() => {
+                              setCatalogSort("stock");
+                              setCatalogSortDir("asc");
+                            }}
+                            onSortDescNum={() => {
+                              setCatalogSort("stock");
+                              setCatalogSortDir("desc");
+                            }}
+                          />
+                        </div>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} min-w-[108px] text-center`}>
+                        <span>L×W×H / кг</span>
+                      </th>
+                      <th className={`${STATIC_HEADER_BASE} w-[96px] text-right`}>
+                        <span>Действие</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1770,7 +2014,14 @@ const LegalEntityDetailsPage = () => {
                         <tr key={item.id}>
                           <td className={`${EXCEL_STICKY_PHOTO_TD} ${rowBg} text-center`}>
                             {item.photoUrl ? (
-                              <img src={item.photoUrl} alt="" className="mx-auto h-7 w-7 rounded border object-cover" />
+                              <button
+                                type="button"
+                                className="mx-auto block rounded border border-transparent p-0 hover:border-slate-400 focus-visible:outline focus-visible:ring-2 focus-visible:ring-slate-400"
+                                onClick={() => setCatalogPhotoViewer(item.photoUrl)}
+                                aria-label="Открыть фото"
+                              >
+                                <img src={item.photoUrl} alt="" className="mx-auto h-7 w-7 rounded border object-cover" />
+                              </button>
                             ) : (
                               <div className="mx-auto h-7 w-7 rounded border border-dashed bg-slate-100" />
                             )}
@@ -1954,6 +2205,21 @@ const LegalEntityDetailsPage = () => {
               </div>
             </CardContent>
           </Card>
+
+          <Dialog open={Boolean(catalogPhotoViewer)} onOpenChange={(o) => !o && setCatalogPhotoViewer(null)}>
+            <DialogContent className="max-h-[90vh] max-w-[min(96vw,920px)] border-none bg-black/90 p-2 shadow-2xl sm:max-w-[min(96vw,920px)]">
+              <DialogHeader className="sr-only">
+                <DialogTitle>Просмотр фото</DialogTitle>
+              </DialogHeader>
+              {catalogPhotoViewer ? (
+                <img
+                  src={catalogPhotoViewer}
+                  alt=""
+                  className="mx-auto max-h-[85vh] w-auto max-w-full rounded object-contain"
+                />
+              ) : null}
+            </DialogContent>
+          </Dialog>
 
           <Dialog open={printOpen} onOpenChange={setPrintOpen}>
             <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
@@ -2173,14 +2439,126 @@ const LegalEntityDetailsPage = () => {
                 <table className={EXCEL_TABLE_BASE}>
                   <thead>
                     <tr>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap`}>Название</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[132px] whitespace-nowrap`}>Артикул</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[150px] whitespace-nowrap font-mono`}>Баркод</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[72px] whitespace-nowrap text-center`}>Цвет</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[56px] whitespace-nowrap text-center`}>Размер</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[64px] whitespace-nowrap text-center`}>МП</th>
-                      <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>План всего</th>
-                      <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>Факт всего</th>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap`} label="Название">
+                        <ExcelColumnFilterMenu
+                          title="Название"
+                          searchValue={recvColFilters.name ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, name: v }))}
+                          onSortAscText={() => {
+                            setRecvSortKey("name");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setRecvSortKey("name");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[132px] whitespace-nowrap`} label="Артикул">
+                        <ExcelColumnFilterMenu
+                          title="Артикул"
+                          searchValue={recvColFilters.article ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, article: v }))}
+                          onSortAscText={() => {
+                            setRecvSortKey("article");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setRecvSortKey("article");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[150px] whitespace-nowrap font-mono`} label="Баркод">
+                        <ExcelColumnFilterMenu
+                          title="Баркод"
+                          searchValue={recvColFilters.barcode ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, barcode: v }))}
+                          onSortAscText={() => {
+                            setRecvSortKey("barcode");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setRecvSortKey("barcode");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[72px] whitespace-nowrap text-center`} label="Цвет">
+                        <ExcelColumnFilterMenu
+                          title="Цвет"
+                          searchValue={recvColFilters.color ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, color: v }))}
+                          onSortAscText={() => {
+                            setRecvSortKey("color");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setRecvSortKey("color");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[56px] whitespace-nowrap text-center`} label="Размер">
+                        <ExcelColumnFilterMenu
+                          title="Размер"
+                          searchValue={recvColFilters.size ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, size: v }))}
+                          onSortAscText={() => {
+                            setRecvSortKey("size");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setRecvSortKey("size");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[64px] whitespace-nowrap text-center`} label="МП">
+                        <ExcelColumnFilterMenu
+                          title="МП"
+                          searchValue={recvColFilters.mp ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, mp: v }))}
+                          onSortAscText={() => {
+                            setRecvSortKey("mp");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setRecvSortKey("mp");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`} label="План всего">
+                        <ExcelColumnFilterMenu
+                          title="План всего"
+                          searchValue={recvColFilters.plan ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, plan: v }))}
+                          onSortAscNum={() => {
+                            setRecvSortKey("plan");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescNum={() => {
+                            setRecvSortKey("plan");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`} label="Факт всего">
+                        <ExcelColumnFilterMenu
+                          title="Факт всего"
+                          searchValue={recvColFilters.fact ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, fact: v }))}
+                          onSortAscNum={() => {
+                            setRecvSortKey("fact");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescNum={() => {
+                            setRecvSortKey("fact");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
                       {receivingMatrix.warehouses.map((wh, wi) => (
                         <th
                           key={wh}
@@ -2204,24 +2582,18 @@ const LegalEntityDetailsPage = () => {
                     ) : (
                       receivingMatrix.lines.map((line, idx) => {
                         const ld = inboundRowDrafts[line.leaderRowId];
-                        let rowAlert = false;
+                        let nRefs = 0;
                         line.byWarehouse.forEach((c) => {
-                          c.rowRefs.forEach((r) => {
-                            if (effInboundPlanned(r.inboundId, r.rowIndex) !== effInboundFactual(r.inboundId, r.rowIndex)) {
-                              rowAlert = true;
-                            }
-                          });
+                          nRefs += c.rowRefs.length;
                         });
-                        let totalPlan = 0;
-                        let totalFact = 0;
-                        line.byWarehouse.forEach((c) => {
-                          c.rowRefs.forEach((r) => {
-                            totalPlan += effInboundPlanned(r.inboundId, r.rowIndex);
-                            totalFact += effInboundFactual(r.inboundId, r.rowIndex);
-                          });
-                        });
-                        const rowBg = excelRowBg(idx, rowAlert);
+                        const soleRef =
+                          nRefs === 1
+                            ? Array.from(line.byWarehouse.values()).flatMap((c) => c.rowRefs)[0] ?? null
+                            : null;
+                        const planMismatch = line.totalPlan !== line.totalFact;
+                        const rowBg = excelRowBg(idx, false);
                         const cellBase = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${rowBg}`;
+                        const diffCell = planMismatch ? "bg-red-50/90 ring-1 ring-inset ring-red-300/80" : "";
                         const mpLabel =
                           line.marketplace === "wb" ? "WB" : line.marketplace === "ozon" ? "Ozon" : "Яндекс";
                         return (
@@ -2294,8 +2666,32 @@ const LegalEntityDetailsPage = () => {
                                 mpLabel
                               )}
                             </td>
-                            <td className={`${cellBase} text-center tabular-nums font-medium`}>{totalPlan}</td>
-                            <td className={`${cellBase} text-center tabular-nums`}>{totalFact}</td>
+                            <td className={`${cellBase} text-center tabular-nums font-medium ${diffCell}`}>
+                              {inboundMatrixEdit && soleRef ? (
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                  value={String(effInboundPlanned(soleRef.inboundId, soleRef.rowIndex))}
+                                  onChange={(e) => setInboundDraftPlanned(soleRef.rowId, e.target.value)}
+                                />
+                              ) : (
+                                line.totalPlan
+                              )}
+                            </td>
+                            <td className={`${cellBase} text-center tabular-nums ${diffCell}`}>
+                              {inboundMatrixEdit && soleRef ? (
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                  value={String(effInboundFactual(soleRef.inboundId, soleRef.rowIndex))}
+                                  onChange={(e) => setInboundDraftFactual(soleRef.rowId, e.target.value)}
+                                />
+                              ) : (
+                                line.totalFact
+                              )}
+                            </td>
                             {receivingMatrix.warehouses.map((wh, wi) => {
                               const cell = line.byWarehouse.get(wh);
                               const whBg = WAREHOUSE_COLUMN_CELL_BGS[wi % WAREHOUSE_COLUMN_CELL_BGS.length];
@@ -2309,31 +2705,6 @@ const LegalEntityDetailsPage = () => {
                               }
                               const sumP = cell.rowRefs.reduce((s, r) => s + effInboundPlanned(r.inboundId, r.rowIndex), 0);
                               const sumF = cell.rowRefs.reduce((s, r) => s + effInboundFactual(r.inboundId, r.rowIndex), 0);
-                              if (inboundMatrixEdit && cell.rowRefs.length === 1) {
-                                const r = cell.rowRefs[0];
-                                return (
-                                  <td key={wh} className={`${whCell} align-top`}>
-                                    <div className="flex flex-col gap-0.5 py-0.5">
-                                      <Input
-                                        type="number"
-                                        min={0}
-                                        className="h-6 w-full min-w-[72px] border-slate-300 bg-white px-1 text-center text-[10px] tabular-nums"
-                                        title="План"
-                                        value={String(effInboundPlanned(r.inboundId, r.rowIndex))}
-                                        onChange={(e) => setInboundDraftPlanned(r.rowId, e.target.value)}
-                                      />
-                                      <Input
-                                        type="number"
-                                        min={0}
-                                        className="h-6 w-full min-w-[72px] border-slate-300 bg-white px-1 text-center text-[10px] tabular-nums"
-                                        title="Факт"
-                                        value={String(effInboundFactual(r.inboundId, r.rowIndex))}
-                                        onChange={(e) => setInboundDraftFactual(r.rowId, e.target.value)}
-                                      />
-                                    </div>
-                                  </td>
-                                );
-                              }
                               return (
                                 <td key={wh} className={whCell}>
                                   <div className="leading-tight">
@@ -2473,11 +2844,18 @@ const LegalEntityDetailsPage = () => {
               onChange={(e) => setShippingSearch(e.target.value)}
               className="max-w-lg"
             />
-            <Select value={shippingSort} onValueChange={(v) => setShippingSort(v as typeof shippingSort)}>
+            <Select
+              value={shippingSort}
+              onValueChange={(v) => {
+                setShippingSort(v as typeof shippingSort);
+                setShipSortDir("asc");
+              }}
+            >
               <SelectTrigger className="w-[220px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="name">Сортировка: Название</SelectItem>
                 <SelectItem value="article">Сортировка: Артикул</SelectItem>
                 <SelectItem value="barcode">Сортировка: Баркод</SelectItem>
                 <SelectItem value="size">Сортировка: Размер</SelectItem>
@@ -2507,21 +2885,133 @@ const LegalEntityDetailsPage = () => {
                 </>
               ))}
           </div>
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch">
+          <div>
             <Card className="min-w-0 flex-1 border-slate-200 shadow-sm">
               <CardContent className="p-0 sm:p-2">
                 <div className={EXCEL_TABLE_WRAP}>
                   <table className={EXCEL_TABLE_BASE}>
                     <thead>
                       <tr>
-                        <th className={`${STATIC_HEADER_BASE} min-w-[200px] whitespace-nowrap`}>Название</th>
-                        <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`}>Артикул</th>
-                        <th className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap font-mono`}>Баркод</th>
-                        <th className={`${STATIC_HEADER_BASE} min-w-[72px] whitespace-nowrap`}>Цвет</th>
-                        <th className={`${STATIC_HEADER_BASE} min-w-[56px] whitespace-nowrap`}>Размер</th>
-                        <th className={`${STATIC_HEADER_BASE} min-w-[64px] whitespace-nowrap`}>МП</th>
-                        <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>План всего</th>
-                        <th className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`}>Факт всего</th>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[200px] whitespace-nowrap`} label="Название">
+                          <ExcelColumnFilterMenu
+                            title="Название"
+                            searchValue={shipColFilters.name ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, name: v }))}
+                            onSortAscText={() => {
+                              setShippingSort("name");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setShippingSort("name");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`} label="Артикул">
+                          <ExcelColumnFilterMenu
+                            title="Артикул"
+                            searchValue={shipColFilters.article ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, article: v }))}
+                            onSortAscText={() => {
+                              setShippingSort("article");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setShippingSort("article");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap font-mono`} label="Баркод">
+                          <ExcelColumnFilterMenu
+                            title="Баркод"
+                            searchValue={shipColFilters.barcode ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, barcode: v }))}
+                            onSortAscText={() => {
+                              setShippingSort("barcode");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setShippingSort("barcode");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[72px] whitespace-nowrap`} label="Цвет">
+                          <ExcelColumnFilterMenu
+                            title="Цвет"
+                            searchValue={shipColFilters.color ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, color: v }))}
+                            onSortAscText={() => {
+                              setShippingSort("color");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setShippingSort("color");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[56px] whitespace-nowrap`} label="Размер">
+                          <ExcelColumnFilterMenu
+                            title="Размер"
+                            searchValue={shipColFilters.size ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, size: v }))}
+                            onSortAscText={() => {
+                              setShippingSort("size");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setShippingSort("size");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[64px] whitespace-nowrap`} label="МП">
+                          <ExcelColumnFilterMenu
+                            title="МП"
+                            searchValue={shipColFilters.mp ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, mp: v }))}
+                            onSortAscText={() => {
+                              setShippingSort("marketplace");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescText={() => {
+                              setShippingSort("marketplace");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`} label="План всего">
+                          <ExcelColumnFilterMenu
+                            title="План всего"
+                            searchValue={shipColFilters.plan ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, plan: v }))}
+                            onSortAscNum={() => {
+                              setShippingSort("plan");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescNum={() => {
+                              setShippingSort("plan");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
+                        <ExcelThWithFilter className={`${STATIC_HEADER_BASE} w-[72px] text-center tabular-nums`} label="Факт всего">
+                          <ExcelColumnFilterMenu
+                            title="Факт всего"
+                            searchValue={shipColFilters.fact ?? ""}
+                            onSearchChange={(v) => setShipColFilters((s) => ({ ...s, fact: v }))}
+                            onSortAscNum={() => {
+                              setShippingSort("fact");
+                              setShipSortDir("asc");
+                            }}
+                            onSortDescNum={() => {
+                              setShippingSort("fact");
+                              setShipSortDir("desc");
+                            }}
+                          />
+                        </ExcelThWithFilter>
                         {shippingMatrix.warehouses.map((wh, wi) => (
                           <th
                             key={wh}
@@ -2545,11 +3035,10 @@ const LegalEntityDetailsPage = () => {
                       ) : (
                         shippingMatrix.lines.map((line, idx) => {
                           const ld = outboundRowDrafts[line.leaderShipmentId];
-                          let rowAlert = false;
+                          let scanErr = false;
                           line.byWarehouse.forEach((c) => {
                             c.shipments.forEach((sh) => {
-                              if (scanErrorByShipment[sh.id]) rowAlert = true;
-                              if (effOutboundFact(sh) > effOutboundPlanned(sh)) rowAlert = true;
+                              if (scanErrorByShipment[sh.id]) scanErr = true;
                             });
                           });
                           let totalPlanDraft = 0;
@@ -2560,9 +3049,11 @@ const LegalEntityDetailsPage = () => {
                               totalFactDraft += effOutboundFact(sh);
                             });
                           });
-                          const zebra = idx % 2 === 0 ? "bg-white" : "bg-slate-50/95";
-                          const rowBg = rowAlert ? "bg-red-100/85 dark:bg-red-950/35" : zebra;
-                          const cellBase = `border-b border-r border-slate-200 px-2 py-1.5 align-middle ${rowBg}`;
+                          const planMismatch = totalPlanDraft !== totalFactDraft;
+                          const rowBg = excelRowBg(idx, false);
+                          const cellBase = `border-b border-r border-slate-200 px-2 py-1.5 align-middle text-[11px] ${rowBg}`;
+                          const diffPlanFact = planMismatch ? "bg-red-50/90 ring-1 ring-inset ring-red-300/70" : "";
+                          const scanHighlight = scanErr ? "bg-amber-50/80 ring-1 ring-inset ring-amber-400/70" : "";
                           const mpLabel =
                             line.marketplace === "wb" ? "WB" : line.marketplace === "ozon" ? "Ozon" : "Яндекс";
                           return (
@@ -2589,7 +3080,7 @@ const LegalEntityDetailsPage = () => {
                                   <span className="block whitespace-nowrap">{(ld?.supplierArticle ?? line.article) || "—"}</span>
                                 )}
                               </td>
-                              <td className={`${cellBase} whitespace-nowrap font-mono`}>
+                              <td className={`${cellBase} whitespace-nowrap font-mono ${scanHighlight}`}>
                                 {shippingMatrixEdit ? (
                                   <Input
                                     className="h-7 min-w-[140px] border-slate-300 bg-white px-1.5 text-[11px] font-mono"
@@ -2643,8 +3134,8 @@ const LegalEntityDetailsPage = () => {
                                   mpLabel
                                 )}
                               </td>
-                              <td className={`${cellBase} text-center tabular-nums font-medium`}>{totalPlanDraft}</td>
-                              <td className={`${cellBase} text-center tabular-nums`}>{totalFactDraft}</td>
+                              <td className={`${cellBase} text-center tabular-nums font-medium ${diffPlanFact}`}>{totalPlanDraft}</td>
+                              <td className={`${cellBase} text-center tabular-nums ${diffPlanFact}`}>{totalFactDraft}</td>
                               {shippingMatrix.warehouses.map((wh) => {
                                 const cell = line.byWarehouse.get(wh);
                                 const whCell = `${cellBase} text-center tabular-nums`;
@@ -2685,107 +3176,103 @@ const LegalEntityDetailsPage = () => {
                 </div>
               </CardContent>
             </Card>
-
-            <aside className="w-full shrink-0 xl:w-[400px] xl:max-w-[42vw]">
-              <Card className="border-slate-200 shadow-sm xl:sticky xl:top-4">
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm font-semibold">Упаковщик</CardTitle>
-                  <p className="text-[11px] leading-snug text-muted-foreground">
-                    Сканирование и короба — рядом с таблицей, без прокрутки вниз страницы.
-                  </p>
-                </CardHeader>
-                <CardContent className="max-h-[min(70vh,720px)] space-y-3 overflow-y-auto pr-1 text-[11px]">
-                  {shippingRows.map((row) => {
-                    const x = row.shipment;
-                    const boxes = x.boxes ?? [];
-                    const activeBox = boxes.find((b) => b.id === x.activeBoxId) ?? null;
-                    return (
-                      <div key={`pack-${x.id}`} className="rounded-md border border-slate-200 bg-slate-50/50 p-2.5">
-                        <div className="mb-2 space-y-1">
-                          <p className="whitespace-nowrap font-medium text-slate-800">
-                            {row.article || "—"} · <span className="font-mono">{row.barcode || "—"}</span>
-                          </p>
-                          <p className="text-muted-foreground">
-                            План: {row.plan} · Упаковано: {x.packedUnits} · {x.sourceWarehouse}
-                          </p>
-                        </div>
-                        <div className="mb-2 flex flex-wrap items-center gap-2">
-                          <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void onAddBox(x.id)}>
-                            Добавить короб
-                          </Button>
-                          <Input
-                            className="h-7 min-w-[140px] flex-1 font-mono text-[11px]"
-                            placeholder={activeBox ? "Скан баркода" : "Сначала «Открыть» короб"}
-                            disabled={!activeBox}
-                            value={scanDraftByShipment[x.id] ?? ""}
-                            onChange={(e) => setScanDraftByShipment((s) => ({ ...s, [x.id]: e.target.value }))}
-                          />
-                          <Button size="sm" className="h-7 text-[11px]" onClick={() => void onScanIntoActiveBox(x.id)}>
-                            В короб
-                          </Button>
-                        </div>
-                        {activeBox && <p className="mb-2 text-[10px] text-slate-500">Активный короб: {activeBox.id}</p>}
-                        <div className="space-y-2">
-                          {boxes.map((box) => (
-                            <div key={box.id} className="grid gap-1.5 rounded border border-slate-200 bg-white p-2">
-                              <Input
-                                disabled={!shippingMatrixEdit}
-                                className="h-7 text-[11px]"
-                                placeholder="ШК короба (из ЛК)"
-                                value={box.clientBoxBarcode}
-                                onChange={(e) =>
-                                  void updateOutboundDraft({
-                                    id: x.id,
-                                    patch: {
-                                      boxes: boxes.map((b) => (b.id === box.id ? { ...b, clientBoxBarcode: e.target.value } : b)),
-                                    },
-                                  })
-                                }
-                              />
-                              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                                <Input
-                                  disabled={!shippingMatrixEdit}
-                                  className="h-7 text-[11px]"
-                                  placeholder="Номер поставки"
-                                  value={x.supplyNumber}
-                                  onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { supplyNumber: e.target.value } })}
-                                />
-                                <Input
-                                  disabled={!shippingMatrixEdit}
-                                  className="h-7 text-[11px]"
-                                  placeholder="ШК пропуска"
-                                  value={x.gateBarcode}
-                                  onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { gateBarcode: e.target.value } })}
-                                />
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 text-[11px]"
-                                  onClick={() => void updateOutboundDraft({ id: x.id, patch: { activeBoxId: box.id } })}
-                                >
-                                  Открыть
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 text-[11px]"
-                                  onClick={() => setQrBoxPayload({ barcode: box.clientBoxBarcode || box.id, warehouse: x.sourceWarehouse })}
-                                >
-                                  QR
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </CardContent>
-              </Card>
-            </aside>
           </div>
+        </TabsContent>
+
+        <TabsContent value="packer" className="space-y-3">
+          <p className="text-sm text-slate-600">Сканирование и короба по отгрузкам клиента (отдельный модуль).</p>
+          <Card className="border-slate-200 shadow-sm">
+            <CardContent className="max-h-[min(78vh,820px)] space-y-3 overflow-y-auto p-3 text-[11px]">
+              {shippingRows.map((row) => {
+                const x = row.shipment;
+                const boxes = x.boxes ?? [];
+                const activeBox = boxes.find((b) => b.id === x.activeBoxId) ?? null;
+                const packerFieldsEnabled = canChangeOutboundStatus(role);
+                return (
+                  <div key={`pack-${x.id}`} className="rounded-md border border-slate-200 bg-slate-50/50 p-2.5">
+                    <div className="mb-2 space-y-1">
+                      <p className="whitespace-nowrap font-medium text-slate-800">
+                        {row.article || "—"} · <span className="font-mono">{row.barcode || "—"}</span>
+                      </p>
+                      <p className="text-muted-foreground">
+                        План: {row.plan} · Упаковано: {x.packedUnits} · {x.sourceWarehouse}
+                      </p>
+                    </div>
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void onAddBox(x.id)}>
+                        Добавить короб
+                      </Button>
+                      <Input
+                        className="h-7 min-w-[140px] flex-1 font-mono text-[11px]"
+                        placeholder={activeBox ? "Скан баркода" : "Сначала «Открыть» короб"}
+                        disabled={!activeBox}
+                        value={scanDraftByShipment[x.id] ?? ""}
+                        onChange={(e) => setScanDraftByShipment((s) => ({ ...s, [x.id]: e.target.value }))}
+                      />
+                      <Button size="sm" className="h-7 text-[11px]" onClick={() => void onScanIntoActiveBox(x.id)}>
+                        В короб
+                      </Button>
+                    </div>
+                    {activeBox && <p className="mb-2 text-[10px] text-slate-500">Активный короб: {activeBox.id}</p>}
+                    <div className="space-y-2">
+                      {boxes.map((box) => (
+                        <div key={box.id} className="grid gap-1.5 rounded border border-slate-200 bg-white p-2">
+                          <Input
+                            disabled={!packerFieldsEnabled}
+                            className="h-7 text-[11px]"
+                            placeholder="ШК короба (из ЛК)"
+                            value={box.clientBoxBarcode}
+                            onChange={(e) =>
+                              void updateOutboundDraft({
+                                id: x.id,
+                                patch: {
+                                  boxes: boxes.map((b) => (b.id === box.id ? { ...b, clientBoxBarcode: e.target.value } : b)),
+                                },
+                              })
+                            }
+                          />
+                          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                            <Input
+                              disabled={!packerFieldsEnabled}
+                              className="h-7 text-[11px]"
+                              placeholder="Номер поставки"
+                              value={x.supplyNumber}
+                              onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { supplyNumber: e.target.value } })}
+                            />
+                            <Input
+                              disabled={!packerFieldsEnabled}
+                              className="h-7 text-[11px]"
+                              placeholder="ШК пропуска"
+                              value={x.gateBarcode}
+                              onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { gateBarcode: e.target.value } })}
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              onClick={() => void updateOutboundDraft({ id: x.id, patch: { activeBoxId: box.id } })}
+                            >
+                              Открыть
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px]"
+                              onClick={() => setQrBoxPayload({ barcode: box.clientBoxBarcode || box.id, warehouse: x.sourceWarehouse })}
+                            >
+                              QR
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="history">
