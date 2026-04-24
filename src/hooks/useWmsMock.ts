@@ -11,10 +11,15 @@ import type {
   WarehouseInventoryRow,
 } from "@/types/domain";
 import { appendMockOutbound, fetchMockOutboundShipments } from "@/services/mockOutbound";
-import { appendMockInbound, fetchMockInboundSupplies } from "@/services/mockReceiving";
+import { appendMockInbound, fetchMockInboundSupplies, saveMockInbound } from "@/services/mockReceiving";
 import { closeOperationalDay } from "@/services/financeCloseDay";
 import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
-import { appendMockProductCatalogItem, fetchMockProductCatalog, updateMockProductCatalogItem } from "@/services/mockProductCatalog";
+import {
+  appendMockProductCatalogItem,
+  fetchMockProductCatalog,
+  saveMockProductCatalog,
+  updateMockProductCatalogItem,
+} from "@/services/mockProductCatalog";
 import {
   appendMockLegalEntity,
   appendMockOrgUser,
@@ -78,6 +83,7 @@ export function useInboundSupplies() {
     },
     onSuccess: async (data, vars) => {
       qc.setQueryData(["wms", "inbound"], data);
+      saveMockInbound(data);
       const history = qc.getQueryData<OperationHistoryEvent[]>(["wms", "operation-history"]) ?? (await fetchMockOperationHistory());
       qc.setQueryData(
         ["wms", "operation-history"],
@@ -129,6 +135,8 @@ export function useInboundSupplies() {
     onSuccess: ({ inbound, catalog }) => {
       qc.setQueryData(["wms", "inbound"], inbound);
       qc.setQueryData(["wms", "product-catalog"], catalog);
+      saveMockInbound(inbound);
+      saveMockProductCatalog(catalog);
     },
   });
 
@@ -147,7 +155,10 @@ export function useInboundSupplies() {
           : x,
       );
     },
-    onSuccess: (data) => qc.setQueryData(["wms", "inbound"], data),
+    onSuccess: (data) => {
+      qc.setQueryData(["wms", "inbound"], data);
+      saveMockInbound(data);
+    },
   });
 
   return {
@@ -185,6 +196,7 @@ export function useOutboundShipments() {
     onSuccess: ({ nextOutbound, nextCatalog }) => {
       qc.setQueryData(["wms", "outbound"], nextOutbound);
       qc.setQueryData(["wms", "product-catalog"], nextCatalog);
+      saveMockProductCatalog(nextCatalog);
     },
   });
 
@@ -218,6 +230,7 @@ export function useOutboundShipments() {
     onSuccess: ({ outbound, catalog }) => {
       qc.setQueryData(["wms", "outbound"], outbound);
       qc.setQueryData(["wms", "product-catalog"], catalog);
+      saveMockProductCatalog(catalog);
     },
   });
 
@@ -267,14 +280,20 @@ export function useProductCatalog() {
       const cur = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
       return appendMockProductCatalogItem(cur, draft);
     },
-    onSuccess: (data) => qc.setQueryData(["wms", "product-catalog"], data),
+    onSuccess: (data) => {
+      qc.setQueryData(["wms", "product-catalog"], data);
+      saveMockProductCatalog(data);
+    },
   });
   const update = useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<ProductCatalogItem> }) => {
       const cur = qc.getQueryData<ProductCatalogItem[]>(["wms", "product-catalog"]) ?? (await fetchMockProductCatalog());
       return updateMockProductCatalogItem(cur, id, patch);
     },
-    onSuccess: (data) => qc.setQueryData(["wms", "product-catalog"], data),
+    onSuccess: (data) => {
+      qc.setQueryData(["wms", "product-catalog"], data);
+      saveMockProductCatalog(data);
+    },
   });
   return {
     ...query,

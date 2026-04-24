@@ -120,6 +120,10 @@ function pickByAliases(row: Record<string, unknown>, aliases: string[]) {
   return "";
 }
 
+function normalizeCode(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function rowToDraft(item: ProductCatalogItem): RowDraft {
   return {
     name: item.name,
@@ -723,7 +727,7 @@ const LegalEntityDetailsPage = () => {
       return {
         name: text(pickByAliases(row, ["Название"])),
         barcode: text(pickByAliases(row, ["Баркод"])),
-        supplierArticle: text(pickByAliases(row, ["Артикул"])),
+        supplierArticle: text(pickByAliases(row, ["Артикул", "Vendor Code", "vendor code"])),
         color: text(pickByAliases(row, ["Цвет"])),
         size: text(pickByAliases(row, ["Размер"])),
         plannedQuantity: Number.isFinite(planned) ? planned : 0,
@@ -733,42 +737,72 @@ const LegalEntityDetailsPage = () => {
 
   const importInboundExcel = async () => {
     if (!entity) return;
-    let created = 0;
     let skipped = 0;
     const docNo = `ПТ-${Date.now().toString().slice(-6)}`;
+    const dedupedByBarcode = new Map<string, InboundImportPreviewRow>();
     for (const row of inboundExcelRows) {
+      const key = normalizeCode(row.barcode);
+      if (!key) {
+        skipped += 1;
+        continue;
+      }
+      const prev = dedupedByBarcode.get(key);
+      if (!prev) {
+        dedupedByBarcode.set(key, { ...row });
+      } else {
+        dedupedByBarcode.set(key, {
+          ...prev,
+          plannedQuantity: prev.plannedQuantity + (Number(row.plannedQuantity) || 0),
+        });
+      }
+    }
+
+    const items: Array<{
+      productId?: string;
+      barcode: string;
+      supplierArticle: string;
+      name: string;
+      color: string;
+      size: string;
+      plannedQuantity: number;
+      factualQuantity: number;
+    }> = [];
+    for (const row of dedupedByBarcode.values()) {
       const product = findProductByInboundPreview(row);
-      const qty = Number(row.plannedQuantity) || 0;
       if (!product) {
         skipped += 1;
         continue;
       }
-      await createInbound({
-        legalEntityId: entity.id,
-        documentNo: docNo,
-        supplier: "Импорт Excel",
-        items: [
-          {
-            productId: product.id,
-            barcode: product.barcode,
-            supplierArticle: product.supplierArticle,
-            name: row.name || product.name,
-            color: row.color || product.color,
-            size: row.size || product.size,
-            plannedQuantity: qty,
-            factualQuantity: 0,
-          },
-        ],
-        destinationWarehouse: "Склад Коледино",
-        marketplace: "wb",
-        expectedUnits: qty,
-        receivedUnits: null,
-        status: "ожидается",
-        eta: new Date().toISOString().slice(0, 10),
+      items.push({
+        productId: product.id,
+        barcode: row.barcode || product.barcode,
+        supplierArticle: row.supplierArticle || product.supplierArticle,
+        name: row.name || product.name,
+        color: row.color || product.color,
+        size: row.size || product.size,
+        plannedQuantity: Number(row.plannedQuantity) || 0,
+        factualQuantity: 0,
       });
-      created += 1;
     }
-    toast.success(`Импорт приёмки: добавлено ${created}, пропущено ${skipped}`);
+    if (!items.length) {
+      toast.error("Нет валидных строк для импорта");
+      return;
+    }
+    const totalPlanned = items.reduce((s, it) => s + it.plannedQuantity, 0);
+    await createInbound({
+      legalEntityId: entity.id,
+      documentNo: docNo,
+      supplier: "Импорт Excel",
+      items,
+      destinationWarehouse: "Склад Коледино",
+      marketplace: "wb",
+      expectedUnits: totalPlanned,
+      receivedUnits: null,
+      status: "ожидается",
+      eta: new Date().toISOString().slice(0, 10),
+    });
+    toast.success(`Успешно загружено ${items.length} уникальных строк`);
+    if (skipped > 0) toast.message(`Пропущено строк: ${skipped}`);
     setInboundExcelOpen(false);
     setInboundExcelRows([]);
   };
@@ -1124,7 +1158,13 @@ const LegalEntityDetailsPage = () => {
                 <Download className="h-4 w-4" />
                 Скачать шаблон
               </Button>
-              <Dialog open={inboundExcelOpen} onOpenChange={setInboundExcelOpen}>
+              <Dialog
+                open={inboundExcelOpen}
+                onOpenChange={(next) => {
+                  setInboundExcelOpen(next);
+                  if (!next) setInboundExcelRows([]);
+                }}
+              >
                 <DialogTrigger asChild>
                   <Button variant="outline" className="gap-2">
                     <FileSpreadsheet className="h-4 w-4" />
@@ -1140,6 +1180,7 @@ const LegalEntityDetailsPage = () => {
                       onChange={(e) => {
                         const f = e.target.files?.[0];
                         if (!f) return;
+                        setInboundExcelRows([]);
                         void parseExcelRows(f).then((raw) => setInboundExcelRows(parseInboundImportRows(raw)));
                       }}
                     />
