@@ -61,7 +61,19 @@ const AppShellLayout = () => {
   const { data: outbound } = useOutboundShipments();
 
   const inboundBadge = (inbound ?? []).filter((x) => x.status !== "принято").length;
-  const outboundBadge = (outbound ?? []).filter((x) => x.status !== "отгружено").length;
+  const outboundBadge = (() => {
+    const rows = outbound ?? [];
+    const activeAssignments = new Set<string>();
+    for (const row of rows) {
+      const plan = Number(row.plannedUnits) || 0;
+      const fact = Number(row.packedUnits ?? row.shippedUnits ?? 0) || 0;
+      const isActive = row.status !== "отгружено" && fact < plan;
+      if (!isActive) continue;
+      const assignmentKey = `${row.legalEntityId}::${row.assignmentId ?? row.assignmentNo ?? row.id}`;
+      activeAssignments.add(assignmentKey);
+    }
+    return activeAssignments.size;
+  })();
 
   const navBadge = (to: string) => {
     if (to === "/receiving") return inboundBadge;

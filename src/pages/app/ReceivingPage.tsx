@@ -1,27 +1,27 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { format, parseISO } from "date-fns";
+import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
-import { EXCEL_TABLE_BASE, EXCEL_TABLE_WRAP, STATIC_HEADER_BASE, excelRowBg } from "@/lib/excelTableStyles";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
-import type { Marketplace } from "@/types/domain";
+import type { InboundSupply, Marketplace } from "@/types/domain";
+import { toast } from "sonner";
 
 const ReceivingPage = () => {
   const queryClient = useQueryClient();
-  const { data, isLoading, error } = useInboundSupplies();
+  const { data, isLoading, error, updateInboundDraft, setInboundStatus, isUpdatingInboundDraft, isUpdatingInbound } = useInboundSupplies();
   const { data: entities } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
-  const [sortKey, setSortKey] = React.useState<"entity" | "planned" | "fact">("entity");
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+  const [startedSupplyId, setStartedSupplyId] = React.useState<string | null>(null);
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -30,43 +30,51 @@ const ReceivingPage = () => {
 
   const rows = React.useMemo(() => {
     const base = filterInboundByMarketplace(data ?? [], mp);
-    if (legalEntityId === "all") return base;
-    return base.filter((r) => r.legalEntityId === legalEntityId);
-  }, [data, mp, legalEntityId]);
-  const summaryRows = React.useMemo(() => {
-    const grouped = new Map<string, { legalEntityId: string; planned: number; fact: number; warehouses: Set<string>; statuses: Set<string> }>();
-    for (const r of rows) {
-      const cur = grouped.get(r.legalEntityId) ?? {
-        legalEntityId: r.legalEntityId,
-        planned: 0,
-        fact: 0,
-        warehouses: new Set<string>(),
-        statuses: new Set<string>(),
-      };
-      cur.planned += r.items.reduce((s, it) => s + it.plannedQuantity, 0);
-      cur.fact += r.items.reduce((s, it) => s + it.factualQuantity, 0);
-      cur.warehouses.add(r.destinationWarehouse);
-      cur.statuses.add(r.status);
-      grouped.set(r.legalEntityId, cur);
-    }
-    const arr = Array.from(grouped.values()).map((x) => ({
-      ...x,
-      entity: entityName(x.legalEntityId),
-    }));
-    const s = search.trim().toLowerCase();
-    const filteredRows = arr.filter((r) => !s || r.entity.toLowerCase().includes(s));
-    const dir = sortDir === "asc" ? 1 : -1;
-    return [...filteredRows].sort((a, b) => {
-      if (sortKey === "planned") return (a.planned - b.planned) * dir;
-      if (sortKey === "fact") return (a.fact - b.fact) * dir;
-      return a.entity.localeCompare(b.entity, "ru") * dir;
+    const byEntity = legalEntityId === "all" ? base : base.filter((r) => r.legalEntityId === legalEntityId);
+    const activeOnly = byEntity.filter((r) => r.status !== "принято");
+    const q = search.trim().toLowerCase();
+    if (!q) return activeOnly;
+    return activeOnly.filter((r) => {
+      const label = `${r.documentNo} ${entityName(r.legalEntityId)} ${r.supplier}`.toLowerCase();
+      return label.includes(q);
     });
-  }, [rows, entityName, search, sortDir, sortKey]);
-  const onSort = (key: "entity" | "planned" | "fact") => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
+  }, [data, mp, legalEntityId]);
+  const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
+  const receivingStarted = startedSupply?.status === "на приёмке";
+
+  const totals = React.useMemo(() => {
+    if (!startedSupply) return { plan: 0, fact: 0, done: false };
+    const plan = startedSupply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+    const fact = startedSupply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
+    return { plan, fact, done: plan > 0 && plan === fact };
+  }, [startedSupply]);
+
+  const mutateItemFact = async (supply: InboundSupply, index: number, value: number) => {
+    const nextValue = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+    const nextItems = supply.items.map((item, idx) => (idx === index ? { ...item, factualQuantity: nextValue } : item));
+    await updateInboundDraft({ id: supply.id, items: nextItems });
+    await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
+  };
+
+  const startReceiving = async (supply: InboundSupply) => {
+    try {
+      await setInboundStatus({ id: supply.id, status: "на приёмке" });
+      setStartedSupplyId(supply.id);
+      await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
+    } catch {
+      toast.error("Не удалось запустить приёмку.");
+    }
+  };
+
+  const closeReceiving = async () => {
+    if (!startedSupply || !totals.done) return;
+    try {
+      await setInboundStatus({ id: startedSupply.id, status: "принято", receivedUnits: totals.fact });
+      await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
+      setStartedSupplyId(null);
+      toast.success("Приёмка закрыта и убрана из активных.");
+    } catch {
+      toast.error("Не удалось закрыть приёмку.");
     }
   };
 
@@ -80,6 +88,12 @@ const ReceivingPage = () => {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [queryClient]);
+
+  React.useEffect(() => {
+    if (startedSupplyId && !rows.some((r) => r.id === startedSupplyId)) {
+      setStartedSupplyId(null);
+    }
+  }, [rows, startedSupplyId]);
 
 
   return (
@@ -112,73 +126,122 @@ const ReceivingPage = () => {
 
       <GlobalFiltersBar />
 
-      <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader>
-          <CardTitle className="font-display text-lg text-slate-900">Поставки</CardTitle>
-          <CardDescription className="text-slate-500">Статусы: ожидается → на приёмке → принято</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0 sm:p-2">
-          {isLoading ? (
-            <div className="space-y-2 p-6">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
+      {!startedSupply ? (
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle className="font-display text-lg text-slate-900">Очередь на приёмку</CardTitle>
+            <CardDescription className="text-slate-500">Возьмите документ в работу кнопкой "Начать приёмку".</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                <Skeleton className="h-36 w-full" />
+                <Skeleton className="h-36 w-full" />
+              </div>
+            ) : error ? (
+              <p className="p-2 text-sm text-destructive">Не удалось загрузить список.</p>
+            ) : rows.length === 0 ? (
+              <p className="text-sm text-slate-600">Активных задач по приёмке нет.</p>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {rows.map((supply) => {
+                  const planUnits = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+                  const dateLabel = supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy", { locale: ru }) : "без даты";
+                  return (
+                    <Card key={supply.id} className="border-slate-200">
+                      <CardHeader className="space-y-2 pb-2">
+                        <CardTitle className="text-base">№ {supply.documentNo}</CardTitle>
+                        <CardDescription>{entityName(supply.legalEntityId)}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="text-sm text-slate-600">
+                          <p>Дата: {dateLabel}</p>
+                          <p>Товаров по плану: {planUnits}</p>
+                        </div>
+                        <Button className="h-11 w-full text-base" onClick={() => void startReceiving(supply)}>
+                          Начать приёмку
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {startedSupply ? (
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle className="font-display text-lg text-slate-900">Документ {startedSupply.documentNo}</CardTitle>
+            <CardDescription>{entityName(startedSupply.legalEntityId)}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-slate-900">Принято {totals.fact} из {totals.plan}</span>
+                <span className="text-slate-600">{totals.plan > 0 ? Math.round((totals.fact / totals.plan) * 100) : 0}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-all"
+                  style={{ width: `${totals.plan > 0 ? Math.min(100, Math.round((totals.fact / totals.plan) * 100)) : 0}%` }}
+                />
+              </div>
             </div>
-          ) : error ? (
-            <p className="p-6 text-sm text-destructive">Не удалось загрузить список.</p>
-          ) : (
-            <div className={EXCEL_TABLE_WRAP}>
-              <table className={EXCEL_TABLE_BASE}>
-                <thead>
+
+            <div className="overflow-x-auto rounded-md border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100">
                   <tr>
-                    <th
-                      className={`${STATIC_HEADER_BASE} min-w-[160px] cursor-pointer whitespace-nowrap`}
-                      onClick={() => onSort("entity")}
-                    >
-                      Юрлицо
-                    </th>
-                    <th
-                      className={`${STATIC_HEADER_BASE} w-[120px] cursor-pointer text-right tabular-nums`}
-                      onClick={() => onSort("planned")}
-                    >
-                      План
-                    </th>
-                    <th
-                      className={`${STATIC_HEADER_BASE} w-[120px] cursor-pointer text-right tabular-nums`}
-                      onClick={() => onSort("fact")}
-                    >
-                      Факт
-                    </th>
-                    <th className={`${STATIC_HEADER_BASE} min-w-[140px] whitespace-nowrap`}>Склад</th>
-                    <th className={`${STATIC_HEADER_BASE} min-w-[120px]`}>Статусы</th>
+                    <th className="border-b border-r px-3 py-2 text-left font-medium">Артикул</th>
+                    <th className="border-b border-r px-3 py-2 text-left font-medium">Наименование</th>
+                    <th className="border-b border-r px-3 py-2 text-right font-medium">План</th>
+                    <th className="border-b px-3 py-2 text-right font-medium">Факт</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {summaryRows.map((row, idx) => {
-                    const bg = excelRowBg(idx, false);
-                    const cell = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${bg}`;
-                    return (
-                      <tr key={row.legalEntityId}>
-                        <td className={`${cell} max-w-[220px]`}>
-                          <Link
-                            to={`/legal-entities/${row.legalEntityId}?tab=receiving`}
-                            className="block whitespace-nowrap font-medium text-slate-900 hover:underline"
-                          >
-                            {row.entity}
-                          </Link>
-                        </td>
-                        <td className={`${cell} text-right tabular-nums font-medium`}>{row.planned}</td>
-                        <td className={`${cell} text-right tabular-nums`}>{row.fact}</td>
-                        <td className={`${cell} whitespace-nowrap`}>{Array.from(row.warehouses).join(", ")}</td>
-                        <td className={cell}>{Array.from(row.statuses).join(", ")}</td>
-                      </tr>
-                    );
-                  })}
+                  {startedSupply.items.map((item, index) => (
+                    <tr key={`${startedSupply.id}-${item.barcode}-${index}`} className="odd:bg-white even:bg-slate-50/50">
+                      <td className="border-b border-r px-3 py-2">{item.supplierArticle || "—"}</td>
+                      <td className="border-b border-r px-3 py-2">{item.name || item.barcode || "—"}</td>
+                      <td className="border-b border-r px-3 py-2 text-right tabular-nums">{item.plannedQuantity}</td>
+                      <td className="border-b px-3 py-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={item.factualQuantity}
+                          disabled={!receivingStarted || isUpdatingInboundDraft}
+                          className="h-9 text-right tabular-nums"
+                          onChange={(e) => {
+                            const value = Number(e.target.value);
+                            void mutateItemFact(startedSupply, index, value);
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </CardContent>
-      </Card>
+
+            {!receivingStarted ? (
+              <Button className="h-11 w-full max-w-sm" onClick={() => void startReceiving(startedSupply)} disabled={isUpdatingInbound}>
+                Начать приёмку
+              </Button>
+            ) : null}
+            {receivingStarted && totals.done ? (
+              <Button className="h-11 w-full max-w-sm" onClick={() => void closeReceiving()} disabled={isUpdatingInbound}>
+                Закрыть приёмку
+              </Button>
+            ) : null}
+            <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedSupplyId(null)}>
+              Вернуться к списку заданий
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 };

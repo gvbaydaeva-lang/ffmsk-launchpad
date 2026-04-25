@@ -5,7 +5,6 @@ import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
@@ -27,16 +26,18 @@ type ScanLine = {
 };
 
 const PackingPage = () => {
-  const { data: outbound, isLoading, error, updateOutboundDraft, isUpdatingOutboundDraft } = useOutboundShipments();
+  const { data: outbound, isLoading, error, updateOutboundDraft, setOutboundStatus, isUpdatingOutboundDraft, isUpdatingOutbound } =
+    useOutboundShipments();
   useInboundSupplies();
   const { data: catalog } = useProductCatalog();
   const { data: legal } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
   const queryClient = useQueryClient();
-  const [selectedAssignmentId, setSelectedAssignmentId] = React.useState("");
   const [startedAssignmentId, setStartedAssignmentId] = React.useState<string | null>(null);
   const [scanValue, setScanValue] = React.useState("");
   const [isSubmittingScan, setIsSubmittingScan] = React.useState(false);
+  const [flashState, setFlashState] = React.useState<"ok" | "error" | null>(null);
+  const scanInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const allShipments = React.useMemo(() => {
     const rows = outbound ?? [];
@@ -65,10 +66,11 @@ const PackingPage = () => {
         existing.shipments.push(sh);
       }
     }
-    return Array.from(groups.values()).sort((a, b) => a.display.localeCompare(b.display, "ru"));
+    return Array.from(groups.values())
+      .filter((group) => group.shipments.some((sh) => (Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0) < (Number(sh.plannedUnits) || 0)))
+      .sort((a, b) => a.display.localeCompare(b.display, "ru"));
   }, [allShipments, legal]);
 
-  const selectedAssignment = assignments.find((x) => x.id === selectedAssignmentId) ?? null;
   const startedAssignment = assignments.find((x) => x.id === startedAssignmentId) ?? null;
 
   const scanLines = React.useMemo<ScanLine[]>(() => {
@@ -105,17 +107,63 @@ const PackingPage = () => {
     return Array.from(lineMap.values()).sort((a, b) => a.article.localeCompare(b.article, "ru"));
   }, [startedAssignment, catalog]);
 
+  const progress = React.useMemo(() => {
+    const totalPlan = scanLines.reduce((sum, line) => sum + line.plan, 0);
+    const totalFact = scanLines.reduce((sum, line) => sum + line.fact, 0);
+    return { totalPlan, totalFact, percent: totalPlan > 0 ? Math.min(100, Math.round((totalFact / totalPlan) * 100)) : 0 };
+  }, [scanLines]);
+
+  const triggerFlash = React.useCallback((kind: "ok" | "error") => {
+    setFlashState(kind);
+    window.setTimeout(() => setFlashState(null), 500);
+  }, []);
+
+  const playErrorSignal = React.useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "square";
+      oscillator.frequency.value = 220;
+      gain.gain.value = 0.1;
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      window.setTimeout(() => {
+        oscillator.stop();
+        void ctx.close();
+      }, 120);
+    } catch {
+      // ignore audio errors in restricted browser environments
+    }
+  }, []);
+
+  const focusScanInput = React.useCallback(() => {
+    window.setTimeout(() => {
+      scanInputRef.current?.focus();
+      scanInputRef.current?.select();
+    }, 0);
+  }, []);
+
   const applyScan = async () => {
     const code = scanValue.trim();
     if (!code || !startedAssignment) return;
     const line = scanLines.find((x) => x.barcode && x.barcode === code && x.fact < x.plan);
     if (!line) {
+      triggerFlash("error");
+      playErrorSignal();
       toast.error("Штрихкод не найден в задании или план уже выполнен.");
+      focusScanInput();
       return;
     }
     const target = line.shipmentRefs.find((r) => r.fact < r.plan);
     if (!target) {
+      triggerFlash("error");
+      playErrorSignal();
       toast.error("Для позиции нет доступного остатка по плану.");
+      focusScanInput();
       return;
     }
     const shipment = startedAssignment.shipments.find((x) => x.id === target.shipmentId);
@@ -132,9 +180,30 @@ const PackingPage = () => {
       });
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
       setScanValue("");
+      triggerFlash("ok");
+      focusScanInput();
       toast.success(`Пик принят: ${line.article || line.barcode}`);
     } finally {
       setIsSubmittingScan(false);
+    }
+  };
+
+  const finalizeAssignment = async () => {
+    if (!startedAssignment || progress.totalPlan === 0 || progress.totalPlan !== progress.totalFact) return;
+    try {
+      for (const sh of startedAssignment.shipments) {
+        const plan = Number(sh.plannedUnits) || 0;
+        await updateOutboundDraft({
+          id: sh.id,
+          patch: { packedUnits: plan, shippedUnits: plan },
+        });
+        await setOutboundStatus({ id: sh.id, status: "отгружено", shippedUnits: plan });
+      }
+      await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+      toast.success("Задание завершено и убрано из активных.");
+      setStartedAssignmentId(null);
+    } catch {
+      toast.error("Не удалось завершить задание. Повторите попытку.");
     }
   };
 
@@ -150,16 +219,21 @@ const PackingPage = () => {
   }, [queryClient]);
 
   React.useEffect(() => {
-    if (selectedAssignmentId && !assignments.some((t) => t.id === selectedAssignmentId)) {
-      setSelectedAssignmentId("");
-    }
     if (startedAssignmentId && !assignments.some((t) => t.id === startedAssignmentId)) {
       setStartedAssignmentId(null);
     }
-  }, [assignments, selectedAssignmentId, startedAssignmentId]);
+  }, [assignments, startedAssignmentId]);
+
+  React.useEffect(() => {
+    if (startedAssignment) focusScanInput();
+  }, [startedAssignment, focusScanInput]);
 
   return (
-    <div className="space-y-4">
+    <div
+      className={`space-y-4 transition-colors duration-150 ${
+        flashState === "ok" ? "bg-emerald-100/80" : flashState === "error" ? "bg-rose-100/80" : ""
+      }`}
+    >
       <div>
         <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Рабочее место упаковщика</h2>
         <p className="mt-1 text-sm text-slate-600">Изолированный модуль физической упаковки и сканирования отгрузок.</p>
@@ -167,57 +241,53 @@ const PackingPage = () => {
 
       <GlobalFiltersBar />
 
-      <Card className="border-slate-200 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base">Выберите задание на отгрузку</CardTitle>
-          <CardDescription>Показываются все задания из общего списка отгрузок (Query Key: ["wms", "outbound"]).</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-          ) : error ? (
-            <p className="text-sm text-destructive">Не удалось загрузить список отгрузок.</p>
-          ) : (
-            <>
-              <Select value={selectedAssignmentId} onValueChange={setSelectedAssignmentId}>
-                <SelectTrigger className="w-full max-w-2xl">
-                  <SelectValue placeholder={assignments.length ? "Выберите отгрузку" : "Заданий нет"} />
-                </SelectTrigger>
-                <SelectContent className="max-h-72 overflow-y-auto">
-                  {assignments.map((row) => {
-                    return (
-                      <SelectItem key={row.id} value={row.id}>
-                        {row.display}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-900">{selectedAssignment ? `Выбрано: ${selectedAssignment.display}` : "Задание не выбрано"}</p>
-                <p className="mt-1 text-xs text-slate-600">
-                  {selectedAssignment
-                    ? `${selectedAssignment.shipments.length} поз. в задании`
-                    : "Выберите задание, чтобы перейти к следующему шагу упаковки."}
-                </p>
+      {!startedAssignment ? (
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base">Очередь заданий на отгрузку</CardTitle>
+            <CardDescription>Выберите документ и возьмите его в сборку.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isLoading ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                <Skeleton className="h-36 w-full" />
+                <Skeleton className="h-36 w-full" />
               </div>
-
-              <Button
-                size="lg"
-                className="h-12 w-full max-w-sm text-base"
-                disabled={!selectedAssignment}
-                onClick={() => setStartedAssignmentId(selectedAssignmentId)}
-              >
-                Начать упаковку
-              </Button>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            ) : error ? (
+              <p className="text-sm text-destructive">Не удалось загрузить список отгрузок.</p>
+            ) : assignments.length === 0 ? (
+              <p className="text-sm text-slate-600">Активных заданий нет.</p>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {assignments.map((assignment) => {
+                  const first = assignment.shipments[0];
+                  const assignmentNo = first?.assignmentNo?.trim() || first?.assignmentId?.trim() || first?.id || "—";
+                  const legalName = legal?.find((x) => x.id === assignment.legalEntityId)?.shortName ?? assignment.legalEntityId;
+                  const dateLabel = first?.createdAt ? format(parseISO(first.createdAt), "dd.MM.yyyy", { locale: ru }) : "без даты";
+                  const totalPlan = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.plannedUnits) || 0), 0);
+                  return (
+                    <Card key={assignment.id} className="border-slate-200">
+                      <CardHeader className="space-y-2 pb-2">
+                        <CardTitle className="text-base">№ {assignmentNo}</CardTitle>
+                        <CardDescription>{legalName}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="text-sm text-slate-600">
+                          <p>Дата: {dateLabel}</p>
+                          <p>Товаров по плану: {totalPlan}</p>
+                        </div>
+                        <Button className="h-11 w-full text-base" onClick={() => setStartedAssignmentId(assignment.id)}>
+                          Взять в сборку
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {startedAssignment ? (
         <Card className="border-slate-200 shadow-sm">
@@ -228,9 +298,11 @@ const PackingPage = () => {
           <CardContent className="space-y-4">
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
+                ref={scanInputRef}
                 placeholder="Введите штрихкод товара"
                 value={scanValue}
                 onChange={(e) => setScanValue(e.target.value)}
+                className="h-14 text-xl"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -241,6 +313,15 @@ const PackingPage = () => {
               <Button onClick={() => void applyScan()} disabled={!scanValue.trim() || isSubmittingScan || isUpdatingOutboundDraft}>
                 {isSubmittingScan || isUpdatingOutboundDraft ? "Обработка..." : "Пикнуть"}
               </Button>
+            </div>
+            <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-slate-900">Собрано {progress.totalFact} из {progress.totalPlan}</span>
+                <span className="text-slate-600">{progress.percent}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${progress.percent}%` }} />
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-md border border-slate-200">
@@ -267,6 +348,19 @@ const PackingPage = () => {
                 </tbody>
               </table>
             </div>
+
+            {progress.totalPlan > 0 && progress.totalPlan === progress.totalFact ? (
+              <Button
+                className="h-11 w-full max-w-sm"
+                onClick={() => void finalizeAssignment()}
+                disabled={isUpdatingOutboundDraft || isUpdatingOutbound}
+              >
+                Завершить отгрузку
+              </Button>
+            ) : null}
+            <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>
+              Вернуться к списку заданий
+            </Button>
           </CardContent>
         </Card>
       ) : null}
