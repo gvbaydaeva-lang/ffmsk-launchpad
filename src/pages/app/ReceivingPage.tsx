@@ -224,6 +224,11 @@ const ReceivingPage = () => {
     }
   }, [rows, startedSupplyId]);
 
+  const backToReceivingList = React.useCallback(() => {
+    console.log("BACK TO RECEIVING LIST", startedSupplyId);
+    setStartedSupplyId(null);
+  }, [startedSupplyId]);
+
 
   return (
     <div className="space-y-4">
@@ -359,7 +364,7 @@ const ReceivingPage = () => {
           legalEntityName={entityName(startedSupply.legalEntityId)}
           isUpdatingInboundDraft={isUpdatingInboundDraft}
           isUpdatingInbound={isUpdatingInbound}
-          onBack={() => setStartedSupplyId(null)}
+          onBack={backToReceivingList}
           onStartReceiving={() => startReceiving(startedSupply)}
           onSaveItems={(items) => saveSupplyItems(startedSupply, items)}
           onComplete={() => closeReceiving()}

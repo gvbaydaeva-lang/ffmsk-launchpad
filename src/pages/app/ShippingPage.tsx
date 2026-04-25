@@ -43,6 +43,7 @@ const ShippingPage = () => {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const detailsRef = React.useRef<HTMLDivElement | null>(null);
 
   const filtered = React.useMemo(() => {
     const base = filterOutboundByMarketplace(data ?? [], mp);
@@ -111,8 +112,19 @@ const ShippingPage = () => {
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
   const toggleSelectedDoc = React.useCallback((id: string) => {
-    setSelectedId((prev) => (prev === id ? null : id));
+    console.log("OPEN SHIPPING TASK", id);
+    setSelectedId((prev) => {
+      const next = prev === id ? null : id;
+      return next;
+    });
   }, []);
+
+  React.useEffect(() => {
+    if (!selectedDoc) return;
+    requestAnimationFrame(() => {
+      detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [selectedDoc]);
 
   return (
     <div className="space-y-4">
@@ -218,7 +230,7 @@ const ShippingPage = () => {
       </Card>
 
       {selectedDoc ? (
-        <Card className="border-slate-200 bg-slate-50/40 shadow-sm">
+        <Card ref={detailsRef} className="border-slate-200 bg-slate-50/40 shadow-sm">
           <CardHeader className="flex-row items-center justify-between">
             <CardTitle className="text-sm">Состав задания {selectedDoc.assignmentNo}</CardTitle>
             <Button variant="outline" size="sm" asChild>
