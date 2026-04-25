@@ -7,6 +7,7 @@ import type {
   Marketplace,
   OutboundShipment,
   OperationHistoryEvent,
+  OperationLog,
   ProductCatalogItem,
   OrgUser,
   WarehouseInventoryRow,
@@ -34,9 +35,10 @@ import {
 } from "@/services/mockWms";
 import { fetchMockWarehouseInventory } from "@/services/mockWarehouseInventory";
 import { addInventoryMovements as pushInventoryMovements, getInventoryBalance, getInventoryMovements } from "@/services/mockInventoryMovements";
+import { addOperationLog as persistOperationLog, fetchOperationLogs } from "@/services/mockOperationLogs";
 import { mergeLegalWarehouseCounts } from "@/services/scanWorkflow";
 
-async function addOperationLog(
+async function pushLegacyOperationHistory(
   qc: ReturnType<typeof useQueryClient>,
   entry: Omit<OperationHistoryEvent, "id">,
 ) {
@@ -49,8 +51,20 @@ export function useInventoryMovements() {
   const query = useQuery({ queryKey: ["wms", "inventory-movements"], queryFn: getInventoryMovements });
   const append = useMutation({
     mutationFn: async (moves: InventoryMovement[]) => pushInventoryMovements(moves),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       qc.setQueryData(["wms", "inventory-movements"], data);
+      const first = variables[0];
+      if (first) {
+        const row = persistOperationLog({
+          type: "INVENTORY_CHANGED",
+          taskId: first.taskId,
+          taskNumber: first.taskNumber,
+          legalEntityId: first.legalEntityId,
+          legalEntityName: first.legalEntityName,
+          description: `Изменение остатков по заданию №${first.taskNumber || first.taskId}`,
+        });
+        qc.setQueryData<OperationLog[]>(["wms", "operation-logs"], (prev) => [row, ...(prev ?? [])]);
+      }
     },
   });
   const balance = React.useMemo(
@@ -130,6 +144,18 @@ export function useInboundSupplies() {
           comment: `Создана приёмка ${vars.documentNo}`,
         }),
       );
+      const legalRows = qc.getQueryData<LegalEntity[]>(["wms", "legal"]) ?? (await fetchMockLegalEntities());
+      const leName = legalRows.find((e) => e.id === vars.legalEntityId)?.shortName ?? vars.legalEntityId;
+      const created = data.find((d) => d.documentNo === vars.documentNo && d.legalEntityId === vars.legalEntityId);
+      const wmsRow = persistOperationLog({
+        type: "RECEIVING_CREATED",
+        legalEntityId: vars.legalEntityId,
+        legalEntityName: leName,
+        taskId: created?.id,
+        taskNumber: vars.documentNo,
+        description: `Создана приёмка №${vars.documentNo}`,
+      });
+      qc.setQueryData<OperationLog[]>(["wms", "operation-logs"], (prev) => [wmsRow, ...(prev ?? [])]);
     },
   });
 
@@ -241,7 +267,7 @@ export function useOutboundShipments() {
       saveMockOutbound(nextOutbound);
       void persistOutboundDurably(nextOutbound);
       saveMockProductCatalog(nextCatalog);
-      await addOperationLog(qc, {
+      await pushLegacyOperationHistory(qc, {
         dateIso: new Date().toISOString(),
         legalEntityId: vars.legalEntityId,
         actor: "Оператор отгрузки",
@@ -250,7 +276,7 @@ export function useOutboundShipments() {
         quantity: vars.plannedUnits,
         comment: `Создана отгрузка ${vars.assignmentNo ?? vars.assignmentId ?? ""}`.trim(),
       });
-      await addOperationLog(qc, {
+      await pushLegacyOperationHistory(qc, {
         dateIso: new Date().toISOString(),
         legalEntityId: vars.legalEntityId,
         actor: "Система",
@@ -259,6 +285,18 @@ export function useOutboundShipments() {
         quantity: vars.plannedUnits,
         comment: "Отгрузка передана в упаковщик",
       });
+      const legalRows = qc.getQueryData<LegalEntity[]>(["wms", "legal"]) ?? (await fetchMockLegalEntities());
+      const leName = legalRows.find((e) => e.id === vars.legalEntityId)?.shortName ?? vars.legalEntityId;
+      const no = (vars.assignmentNo?.trim() || vars.assignmentId?.trim() || "") || "—";
+      const wmsRow = persistOperationLog({
+        type: "SHIPPING_CREATED",
+        legalEntityId: vars.legalEntityId,
+        legalEntityName: leName,
+        taskNumber: no,
+        taskId: vars.assignmentId ?? no,
+        description: `Создана отгрузка №${no}`,
+      });
+      qc.setQueryData<OperationLog[]>(["wms", "operation-logs"], (prev) => [wmsRow, ...(prev ?? [])]);
     },
   });
 
@@ -299,7 +337,7 @@ export function useOutboundShipments() {
       if (vars.status === "отгружено") {
         const row = outbound.find((x) => x.id === vars.id);
         if (row) {
-          await addOperationLog(qc, {
+          await pushLegacyOperationHistory(qc, {
             dateIso: new Date().toISOString(),
             legalEntityId: row.legalEntityId,
             actor: "Упаковщик",
@@ -325,7 +363,7 @@ export function useOutboundShipments() {
       const row = data.find((x) => x.id === vars.id);
       if (!row) return;
       if (vars.patch.workflowStatus === "processing") {
-        await addOperationLog(qc, {
+        await pushLegacyOperationHistory(qc, {
           dateIso: new Date().toISOString(),
           legalEntityId: row.legalEntityId,
           actor: "Упаковщик",
@@ -337,7 +375,7 @@ export function useOutboundShipments() {
       }
       const hasScanUpdate = typeof vars.patch.packedUnits === "number" || typeof vars.patch.shippedUnits === "number";
       if (hasScanUpdate) {
-        await addOperationLog(qc, {
+        await pushLegacyOperationHistory(qc, {
           dateIso: new Date().toISOString(),
           legalEntityId: row.legalEntityId,
           actor: "Упаковщик",
@@ -414,6 +452,23 @@ export function useProductCatalog() {
 
 export function useOperationHistory() {
   return useQuery({ queryKey: ["wms", "operation-history"], queryFn: fetchMockOperationHistory });
+}
+
+export function useOperationLogs() {
+  return useQuery({ queryKey: ["wms", "operation-logs"], queryFn: fetchOperationLogs });
+}
+
+/** Добавить запись в журнал WMS (localStorage + кэш React Query). */
+export function useAppendOperationLog() {
+  const qc = useQueryClient();
+  return React.useCallback(
+    (entry: Omit<OperationLog, "id"> & { id?: string; createdAt?: string }) => {
+      const row = persistOperationLog(entry);
+      qc.setQueryData<OperationLog[]>(["wms", "operation-logs"], (prev) => [row, ...(prev ?? [])]);
+      return row;
+    },
+    [qc],
+  );
 }
 
 export function useUpdateLegalTariffs() {

@@ -297,6 +297,18 @@ export type OperationHistoryEvent = {
   comment: string;
 };
 
+/** Журнал операций WMS (приёмка, отгрузка, сборка, остатки) — в localStorage */
+export type OperationLog = {
+  id: string;
+  type: string;
+  taskId?: string;
+  taskNumber?: string;
+  legalEntityId: string;
+  legalEntityName: string;
+  description: string;
+  createdAt: string;
+};
+
 /** Пользователь организации */
 export type OrgUser = {
   id: string;

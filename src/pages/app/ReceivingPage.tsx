@@ -11,7 +11,7 @@ import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import ReceivingTaskWorkScreen from "@/components/app/ReceivingTaskWorkScreen";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useInboundSupplies, useInventoryMovements, useLegalEntities } from "@/hooks/useWmsMock";
+import { useAppendOperationLog, useInboundSupplies, useInventoryMovements, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, InventoryMovement, Marketplace, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromInbound } from "@/lib/taskWorkflowUi";
@@ -23,6 +23,7 @@ const ReceivingPage = () => {
   const { data, isLoading, error, updateInboundDraft, setInboundStatus, isUpdatingInboundDraft, isUpdatingInbound } = useInboundSupplies();
   const { addInventoryMovements, data: movementRows } = useInventoryMovements();
   const { data: entities } = useLegalEntities();
+  const appendOperationLog = useAppendOperationLog();
   const { legalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
@@ -91,6 +92,14 @@ const ReceivingPage = () => {
       await setInboundStatus({ id: supply.id, status: "на приёмке" });
       await updateInboundDraft({ id: supply.id, items: supply.items, workflowStatus: "processing" });
       setStartedSupplyId(supply.id);
+      appendOperationLog({
+        type: "RECEIVING_STARTED",
+        legalEntityId: supply.legalEntityId,
+        legalEntityName: entityName(supply.legalEntityId),
+        taskId: supply.id,
+        taskNumber: supply.documentNo,
+        description: `Приёмка №${supply.documentNo} взята в работу`,
+      });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
     } catch {
       toast.error("Не удалось запустить приёмку.");
@@ -145,6 +154,14 @@ const ReceivingPage = () => {
       }
       await updateInboundDraft({ id: latest.id, items: latest.items, workflowStatus: "completed" });
       await setInboundStatus({ id: latest.id, status: "принято", receivedUnits: fact });
+      appendOperationLog({
+        type: "RECEIVING_COMPLETED",
+        legalEntityId: latest.legalEntityId,
+        legalEntityName: entityName(latest.legalEntityId),
+        taskId: latest.id,
+        taskNumber: latest.documentNo,
+        description: `Приёмка №${latest.documentNo} завершена`,
+      });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       setStartedSupplyId(null);

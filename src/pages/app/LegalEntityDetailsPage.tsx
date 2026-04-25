@@ -27,7 +27,7 @@ import {
 import {
   useInboundSupplies,
   useLegalEntities,
-  useOperationHistory,
+  useOperationLogs,
   useOutboundShipments,
   useProductCatalog,
   useUpdateLegalEntitySettings,
@@ -36,6 +36,7 @@ import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
 import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { formatOperationLogType, operationLogTypeClass } from "@/lib/operationLogDisplay";
 import {
   EXCEL_STICKY_NAME_TD,
   EXCEL_STICKY_NAME_TH,
@@ -376,7 +377,7 @@ const LegalEntityDetailsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { role } = useUserRole();
   const { data: legal } = useLegalEntities();
-  const { data: history } = useOperationHistory();
+  const { data: operationLogRows, isLoading: operationLogsLoading } = useOperationLogs();
   const {
     data: inbound,
     createInbound,
@@ -505,7 +506,10 @@ const LegalEntityDetailsPage = () => {
     () => (catalog ?? []).filter((x) => (x.legalEntityId ?? "").trim() === entityIdNorm),
     [catalog, entityIdNorm],
   );
-  const ops = React.useMemo(() => (history ?? []).filter((x) => x.legalEntityId === id), [history, id]);
+  const ops = React.useMemo(
+    () => (operationLogRows ?? []).filter((x) => x.legalEntityId === id),
+    [operationLogRows, id],
+  );
   const inboundRows = React.useMemo(() => (inbound ?? []).filter((x) => x.legalEntityId === id), [inbound, id]);
   const outboundRows = React.useMemo(
     () => (outbound ?? []).filter((x) => (x.legalEntityId ?? "").trim() === entityIdNorm),
@@ -3429,38 +3433,42 @@ const LegalEntityDetailsPage = () => {
         <TabsContent value="history">
           <Card className="border-slate-200 shadow-sm">
             <CardContent className="p-0 sm:p-2">
-              <div className={EXCEL_TABLE_WRAP}>
-                <table className={EXCEL_TABLE_BASE}>
-                  <thead>
-                    <tr>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[132px] whitespace-nowrap`}>Дата</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[100px] whitespace-nowrap`}>Сотрудник</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[120px] whitespace-nowrap`}>Действие</th>
-                      <th className={`${STATIC_HEADER_BASE} min-w-[200px]`}>Товар / документ</th>
-                      <th className={`${STATIC_HEADER_BASE} w-[88px] text-right tabular-nums`}>Кол-во</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ops.map((ev, idx) => {
-                      const rowBg = excelRowBg(idx, false);
-                      const cell = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${rowBg}`;
-                      return (
-                        <tr key={ev.id}>
-                          <td className={`${cell} whitespace-nowrap tabular-nums`}>
-                            {format(parseISO(ev.dateIso), "d MMM yyyy HH:mm", { locale: ru })}
-                          </td>
-                          <td className={`${cell} whitespace-nowrap`}>{ev.actor}</td>
-                          <td className={`${cell} whitespace-nowrap`}>{ev.action}</td>
-                          <td className={`${cell} max-w-[320px] whitespace-nowrap`}>{ev.productLabel}</td>
-                          <td className={`${cell} text-right tabular-nums font-medium`}>
-                            {ev.quantity.toLocaleString("ru-RU")}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {operationLogsLoading ? (
+                <p className="p-4 text-sm text-slate-500">Загрузка журнала…</p>
+              ) : ops.length === 0 ? (
+                <p className="p-4 text-sm text-slate-600">Нет операций</p>
+              ) : (
+                <div className={EXCEL_TABLE_WRAP}>
+                  <table className={EXCEL_TABLE_BASE}>
+                    <thead>
+                      <tr>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[132px] whitespace-nowrap`}>Дата</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[220px]`}>Описание</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[100px] whitespace-nowrap`}>№ задания</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap`}>Тип операции</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ops.map((ev, idx) => {
+                        const rowBg = excelRowBg(idx, false);
+                        const cell = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${rowBg}`;
+                        return (
+                          <tr key={ev.id}>
+                            <td className={`${cell} whitespace-nowrap tabular-nums`}>
+                              {format(parseISO(ev.createdAt), "d MMM yyyy HH:mm", { locale: ru })}
+                            </td>
+                            <td className={`${cell} max-w-[360px]`}>{ev.description}</td>
+                            <td className={`${cell} whitespace-nowrap font-mono`}>{ev.taskNumber ?? ev.taskId ?? "—"}</td>
+                            <td className={`${cell} font-medium ${operationLogTypeClass(ev.type)}`}>
+                              {formatOperationLogType(ev.type)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

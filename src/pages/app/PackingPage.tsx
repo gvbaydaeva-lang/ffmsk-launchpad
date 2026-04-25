@@ -11,7 +11,14 @@ import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useInboundSupplies, useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import {
+  useAppendOperationLog,
+  useInboundSupplies,
+  useInventoryMovements,
+  useLegalEntities,
+  useOutboundShipments,
+  useProductCatalog,
+} from "@/hooks/useWmsMock";
 import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
 import { getBalanceByKeyMap, hasTaskMovements } from "@/services/mockInventoryMovements";
 import type { InventoryMovement, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
@@ -43,6 +50,7 @@ const PackingPage = () => {
   const { addInventoryMovements, data: movementData } = useInventoryMovements();
   const { data: catalog } = useProductCatalog();
   const { data: legal } = useLegalEntities();
+  const appendOperationLog = useAppendOperationLog();
   const { legalEntityId } = useAppFilters();
   const queryClient = useQueryClient();
   const [startedAssignmentId, setStartedAssignmentId] = React.useState<string | null>(null);
@@ -247,6 +255,20 @@ const PackingPage = () => {
         },
       });
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+      const leNameScan = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const noScan =
+        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
+        startedAssignment.shipments[0]?.assignmentId?.trim() ||
+        startedAssignment.shipments[0]?.id ||
+        "—";
+      appendOperationLog({
+        type: "ITEM_SCANNED",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: leNameScan,
+        taskId: startedAssignment.id,
+        taskNumber: noScan,
+        description: `Отсканирован товар (штрихкод: ${code})`,
+      });
       setScanValue("");
       triggerFlash("ok");
       focusScanInput();
@@ -354,6 +376,14 @@ const PackingPage = () => {
       }
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
+      appendOperationLog({
+        type: "PACKING_COMPLETED",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: leName,
+        taskId,
+        taskNumber: assignmentNo,
+        description: `Задание №${assignmentNo} завершено`,
+      });
       toast.success("Задание завершено и убрано из активных.");
       setStartedAssignmentId(null);
     } catch {
@@ -389,6 +419,17 @@ const PackingPage = () => {
         await updateOutboundDraft({ id: sh.id, patch: { workflowStatus: "processing", status: "к отгрузке" } });
       }
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+      const firstSh = assignment.shipments[0];
+      const noStart = firstSh?.assignmentNo?.trim() || firstSh?.assignmentId?.trim() || firstSh?.id || "—";
+      const leNameStart = legal?.find((x) => x.id === assignment.legalEntityId)?.shortName ?? assignment.legalEntityId;
+      appendOperationLog({
+        type: "PACKING_STARTED",
+        legalEntityId: assignment.legalEntityId,
+        legalEntityName: leNameStart,
+        taskId: assignment.id,
+        taskNumber: noStart,
+        description: `Задание №${noStart} взято в работу`,
+      });
     }
     setStartedAssignmentId(assignment.id);
   };
