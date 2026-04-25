@@ -32,6 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { useScanner } from "@/contexts/ScannerContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
+import { useInboundSupplies, useOutboundShipments } from "@/hooks/useWmsMock";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -56,6 +57,17 @@ const AppShellLayout = () => {
   const current = nav.find((item) => matchNav(pathname, item.to, item.end));
   const { openScanner } = useScanner();
   const { role, setRole } = useUserRole();
+  const { data: inbound } = useInboundSupplies();
+  const { data: outbound } = useOutboundShipments();
+
+  const inboundBadge = (inbound ?? []).filter((x) => x.status !== "принято").length;
+  const outboundBadge = (outbound ?? []).filter((x) => x.status !== "отгружено").length;
+
+  const navBadge = (to: string) => {
+    if (to === "/receiving") return inboundBadge;
+    if (to === "/packing") return outboundBadge;
+    return 0;
+  };
 
   return (
     <SidebarProvider
@@ -96,6 +108,11 @@ const AppShellLayout = () => {
                         <NavLink to={item.to} end={item.end}>
                           <Icon />
                           <span>{item.label}</span>
+                          {navBadge(item.to) > 0 ? (
+                            <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-semibold text-white">
+                              {navBadge(item.to)}
+                            </span>
+                          ) : null}
                         </NavLink>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { Marketplace } from "@/types/domain";
 
 const ReceivingPage = () => {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useInboundSupplies();
   const { data: entities } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
@@ -67,6 +69,17 @@ const ReceivingPage = () => {
       setSortDir("asc");
     }
   };
+
+  React.useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
+    void queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+    const onFocus = () => {
+      void queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
+      void queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [queryClient]);
 
 
   return (
