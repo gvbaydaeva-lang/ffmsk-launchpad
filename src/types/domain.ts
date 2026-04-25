@@ -245,6 +245,46 @@ export type OutboundShipment = {
   createdAt: string;
 };
 
+/** Движение товара (остаток = сумма qty по согласованным ключам) */
+export type InventoryMovement = {
+  id: string;
+  type: "INBOUND" | "OUTBOUND";
+  taskId: string;
+  taskNumber: string;
+  legalEntityId: string;
+  legalEntityName: string;
+  warehouseId?: string;
+  warehouseName?: string;
+  itemId?: string;
+  name: string;
+  sku?: string;
+  article?: string;
+  barcode: string;
+  marketplace?: string;
+  color?: string;
+  size?: string;
+  /** INBOUND: положительный; OUTBOUND: отрицательный */
+  qty: number;
+  createdAt: string;
+  source: "receiving" | "packing" | "shipping";
+};
+
+/** Сводка остатка по нормализованному ключу (для таблиц и проверок) */
+export type InventoryBalanceRow = {
+  key: string;
+  legalEntityId: string;
+  legalEntityName: string;
+  warehouseName: string;
+  name: string;
+  sku: string;
+  article: string;
+  barcode: string;
+  marketplace: string;
+  color: string;
+  size: string;
+  balanceQty: number;
+};
+
 /** История операций склада и финансовых событий */
 export type OperationHistoryEvent = {
   id: string;

@@ -11,8 +11,10 @@ import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useInboundSupplies, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
-import type { OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
+import { useInboundSupplies, useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
+import { getBalanceByKeyMap, hasTaskMovements } from "@/services/mockInventoryMovements";
+import type { InventoryMovement, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import {
   normalizeWorkflowStatus,
 } from "@/lib/taskWorkflowUi";
@@ -38,6 +40,7 @@ const PackingPage = () => {
   const { data: outbound, isLoading, error, updateOutboundDraft, setOutboundStatus, isUpdatingOutboundDraft, isUpdatingOutbound } =
     useOutboundShipments();
   useInboundSupplies();
+  const { addInventoryMovements, data: movementData } = useInventoryMovements();
   const { data: catalog } = useProductCatalog();
   const { data: legal } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
@@ -255,7 +258,92 @@ const PackingPage = () => {
 
   const finalizeAssignment = async () => {
     if (!startedAssignment || progress.totalPlan === 0 || progress.totalPlan !== progress.totalFact) return;
+    const taskId = startedAssignment.id;
+    const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
+    if (hasTaskMovements(taskId, "OUTBOUND", invSnapshot)) {
+      setStartedAssignmentId(null);
+      await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+      return;
+    }
+    const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+    const balanceMap = getBalanceByKeyMap(invSnapshot);
+    const needByKey = new Map<string, { need: number; label: string }>();
+    for (const sh of startedAssignment.shipments) {
+      const product = byProduct.get(sh.productId) ?? null;
+      const name = (sh.importName || product?.name || "").trim() || "—";
+      const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
+      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+      const color = (sh.importColor || product?.color || "").trim() || "—";
+      const size = (sh.importSize || product?.size || "").trim() || "—";
+      const wh = (sh.sourceWarehouse || "").trim() || "—";
+      const plan = Number(sh.plannedUnits) || 0;
+      if (plan <= 0) continue;
+      const key = makeInventoryBalanceKey({
+        legalEntityId: sh.legalEntityId,
+        warehouseName: wh,
+        barcode,
+        article,
+        color,
+        size,
+      });
+      const prev = needByKey.get(key);
+      needByKey.set(key, {
+        need: (prev?.need ?? 0) + plan,
+        label: name,
+      });
+    }
+    const shortages: string[] = [];
+    for (const [key, { need, label }] of needByKey) {
+      const have = balanceMap.get(key) ?? 0;
+      if (have < need) {
+        shortages.push(`${label} (${key.split("::")[2] ?? ""}): нужно ${need}, на остатке ${have}`);
+      }
+    }
+    if (shortages.length) {
+      toast.error("Недостаточно товара на остатке", { description: shortages.join("\n") });
+      return;
+    }
+    const firstSh = startedAssignment.shipments[0];
+    const assignmentNo = firstSh?.assignmentNo?.trim() || firstSh?.assignmentId?.trim() || firstSh?.id || "—";
+    const leName = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+    const ts = new Date().toISOString();
     try {
+      const moves: InventoryMovement[] = startedAssignment.shipments
+        .map((sh) => {
+          const product = byProduct.get(sh.productId) ?? null;
+          const name = (sh.importName || product?.name || "").trim() || "—";
+          const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
+          const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+          const color = (sh.importColor || product?.color || "").trim() || "—";
+          const size = (sh.importSize || product?.size || "").trim() || "—";
+          const wh = (sh.sourceWarehouse || "").trim() || "—";
+          const plan = Number(sh.plannedUnits) || 0;
+          if (plan <= 0) return null;
+          return {
+            id: `im-out-${sh.id}`,
+            type: "OUTBOUND" as const,
+            taskId,
+            taskNumber: assignmentNo,
+            legalEntityId: sh.legalEntityId,
+            legalEntityName: leName,
+            warehouseName: wh,
+            itemId: sh.id,
+            name,
+            sku: article,
+            article,
+            barcode,
+            marketplace: sh.marketplace.toUpperCase(),
+            color,
+            size,
+            qty: -plan,
+            createdAt: ts,
+            source: "packing" as const,
+          };
+        })
+        .filter((x): x is InventoryMovement => x !== null);
+      if (moves.length) {
+        await addInventoryMovements(moves);
+      }
       for (const sh of startedAssignment.shipments) {
         const plan = Number(sh.plannedUnits) || 0;
         await updateOutboundDraft({
@@ -265,6 +353,7 @@ const PackingPage = () => {
         await setOutboundStatus({ id: sh.id, status: "отгружено", shippedUnits: plan });
       }
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+      await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       toast.success("Задание завершено и убрано из активных.");
       setStartedAssignmentId(null);
     } catch {

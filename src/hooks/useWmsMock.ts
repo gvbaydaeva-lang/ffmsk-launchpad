@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FulfillmentTariffs,
@@ -9,6 +10,7 @@ import type {
   ProductCatalogItem,
   OrgUser,
   WarehouseInventoryRow,
+  InventoryMovement,
 } from "@/types/domain";
 import { appendMockOutbound, fetchMockOutboundShipments, persistOutboundDurably, saveMockOutbound } from "@/services/mockOutbound";
 import { appendMockInbound, fetchMockInboundSupplies, persistInboundDurably, saveMockInbound } from "@/services/mockReceiving";
@@ -31,6 +33,7 @@ import {
   generateMockShipmentBoxes,
 } from "@/services/mockWms";
 import { fetchMockWarehouseInventory } from "@/services/mockWarehouseInventory";
+import { addInventoryMovements as pushInventoryMovements, getInventoryBalance, getInventoryMovements } from "@/services/mockInventoryMovements";
 import { mergeLegalWarehouseCounts } from "@/services/scanWorkflow";
 
 async function addOperationLog(
@@ -39,6 +42,27 @@ async function addOperationLog(
 ) {
   const history = qc.getQueryData<OperationHistoryEvent[]>(["wms", "operation-history"]) ?? (await fetchMockOperationHistory());
   qc.setQueryData(["wms", "operation-history"], prependOperationEvent(history, entry));
+}
+
+export function useInventoryMovements() {
+  const qc = useQueryClient();
+  const query = useQuery({ queryKey: ["wms", "inventory-movements"], queryFn: getInventoryMovements });
+  const append = useMutation({
+    mutationFn: async (moves: InventoryMovement[]) => pushInventoryMovements(moves),
+    onSuccess: (data) => {
+      qc.setQueryData(["wms", "inventory-movements"], data);
+    },
+  });
+  const balance = React.useMemo(
+    () => getInventoryBalance(query.data ?? []),
+    [query.data],
+  );
+  return {
+    ...query,
+    addInventoryMovements: append.mutateAsync,
+    isAppending: append.isPending,
+    balanceRows: balance,
+  };
 }
 
 export function useStockFifo() {

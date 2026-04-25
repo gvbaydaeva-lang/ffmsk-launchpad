@@ -11,15 +11,17 @@ import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import ReceivingTaskWorkScreen from "@/components/app/ReceivingTaskWorkScreen";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
+import { useInboundSupplies, useInventoryMovements, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
-import type { InboundSupply, Marketplace, TaskWorkflowStatus } from "@/types/domain";
+import type { InboundSupply, InventoryMovement, Marketplace, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromInbound } from "@/lib/taskWorkflowUi";
+import { hasTaskMovements } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
 
 const ReceivingPage = () => {
   const queryClient = useQueryClient();
   const { data, isLoading, error, updateInboundDraft, setInboundStatus, isUpdatingInboundDraft, isUpdatingInbound } = useInboundSupplies();
+  const { addInventoryMovements, data: movementRows } = useInventoryMovements();
   const { data: entities } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
@@ -97,13 +99,54 @@ const ReceivingPage = () => {
 
   const closeReceiving = async () => {
     if (!startedSupply) return;
-    const plan = startedSupply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
-    const fact = startedSupply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
+    const latest = (data ?? []).find((r) => r.id === startedSupply.id) ?? startedSupply;
+    if (workflowFromInbound(latest) === "completed") {
+      setStartedSupplyId(null);
+      return;
+    }
+    const plan = latest.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+    const fact = latest.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
     if (plan <= 0 || plan !== fact) return;
+    const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementRows) ?? [];
     try {
-      await updateInboundDraft({ id: startedSupply.id, items: startedSupply.items, workflowStatus: "completed" });
-      await setInboundStatus({ id: startedSupply.id, status: "принято", receivedUnits: fact });
+      if (!hasTaskMovements(latest.id, "INBOUND", invSnapshot)) {
+        const leName = entityName(latest.legalEntityId);
+        const mp = latest.marketplace.toUpperCase();
+        const ts = new Date().toISOString();
+        const moves: InventoryMovement[] = latest.items
+          .map((it, i) => {
+            const q = Number(it.factualQuantity) || 0;
+            if (q <= 0) return null;
+            return {
+              id: `im-in-${latest.id}-${i}-${Date.now()}`,
+              type: "INBOUND" as const,
+              taskId: latest.id,
+              taskNumber: latest.documentNo,
+              legalEntityId: latest.legalEntityId,
+              legalEntityName: leName,
+              warehouseName: latest.destinationWarehouse,
+              itemId: it.productId ?? `line-${i}`,
+              name: (it.name || it.barcode || "—").trim() || "—",
+              sku: (it.supplierArticle || "").trim() || undefined,
+              article: (it.supplierArticle || "").trim() || "—",
+              barcode: (it.barcode || "").trim() || "—",
+              marketplace: mp,
+              color: (it.color || "").trim() || "—",
+              size: (it.size || "").trim() || "—",
+              qty: q,
+              createdAt: ts,
+              source: "receiving" as const,
+            };
+          })
+          .filter((x): x is InventoryMovement => x !== null);
+        if (moves.length) {
+          await addInventoryMovements(moves);
+        }
+      }
+      await updateInboundDraft({ id: latest.id, items: latest.items, workflowStatus: "completed" });
+      await setInboundStatus({ id: latest.id, status: "принято", receivedUnits: fact });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
+      await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       setStartedSupplyId(null);
       toast.success("Приёмка закрыта и убрана из активных.");
     } catch {
