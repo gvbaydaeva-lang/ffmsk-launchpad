@@ -33,6 +33,14 @@ import {
 import { fetchMockWarehouseInventory } from "@/services/mockWarehouseInventory";
 import { mergeLegalWarehouseCounts } from "@/services/scanWorkflow";
 
+async function addOperationLog(
+  qc: ReturnType<typeof useQueryClient>,
+  entry: Omit<OperationHistoryEvent, "id">,
+) {
+  const history = qc.getQueryData<OperationHistoryEvent[]>(["wms", "operation-history"]) ?? (await fetchMockOperationHistory());
+  qc.setQueryData(["wms", "operation-history"], prependOperationEvent(history, entry));
+}
+
 export function useStockFifo() {
   return useQuery({ queryKey: ["wms", "stock-fifo"], queryFn: fetchMockStockFifo });
 }
@@ -203,12 +211,30 @@ export function useOutboundShipments() {
       }
       return { nextOutbound, nextCatalog };
     },
-    onSuccess: ({ nextOutbound, nextCatalog }) => {
+    onSuccess: async ({ nextOutbound, nextCatalog }, vars) => {
       qc.setQueryData(["wms", "outbound"], nextOutbound);
       qc.setQueryData(["wms", "product-catalog"], nextCatalog);
       saveMockOutbound(nextOutbound);
       void persistOutboundDurably(nextOutbound);
       saveMockProductCatalog(nextCatalog);
+      await addOperationLog(qc, {
+        dateIso: new Date().toISOString(),
+        legalEntityId: vars.legalEntityId,
+        actor: "Оператор отгрузки",
+        action: "отгрузка",
+        productLabel: vars.assignmentNo ?? vars.assignmentId ?? "Задание отгрузки",
+        quantity: vars.plannedUnits,
+        comment: `Создана отгрузка ${vars.assignmentNo ?? vars.assignmentId ?? ""}`.trim(),
+      });
+      await addOperationLog(qc, {
+        dateIso: new Date().toISOString(),
+        legalEntityId: vars.legalEntityId,
+        actor: "Система",
+        action: "отгрузка",
+        productLabel: vars.assignmentNo ?? vars.assignmentId ?? "Задание отгрузки",
+        quantity: vars.plannedUnits,
+        comment: "Отгрузка передана в упаковщик",
+      });
     },
   });
 
@@ -240,12 +266,26 @@ export function useOutboundShipments() {
       }
       return { outbound: nextOutbound, catalog: nextCatalog };
     },
-    onSuccess: ({ outbound, catalog }) => {
+    onSuccess: async ({ outbound, catalog }, vars) => {
       qc.setQueryData(["wms", "outbound"], outbound);
       qc.setQueryData(["wms", "product-catalog"], catalog);
       saveMockOutbound(outbound);
       void persistOutboundDurably(outbound);
       saveMockProductCatalog(catalog);
+      if (vars.status === "отгружено") {
+        const row = outbound.find((x) => x.id === vars.id);
+        if (row) {
+          await addOperationLog(qc, {
+            dateIso: new Date().toISOString(),
+            legalEntityId: row.legalEntityId,
+            actor: "Упаковщик",
+            action: "отгрузка",
+            productLabel: row.assignmentNo ?? row.assignmentId ?? row.id,
+            quantity: vars.shippedUnits ?? row.shippedUnits ?? 0,
+            comment: "Задание завершено",
+          });
+        }
+      }
     },
   });
 
@@ -256,8 +296,33 @@ export function useOutboundShipments() {
       await persistOutboundDurably(next);
       return next;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data, vars) => {
       qc.setQueryData(["wms", "outbound"], data);
+      const row = data.find((x) => x.id === vars.id);
+      if (!row) return;
+      if (vars.patch.workflowStatus === "processing") {
+        await addOperationLog(qc, {
+          dateIso: new Date().toISOString(),
+          legalEntityId: row.legalEntityId,
+          actor: "Упаковщик",
+          action: "сканирование",
+          productLabel: row.assignmentNo ?? row.assignmentId ?? row.id,
+          quantity: 0,
+          comment: "Задание взято в работу",
+        });
+      }
+      const hasScanUpdate = typeof vars.patch.packedUnits === "number" || typeof vars.patch.shippedUnits === "number";
+      if (hasScanUpdate) {
+        await addOperationLog(qc, {
+          dateIso: new Date().toISOString(),
+          legalEntityId: row.legalEntityId,
+          actor: "Упаковщик",
+          action: "сканирование",
+          productLabel: row.assignmentNo ?? row.assignmentId ?? row.id,
+          quantity: 1,
+          comment: "Товар отсканирован",
+        });
+      }
     },
   });
 

@@ -75,6 +75,7 @@ const AppShellLayout = () => {
 
   const navBadge = (to: string) => {
     if (to === "/receiving") return inboundBadge;
+    if (to === "/shipping") return outboundBadge;
     if (to === "/packing") return outboundBadge;
     return 0;
   };

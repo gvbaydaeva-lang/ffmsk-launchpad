@@ -2435,13 +2435,14 @@ const LegalEntityDetailsPage = () => {
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
                       <TableHead className="h-9 w-[100px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {inboundDocuments.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="px-3 py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={9} className="px-3 py-6 text-center text-sm text-slate-500">
                           Документов приёмки пока нет
                         </TableCell>
                       </TableRow>
@@ -2981,6 +2982,13 @@ const LegalEntityDetailsPage = () => {
                             <TableCell className="px-3 py-2">{mpLabelShort(doc.marketplace)}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{doc.totalPlan}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{doc.totalFact}</TableCell>
+                            <TableCell
+                              className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${
+                                doc.totalPlan - doc.totalFact !== 0 ? "font-medium text-red-700" : "text-slate-800"
+                              }`}
+                            >
+                              {Math.max(0, doc.totalPlan - doc.totalFact)}
+                            </TableCell>
                             <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 type="button"
