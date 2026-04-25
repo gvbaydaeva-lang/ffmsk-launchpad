@@ -35,6 +35,7 @@ import {
 import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
 import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
+import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import {
   EXCEL_STICKY_NAME_TD,
   EXCEL_STICKY_NAME_TH,
@@ -339,6 +340,37 @@ function workflowStatusLabel(status: TaskWorkflowStatus | undefined) {
   return "Новое";
 }
 
+function outboundRegistryBadgeClass(status: TaskWorkflowStatus | undefined) {
+  if (status === "processing") return "bg-violet-100 text-violet-800 ring-1 ring-violet-200";
+  if (status === "completed") return "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200";
+  return "bg-blue-100 text-blue-800 ring-1 ring-blue-200";
+}
+
+function inboundRegistryBadgeClass(status: TaskWorkflowStatus | undefined) {
+  return outboundRegistryBadgeClass(status);
+}
+
+function resolveOutboundLineProduct(
+  sh: OutboundShipment,
+  entityProducts: ProductCatalogItem[],
+  globalCatalog: ProductCatalogItem[] | undefined,
+) {
+  const byEntity = new Map(entityProducts.map((p) => [p.id, p]));
+  const byGlobal = new Map((globalCatalog ?? []).map((p) => [p.id, p]));
+  const product = byEntity.get(sh.productId) ?? byGlobal.get(sh.productId) ?? null;
+  return {
+    name: (product?.name || sh.importName || "").trim() || "—",
+    article: (product?.supplierArticle || sh.importArticle || "").trim() || "—",
+    barcode: (product?.barcode || sh.importBarcode || "").trim() || "—",
+    color: (product?.color || sh.importColor || "").trim() || "—",
+    size: (product?.size || sh.importSize || "").trim() || "—",
+  };
+}
+
+function mpLabelShort(mp: Marketplace) {
+  return mp === "wb" ? "WB" : mp === "ozon" ? "Ozon" : "Яндекс";
+}
+
 const LegalEntityDetailsPage = () => {
   const { id = "" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -493,31 +525,41 @@ const LegalEntityDetailsPage = () => {
     [inboundRows],
   );
   const outboundDocuments = React.useMemo(() => {
-    const groups = new Map<
-      string,
-      { id: string; createdAt: string; assignmentNo: string; sourceWarehouse: string; marketplace: Marketplace; workflowStatus: TaskWorkflowStatus; shipments: OutboundShipment[] }
-    >();
+    const groups = new Map<string, OutboundShipment[]>();
     for (const row of outboundRows) {
       const key = `${row.legalEntityId}::${row.assignmentId ?? row.assignmentNo ?? row.id}`;
-      const existing = groups.get(key);
-      if (!existing) {
-        groups.set(key, {
-          id: key,
-          createdAt: row.createdAt,
-          assignmentNo: row.assignmentNo?.trim() || row.assignmentId?.trim() || row.id,
-          sourceWarehouse: row.sourceWarehouse,
-          marketplace: row.marketplace,
-          workflowStatus: (row.workflowStatus ?? (row.status === "отгружено" ? "completed" : "pending")) as TaskWorkflowStatus,
-          shipments: [row],
-        });
-      } else {
-        existing.shipments.push(row);
-        if ((row.workflowStatus ?? "pending") === "processing") existing.workflowStatus = "processing";
-        if (row.createdAt > existing.createdAt) existing.createdAt = row.createdAt;
-      }
+      const cur = groups.get(key) ?? [];
+      cur.push(row);
+      groups.set(key, cur);
     }
-    return Array.from(groups.values()).sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
-  }, [outboundRows]);
+    return Array.from(groups.entries())
+      .map(([key, shipments]) => {
+        const first = shipments[0];
+        const createdAt = shipments.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
+        const totalPlan = shipments.reduce((s, sh) => {
+          const p = Number(outboundRowDrafts[sh.id]?.plannedUnits ?? sh.plannedUnits) || 0;
+          return s + p;
+        }, 0);
+        const totalFact = shipments.reduce((s, sh) => {
+          const f = Number(outboundRowDrafts[sh.id]?.factualUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+          return s + f;
+        }, 0);
+        const workflowStatus = workflowFromOutboundGroup(shipments);
+        const warehouseLabel = [...new Set(shipments.map((s) => s.sourceWarehouse))].join(", ");
+        return {
+          id: key,
+          createdAt,
+          assignmentNo: first.assignmentNo?.trim() || first.assignmentId?.trim() || first.id,
+          sourceWarehouse: warehouseLabel,
+          marketplace: first.marketplace,
+          workflowStatus,
+          shipments,
+          totalPlan,
+          totalFact,
+        };
+      })
+      .sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
+  }, [outboundRows, outboundRowDrafts]);
   const selectedInboundDoc = inboundDocuments.find((x) => x.id === selectedInboundDocId) ?? null;
   const selectedOutboundDoc = outboundDocuments.find((x) => x.id === selectedOutboundDocId) ?? null;
   const filteredProducts = React.useMemo(() => {
@@ -1272,8 +1314,9 @@ const LegalEntityDetailsPage = () => {
     if (!product || qty > product.stockOnHand) return toast.error("Количество превышает остаток");
     const assignmentId = `ass-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const assignmentNo = `ОТГ-${Date.now().toString().slice(-8)}`;
+    const legalId = entity.id.trim();
     await createOutbound({
-      legalEntityId: entity.id.trim(),
+      legalEntityId: legalId,
       productId: selectedOutboundProductId,
       assignmentId,
       assignmentNo,
@@ -1297,6 +1340,7 @@ const LegalEntityDetailsPage = () => {
     setCreateOutboundOpen(false);
     setOutboundDraft({ quantity: "", marketplace: "wb", warehouse: "Склад Коледино", shippingMethod: "fbo" });
     setSelectedOutboundProductId("");
+    setSelectedOutboundDocId(`${legalId}::${assignmentId}`);
   };
 
   const downloadInboundTaskTemplate = () => {
@@ -2375,172 +2419,116 @@ const LegalEntityDetailsPage = () => {
               )}
             </div>
           </div>
-          <Card className="mb-3 border-slate-200 shadow-sm">
-            <CardContent className="p-0 sm:p-2">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Дата создания</TableHead>
-                    <TableHead>Номер задания</TableHead>
-                    <TableHead>Склад / МП</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead className="text-right">Кол-во товаров</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {outboundDocuments.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-slate-500">
-                        Документов отгрузки пока нет
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    outboundDocuments.map((doc) => {
-                      const statusClass =
-                        doc.workflowStatus === "processing"
-                          ? "text-sky-700 bg-sky-50 ring-1 ring-sky-200"
-                          : doc.workflowStatus === "completed"
-                            ? "text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200"
-                            : "text-amber-700 bg-amber-50 ring-1 ring-amber-200";
-                      const totalPlan = doc.shipments.reduce((sum, item) => sum + (Number(item.plannedUnits) || 0), 0);
-                      return (
-                        <TableRow
-                          key={doc.id}
-                          className="cursor-pointer"
-                          onClick={() => setSelectedOutboundDocId((prev) => (prev === doc.id ? null : doc.id))}
-                        >
-                          <TableCell>{doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy", { locale: ru }) : "—"}</TableCell>
-                          <TableCell className="font-medium">{doc.assignmentNo}</TableCell>
-                          <TableCell>{doc.sourceWarehouse} / {doc.marketplace.toUpperCase()}</TableCell>
-                          <TableCell>
-                            <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${statusClass}`}>
-                              {workflowStatusLabel(doc.workflowStatus)}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{totalPlan}</TableCell>
-                        </TableRow>
-                      );
-                    })
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-          {selectedOutboundDoc ? (
-            <Card className="mb-3 border-slate-200 shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base">Состав задания {selectedOutboundDoc.assignmentNo}</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0 sm:p-2">
+          <Card className="mb-3 border border-slate-200 bg-white shadow-sm">
+            <CardHeader className="border-b border-slate-100 px-4 py-2.5">
+              <CardTitle className="text-sm font-semibold text-slate-900">Реестр заданий на приёмку</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Артикул</TableHead>
-                      <TableHead>Баркод</TableHead>
-                      <TableHead>Цвет / Размер</TableHead>
-                      <TableHead className="text-right">План</TableHead>
-                      <TableHead className="text-right">Факт</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {selectedOutboundDoc.shipments.map((sh) => (
-                      <TableRow key={sh.id}>
-                        <TableCell>{sh.importArticle || "—"}</TableCell>
-                        <TableCell className="font-mono text-xs">{sh.importBarcode || "—"}</TableCell>
-                        <TableCell>{sh.importColor || "—"} / {sh.importSize || "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{sh.plannedUnits}</TableCell>
-                        <TableCell className="text-right tabular-nums">{sh.packedUnits ?? sh.shippedUnits ?? 0}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          ) : null}
-          <div className="mb-3 flex flex-wrap items-center gap-2 hidden">
-            <Card className="w-full border-slate-200 shadow-sm">
-              <CardContent className="p-0 sm:p-2">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Дата создания</TableHead>
-                      <TableHead>Номер задания</TableHead>
-                      <TableHead>Склад / МП</TableHead>
-                      <TableHead>Статус</TableHead>
-                      <TableHead className="text-right">Кол-во товаров</TableHead>
+                    <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ документа</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад / МП</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                      <TableHead className="h-9 w-[100px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {inboundDocuments.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-slate-500">
+                        <TableCell colSpan={6} className="px-3 py-6 text-center text-sm text-slate-500">
                           Документов приёмки пока нет
                         </TableCell>
                       </TableRow>
                     ) : (
                       inboundDocuments.map((doc) => {
-                        const status = (doc.workflowStatus ?? "pending") as TaskWorkflowStatus;
-                        const statusClass =
-                          status === "processing"
-                            ? "text-sky-700 bg-sky-50 ring-1 ring-sky-200"
-                            : status === "completed"
-                              ? "text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200"
-                              : "text-amber-700 bg-amber-50 ring-1 ring-amber-200";
-                        const count = doc.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+                        const wf = workflowFromInbound(doc);
+                        const planSum = doc.items.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0);
+                        const open = selectedInboundDocId === doc.id;
                         return (
                           <TableRow
                             key={doc.id}
-                            className="cursor-pointer"
+                            className={`cursor-pointer border-slate-100 text-sm ${open ? "bg-slate-50" : ""}`}
                             onClick={() => setSelectedInboundDocId((prev) => (prev === doc.id ? null : doc.id))}
                           >
-                            <TableCell>{doc.eta ? format(parseISO(doc.eta), "dd.MM.yyyy", { locale: ru }) : "—"}</TableCell>
-                            <TableCell className="font-medium">{doc.documentNo}</TableCell>
-                            <TableCell>{doc.destinationWarehouse} / {doc.marketplace.toUpperCase()}</TableCell>
-                            <TableCell>
-                              <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${statusClass}`}>
-                                {workflowStatusLabel(status)}
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">
+                              {doc.eta ? format(parseISO(doc.eta), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{doc.documentNo}</TableCell>
+                            <TableCell className="px-3 py-2">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${inboundRegistryBadgeClass(wf)}`}
+                              >
+                                {workflowStatusLabel(wf)}
                               </span>
                             </TableCell>
-                            <TableCell className="text-right tabular-nums">{count}</TableCell>
+                            <TableCell className="max-w-[200px] truncate px-3 py-2 text-slate-700">
+                              {doc.destinationWarehouse} / {mpLabelShort(doc.marketplace)}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{planSum}</TableCell>
+                            <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 border-slate-200 text-xs"
+                                onClick={() => setSelectedInboundDocId((prev) => (prev === doc.id ? null : doc.id))}
+                              >
+                                {open ? "Свернуть" : "Открыть"}
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         );
                       })
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
-            {selectedInboundDoc ? (
-              <Card className="w-full border-slate-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-base">Состав документа {selectedInboundDoc.documentNo}</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0 sm:p-2">
+              </div>
+            </CardContent>
+          </Card>
+          {selectedInboundDoc ? (
+            <Card className="mb-3 border border-slate-200 bg-slate-50/40 shadow-sm">
+              <CardHeader className="border-b border-slate-100 px-4 py-2">
+                <CardTitle className="text-sm font-semibold text-slate-900">Состав: {selectedInboundDoc.documentNo}</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Артикул</TableHead>
-                        <TableHead>Баркод</TableHead>
-                        <TableHead>Цвет / Размер</TableHead>
-                        <TableHead className="text-right">План</TableHead>
-                        <TableHead className="text-right">Факт</TableHead>
+                      <TableRow className="border-slate-200 bg-white">
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Название</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Артикул</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Баркод</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">МП</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Цвет</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Размер</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {selectedInboundDoc.items.map((item, idx) => (
-                        <TableRow key={`${selectedInboundDoc.id}-${idx}`}>
-                          <TableCell>{item.supplierArticle || "—"}</TableCell>
-                          <TableCell className="font-mono text-xs">{item.barcode || "—"}</TableCell>
-                          <TableCell>{item.color || "—"} / {item.size || "—"}</TableCell>
-                          <TableCell className="text-right tabular-nums">{item.plannedQuantity}</TableCell>
-                          <TableCell className="text-right tabular-nums">{item.factualQuantity}</TableCell>
+                        <TableRow key={`${selectedInboundDoc.id}-${idx}`} className="text-sm">
+                          <TableCell className="max-w-[180px] truncate px-3 py-2">{item.name || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2">{item.supplierArticle || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs px-3 py-2">{item.barcode || "—"}</TableCell>
+                          <TableCell className="px-3 py-2">{mpLabelShort(selectedInboundDoc.marketplace)}</TableCell>
+                          <TableCell className="px-3 py-2">{item.color || "—"}</TableCell>
+                          <TableCell className="px-3 py-2">{item.size || "—"}</TableCell>
+                          <TableCell className="px-3 py-2 text-right tabular-nums">{item.plannedQuantity}</TableCell>
+                          <TableCell className="px-3 py-2 text-right tabular-nums">{item.factualQuantity}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                </CardContent>
-              </Card>
-            ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <Button variant={showOnlyDiff ? "default" : "outline"} size="sm" onClick={() => setShowOnlyDiff((v) => !v)}>
               {showOnlyDiff ? "Показать все" : "Только расхождения"}
             </Button>
@@ -2938,7 +2926,120 @@ const LegalEntityDetailsPage = () => {
               )}
             </div>
           </div>
-          <div className="mb-3 flex flex-wrap items-center gap-2 hidden">
+          <Card className="mb-3 border border-slate-200 bg-white shadow-sm">
+            <CardHeader className="border-b border-slate-100 px-4 py-2.5">
+              <CardTitle className="text-sm font-semibold text-slate-900">Реестр заданий на отгрузку</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+                      <TableHead className="h-9 w-[100px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {outboundDocuments.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
+                          Заданий на отгрузку пока нет
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      outboundDocuments.map((doc) => {
+                        const open = selectedOutboundDocId === doc.id;
+                        return (
+                          <TableRow
+                            key={doc.id}
+                            className={`cursor-pointer border-slate-100 text-sm ${open ? "bg-slate-50" : ""}`}
+                            onClick={() => setSelectedOutboundDocId((prev) => (prev === doc.id ? null : doc.id))}
+                          >
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">
+                              {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{doc.assignmentNo}</TableCell>
+                            <TableCell className="px-3 py-2">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${outboundRegistryBadgeClass(doc.workflowStatus)}`}
+                              >
+                                {workflowStatusLabel(doc.workflowStatus)}
+                              </span>
+                            </TableCell>
+                            <TableCell className="max-w-[220px] truncate px-3 py-2 text-slate-700">{doc.sourceWarehouse}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{doc.totalPlan}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{doc.totalFact}</TableCell>
+                            <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 border-slate-200 text-xs"
+                                onClick={() => setSelectedOutboundDocId((prev) => (prev === doc.id ? null : doc.id))}
+                              >
+                                {open ? "Свернуть" : "Открыть"}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+          {selectedOutboundDoc ? (
+            <Card className="mb-3 border border-slate-200 bg-slate-50/40 shadow-sm">
+              <CardHeader className="border-b border-slate-100 px-4 py-2">
+                <CardTitle className="text-sm font-semibold text-slate-900">Состав задания {selectedOutboundDoc.assignmentNo}</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-slate-200 bg-white">
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Название</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Артикул</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Баркод</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">МП</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Цвет</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Размер</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedOutboundDoc.shipments.map((sh) => {
+                        const line = resolveOutboundLineProduct(sh, rows, catalog);
+                        return (
+                          <TableRow key={sh.id} className="text-sm">
+                            <TableCell className="max-w-[200px] truncate px-3 py-2">{line.name}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">{line.article}</TableCell>
+                            <TableCell className="font-mono text-xs px-3 py-2">{line.barcode}</TableCell>
+                            <TableCell className="px-3 py-2">{mpLabelShort(sh.marketplace)}</TableCell>
+                            <TableCell className="px-3 py-2">{line.color}</TableCell>
+                            <TableCell className="px-3 py-2">{line.size}</TableCell>
+                            <TableCell className="px-3 py-2 text-right tabular-nums">{effOutboundPlanned(sh)}</TableCell>
+                            <TableCell className="px-3 py-2 text-right tabular-nums">{effOutboundFact(sh)}</TableCell>
+                            <TableCell className="max-w-[160px] truncate px-3 py-2 text-slate-700">{sh.sourceWarehouse}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+          <div className="hidden" aria-hidden>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
             <Input
               placeholder="Поиск по складу, артикулу, баркоду, цвету, размеру, площадке"
               value={shippingSearch}
@@ -3291,6 +3392,8 @@ const LegalEntityDetailsPage = () => {
                 </div>
               </CardContent>
             </Card>
+          </div>
+
           </div>
         </TabsContent>
 
