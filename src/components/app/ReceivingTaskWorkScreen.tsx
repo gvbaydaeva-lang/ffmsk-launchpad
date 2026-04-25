@@ -3,7 +3,8 @@ import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import StatusBadge from "@/components/app/StatusBadge";
 import type { InboundLineItem, InboundSupply } from "@/types/domain";
@@ -131,13 +132,6 @@ export default function ReceivingTaskWorkScreen({
         <CardDescription>Сканирование и приёмка товаров по выбранному заданию</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <button
-          type="button"
-          className="h-10 w-full max-w-sm rounded-md border border-slate-200 bg-white text-sm font-medium text-slate-900 hover:bg-slate-50"
-          onClick={() => onBack()}
-        >
-          Вернуться к списку
-        </button>
         <div className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm md:grid-cols-5">
           <div>
             <span className="text-slate-500">№ задания:</span>
@@ -296,6 +290,9 @@ export default function ReceivingTaskWorkScreen({
             <p className="text-xs text-slate-600">Осталось принять: {progress.remaining} шт.</p>
           ) : null}
         </div>
+        <button type="button" onClick={onBack} className={cn(buttonVariants({ variant: "outline" }), "h-10 w-full max-w-sm")}>
+          назад к списку
+        </button>
       </CardContent>
     </Card>
   );

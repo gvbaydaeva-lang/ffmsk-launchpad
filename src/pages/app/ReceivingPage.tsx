@@ -389,7 +389,7 @@ const ReceivingPage = () => {
               className="h-10 rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 hover:bg-slate-50"
               onClick={handleBackToList}
             >
-              Вернуться к списку
+              назад к списку
             </button>
           </CardContent>
         </Card>
