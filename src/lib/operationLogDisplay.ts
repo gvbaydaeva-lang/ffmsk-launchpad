@@ -9,7 +9,10 @@ const shortStatusByType: Record<string, string> = {
   INVENTORY_CHANGED: "Остатки",
   ITEM_SCANNED: "Сканирование",
   ERROR_DETECTED: "Ошибка",
-  SCAN_ERROR: "Скан",
+  SCAN_ERROR: "Ошибка",
+  TASK_MISMATCH: "Расхождение",
+  STOCK_ERROR: "Остатки",
+  TASK_COMPLETED_WITH_MISMATCH: "С расхождением",
 };
 
 export function formatOperationLogShortStatus(type: string): string {
@@ -38,7 +41,13 @@ export function operationLogTypeBadgeClass(type: string): string {
     case "ERROR_DETECTED":
       return `${badgeBase} border-red-200 bg-red-50 text-red-800`;
     case "SCAN_ERROR":
-      return `${badgeBase} border-slate-300 bg-slate-100 text-slate-800`;
+      return `${badgeBase} border-red-200 bg-red-50 text-red-800`;
+    case "TASK_MISMATCH":
+      return `${badgeBase} border-amber-200 bg-amber-50 text-amber-900`;
+    case "STOCK_ERROR":
+      return `${badgeBase} border-amber-200 bg-amber-50 text-amber-900`;
+    case "TASK_COMPLETED_WITH_MISMATCH":
+      return `${badgeBase} border-amber-200 bg-amber-50 text-amber-900`;
     default:
       return `${badgeBase} border-slate-200 bg-white text-slate-600`;
   }

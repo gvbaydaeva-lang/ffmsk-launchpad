@@ -255,7 +255,7 @@ const PackingPage = () => {
         legalEntityName: leNameErr,
         taskId: startedAssignment.id,
         taskNumber: noErr,
-        description: `Ошибка сканирования (штрихкод ${code})`,
+        description: `Ошибка: товар не найден в задании (штрихкод: ${code})`,
       });
       toast.error("Товар не найден в задании");
       focusScanInput();
@@ -276,7 +276,7 @@ const PackingPage = () => {
         legalEntityName: leNameErr,
         taskId: startedAssignment.id,
         taskNumber: noErr,
-        description: `Ошибка сканирования (превышение по штрихкоду ${code})`,
+        description: `Ошибка: превышено количество по товару (штрихкод: ${code})`,
       });
       toast.error("Количество по товару уже выполнено");
       focusScanInput();
@@ -372,6 +372,18 @@ const PackingPage = () => {
       }
     }
     if (shortages.length) {
+      appendOperationLog({
+        type: "STOCK_ERROR",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId,
+        taskId,
+        taskNumber:
+          startedAssignment.shipments[0]?.assignmentNo?.trim() ||
+          startedAssignment.shipments[0]?.assignmentId?.trim() ||
+          startedAssignment.shipments[0]?.id ||
+          "—",
+        description: "Ошибка: недостаточно товара на остатке",
+      });
       toast.error("Недостаточно товара на остатке", { description: shortages.join("\n") });
       return;
     }
@@ -381,6 +393,18 @@ const PackingPage = () => {
       return s + Math.min(packed, plan);
     }, 0);
     if (totalShipQty <= 0) {
+      appendOperationLog({
+        type: "TASK_MISMATCH",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId,
+        taskId,
+        taskNumber:
+          startedAssignment.shipments[0]?.assignmentNo?.trim() ||
+          startedAssignment.shipments[0]?.assignmentId?.trim() ||
+          startedAssignment.shipments[0]?.id ||
+          "—",
+        description: "Ошибка: попытка завершить задание с расхождением План/Факт",
+      });
       toast.error("Нет количества для завершения", { description: "Отсканируйте товар по заданию." });
       return;
     }
@@ -451,24 +475,31 @@ const PackingPage = () => {
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       if (hasDiscrepancy) {
         appendOperationLog({
-          type: "ERROR_DETECTED",
+          type: "TASK_MISMATCH",
           legalEntityId: startedAssignment.legalEntityId,
           legalEntityName: leName,
           taskId,
           taskNumber: assignmentNo,
-          description: `Обнаружено расхождение в задании №${assignmentNo}`,
+          description: "Ошибка: попытка завершить задание с расхождением План/Факт",
+        });
+        appendOperationLog({
+          type: "TASK_COMPLETED_WITH_MISMATCH",
+          legalEntityId: startedAssignment.legalEntityId,
+          legalEntityName: leName,
+          taskId,
+          taskNumber: assignmentNo,
+          description: "Задание завершено с расхождением",
+        });
+      } else {
+        appendOperationLog({
+          type: "PACKING_COMPLETED",
+          legalEntityId: startedAssignment.legalEntityId,
+          legalEntityName: leName,
+          taskId,
+          taskNumber: assignmentNo,
+          description: `Задание №${assignmentNo} завершено`,
         });
       }
-      appendOperationLog({
-        type: "PACKING_COMPLETED",
-        legalEntityId: startedAssignment.legalEntityId,
-        legalEntityName: leName,
-        taskId,
-        taskNumber: assignmentNo,
-        description: hasDiscrepancy
-          ? `Задание №${assignmentNo} завершено с расхождениями`
-          : `Задание №${assignmentNo} завершено`,
-      });
       if (hasDiscrepancy) {
         toast.warning("Задание завершено с расхождениями", { description: "Проверьте план и факт по строкам." });
       } else {

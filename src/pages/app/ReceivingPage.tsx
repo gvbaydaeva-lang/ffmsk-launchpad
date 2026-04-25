@@ -166,24 +166,31 @@ const ReceivingPage = () => {
       await setInboundStatus({ id: latest.id, status: "принято", receivedUnits: fact });
       if (hasDiscrepancy) {
         appendOperationLog({
-          type: "ERROR_DETECTED",
+          type: "TASK_MISMATCH",
           legalEntityId: latest.legalEntityId,
           legalEntityName: entityName(latest.legalEntityId),
           taskId: latest.id,
           taskNumber: latest.documentNo,
-          description: `Обнаружено расхождение в задании №${latest.documentNo}`,
+          description: "Ошибка: попытка завершить задание с расхождением План/Факт",
+        });
+        appendOperationLog({
+          type: "TASK_COMPLETED_WITH_MISMATCH",
+          legalEntityId: latest.legalEntityId,
+          legalEntityName: entityName(latest.legalEntityId),
+          taskId: latest.id,
+          taskNumber: latest.documentNo,
+          description: `Задание завершено с расхождением`,
+        });
+      } else {
+        appendOperationLog({
+          type: "RECEIVING_COMPLETED",
+          legalEntityId: latest.legalEntityId,
+          legalEntityName: entityName(latest.legalEntityId),
+          taskId: latest.id,
+          taskNumber: latest.documentNo,
+          description: `Приёмка №${latest.documentNo} завершена`,
         });
       }
-      appendOperationLog({
-        type: "RECEIVING_COMPLETED",
-        legalEntityId: latest.legalEntityId,
-        legalEntityName: entityName(latest.legalEntityId),
-        taskId: latest.id,
-        taskNumber: latest.documentNo,
-        description: hasDiscrepancy
-          ? `Приёмка №${latest.documentNo} завершена с расхождениями`
-          : `Приёмка №${latest.documentNo} завершена`,
-      });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       setStartedSupplyId(null);
@@ -340,8 +347,8 @@ const ReceivingPage = () => {
               taskNumber: startedSupply.documentNo,
               description:
                 kind === "over"
-                  ? `Ошибка сканирования (превышение по штрихкоду ${code})`
-                  : `Ошибка сканирования (штрихкод ${code})`,
+                  ? `Ошибка: превышено количество по товару (штрихкод: ${code})`
+                  : `Ошибка: товар не найден в задании (штрихкод: ${code})`,
             });
           }}
         />
