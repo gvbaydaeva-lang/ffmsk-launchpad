@@ -11,7 +11,7 @@ import type {
   WarehouseInventoryRow,
 } from "@/types/domain";
 import { appendMockOutbound, fetchMockOutboundShipments, persistOutboundDurably, saveMockOutbound } from "@/services/mockOutbound";
-import { appendMockInbound, fetchMockInboundSupplies, saveMockInbound } from "@/services/mockReceiving";
+import { appendMockInbound, fetchMockInboundSupplies, persistInboundDurably, saveMockInbound } from "@/services/mockReceiving";
 import { closeOperationalDay } from "@/services/financeCloseDay";
 import { fetchMockOperationHistory, prependOperationEvent } from "@/services/mockOperationHistory";
 import {
@@ -84,6 +84,7 @@ export function useInboundSupplies() {
     onSuccess: async (data, vars) => {
       qc.setQueryData(["wms", "inbound"], data);
       saveMockInbound(data);
+      void persistInboundDurably(data);
       const history = qc.getQueryData<OperationHistoryEvent[]>(["wms", "operation-history"]) ?? (await fetchMockOperationHistory());
       qc.setQueryData(
         ["wms", "operation-history"],
@@ -136,6 +137,7 @@ export function useInboundSupplies() {
       qc.setQueryData(["wms", "inbound"], inbound);
       qc.setQueryData(["wms", "product-catalog"], catalog);
       saveMockInbound(inbound);
+      void persistInboundDurably(inbound);
       saveMockProductCatalog(catalog);
     },
   });
@@ -143,7 +145,7 @@ export function useInboundSupplies() {
   const updateDraft = useMutation({
     mutationFn: async (args: { id: string; items: InboundSupply["items"]; marketplace?: Marketplace }) => {
       const inbound = qc.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? (await fetchMockInboundSupplies());
-      return inbound.map((x) =>
+      const next = inbound.map((x) =>
         x.id === args.id
           ? {
               ...x,
@@ -154,10 +156,11 @@ export function useInboundSupplies() {
             }
           : x,
       );
+      await persistInboundDurably(next);
+      return next;
     },
     onSuccess: (data) => {
       qc.setQueryData(["wms", "inbound"], data);
-      saveMockInbound(data);
     },
   });
 
@@ -248,12 +251,12 @@ export function useOutboundShipments() {
   const updateDraft = useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<OutboundShipment> }) => {
       const outbound = qc.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? (await fetchMockOutboundShipments());
-      return outbound.map((x) => (x.id === id ? { ...x, ...patch } : x));
+      const next = outbound.map((x) => (x.id === id ? { ...x, ...patch } : x));
+      await persistOutboundDurably(next);
+      return next;
     },
     onSuccess: (data) => {
       qc.setQueryData(["wms", "outbound"], data);
-      saveMockOutbound(data);
-      void persistOutboundDurably(data);
     },
   });
 

@@ -380,7 +380,7 @@ const LegalEntityDetailsPage = () => {
   const [catalogColFilters, setCatalogColFilters] = React.useState<Record<string, string>>({});
   const [catalogPhotoViewer, setCatalogPhotoViewer] = React.useState<string | null>(null);
   const [recvColFilters, setRecvColFilters] = React.useState<Record<string, string>>({});
-  const [recvSortKey, setRecvSortKey] = React.useState<"name" | "article" | "barcode" | "color" | "size" | "mp" | "plan" | "fact">("article");
+  const [recvSortKey, setRecvSortKey] = React.useState<"name" | "article" | "barcode" | "color" | "size" | "mp" | "plan" | "fact" | "status">("article");
   const [recvSortDir, setRecvSortDir] = React.useState<"asc" | "desc">("asc");
   const [shipColFilters, setShipColFilters] = React.useState<Record<string, string>>({});
   const [showOnlyDiff, setShowOnlyDiff] = React.useState(false);
@@ -935,7 +935,7 @@ const LegalEntityDetailsPage = () => {
           name,
           article,
           barcode,
-          size: (draft?.size || "").trim() || product?.size || x.importSize || "",
+          size: (draft?.size || "").trim() || (x.importSize || "").trim() || (product?.size || "").trim(),
           color: (draft?.color || "").trim() || product?.color || x.importColor || "",
           marketplace: draft?.marketplace ?? x.marketplace,
           warehouse: x.sourceWarehouse,
@@ -973,7 +973,7 @@ const LegalEntityDetailsPage = () => {
       const article = (product?.supplierArticle || "").trim() || (sh.importArticle || "").trim() || "";
       const barcode = (product?.barcode || "").trim() || (sh.importBarcode || "").trim() || "";
       const color = (product?.color || "").trim() || (sh.importColor || "").trim() || "";
-      const size = (product?.size || "").trim() || (sh.importSize || "").trim() || "";
+      const size = (sh.importSize || "").trim() || (product?.size || "").trim() || "";
       const wh = sh.sourceWarehouse || "—";
 
       let line = lines.get(key);
@@ -1141,6 +1141,7 @@ const LegalEntityDetailsPage = () => {
       if (!q) return true;
       return String(val).toLowerCase().includes(q);
     };
+    const recvStatus = (line: InboundMatrixLine) => (line.totalPlan === line.totalFact ? "Проверено" : "Требует проверки");
     matrixLines = matrixLines.filter(
       (line) =>
         recvColOk("name", line.name) &&
@@ -1150,7 +1151,8 @@ const LegalEntityDetailsPage = () => {
         recvColOk("size", line.size) &&
         recvColOk("mp", line.marketplace) &&
         recvColOk("plan", String(line.totalPlan)) &&
-        recvColOk("fact", String(line.totalFact)),
+        recvColOk("fact", String(line.totalFact)) &&
+        recvColOk("status", recvStatus(line)),
     );
 
     const dir = recvSortDir === "asc" ? 1 : -1;
@@ -1162,6 +1164,7 @@ const LegalEntityDetailsPage = () => {
       if (recvSortKey === "mp") return a.marketplace.localeCompare(b.marketplace, "ru") * dir;
       if (recvSortKey === "plan") return (a.totalPlan - b.totalPlan) * dir;
       if (recvSortKey === "fact") return (a.totalFact - b.totalFact) * dir;
+      if (recvSortKey === "status") return recvStatus(a).localeCompare(recvStatus(b), "ru") * dir;
       return a.supplierArticle.localeCompare(b.supplierArticle, "ru") * dir;
     });
 
@@ -2207,7 +2210,7 @@ const LegalEntityDetailsPage = () => {
           </Card>
 
           <Dialog open={Boolean(catalogPhotoViewer)} onOpenChange={(o) => !o && setCatalogPhotoViewer(null)}>
-            <DialogContent className="max-h-[90vh] max-w-[min(96vw,920px)] border-none bg-black/90 p-2 shadow-2xl sm:max-w-[min(96vw,920px)]">
+            <DialogContent className="h-screen w-screen max-h-screen max-w-none border-none bg-black/95 p-2 shadow-none sm:rounded-none">
               <DialogHeader className="sr-only">
                 <DialogTitle>Просмотр фото</DialogTitle>
               </DialogHeader>
@@ -2215,7 +2218,7 @@ const LegalEntityDetailsPage = () => {
                 <img
                   src={catalogPhotoViewer}
                   alt=""
-                  className="mx-auto max-h-[85vh] w-auto max-w-full rounded object-contain"
+                  className="mx-auto h-full w-full object-contain"
                 />
               ) : null}
             </DialogContent>
@@ -2559,21 +2562,28 @@ const LegalEntityDetailsPage = () => {
                           }}
                         />
                       </ExcelThWithFilter>
-                      {receivingMatrix.warehouses.map((wh, wi) => (
-                        <th
-                          key={wh}
-                          className={`${WAREHOUSE_HEADER_CLASSES[wi % WAREHOUSE_HEADER_CLASSES.length]} border-r border-slate-300 px-1.5 py-1 text-center text-[11px] font-semibold whitespace-nowrap min-w-[96px]`}
-                        >
-                          {wh}
-                        </th>
-                      ))}
+                      <ExcelThWithFilter className={`${STATIC_HEADER_BASE} min-w-[130px] whitespace-nowrap text-center`} label="Статус">
+                        <ExcelColumnFilterMenu
+                          title="Статус"
+                          searchValue={recvColFilters.status ?? ""}
+                          onSearchChange={(v) => setRecvColFilters((s) => ({ ...s, status: v }))}
+                          onSortAscText={() => {
+                            setRecvSortKey("status");
+                            setRecvSortDir("asc");
+                          }}
+                          onSortDescText={() => {
+                            setRecvSortKey("status");
+                            setRecvSortDir("desc");
+                          }}
+                        />
+                      </ExcelThWithFilter>
                     </tr>
                   </thead>
                   <tbody>
                     {receivingMatrix.lines.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={8 + receivingMatrix.warehouses.length}
+                          colSpan={9}
                           className="border-b border-slate-200 px-3 py-8 text-center text-muted-foreground text-[11px]"
                         >
                           Нет строк приёмки для отображения
@@ -2593,7 +2603,10 @@ const LegalEntityDetailsPage = () => {
                         const planMismatch = line.totalPlan !== line.totalFact;
                         const rowBg = excelRowBg(idx, false);
                         const cellBase = `border-b border-r border-slate-200 px-1.5 py-0.5 align-middle text-[11px] ${rowBg}`;
-                        const diffCell = planMismatch ? "bg-red-50/90 ring-1 ring-inset ring-red-300/80" : "";
+                        const statusText = planMismatch ? "Требует проверки" : "Проверено";
+                        const statusCell = planMismatch
+                          ? "bg-slate-50 text-slate-700"
+                          : "bg-emerald-50/80 text-emerald-700 ring-1 ring-inset ring-emerald-200";
                         const mpLabel =
                           line.marketplace === "wb" ? "WB" : line.marketplace === "ozon" ? "Ozon" : "Яндекс";
                         return (
@@ -2666,7 +2679,7 @@ const LegalEntityDetailsPage = () => {
                                 mpLabel
                               )}
                             </td>
-                            <td className={`${cellBase} text-center tabular-nums font-medium ${diffCell}`}>
+                            <td className={`${cellBase} text-center tabular-nums font-medium`}>
                               {inboundMatrixEdit && soleRef ? (
                                 <Input
                                   type="number"
@@ -2679,7 +2692,7 @@ const LegalEntityDetailsPage = () => {
                                 line.totalPlan
                               )}
                             </td>
-                            <td className={`${cellBase} text-center tabular-nums ${diffCell}`}>
+                            <td className={`${cellBase} text-center tabular-nums`}>
                               {inboundMatrixEdit && soleRef ? (
                                 <Input
                                   type="number"
@@ -2692,28 +2705,7 @@ const LegalEntityDetailsPage = () => {
                                 line.totalFact
                               )}
                             </td>
-                            {receivingMatrix.warehouses.map((wh, wi) => {
-                              const cell = line.byWarehouse.get(wh);
-                              const whBg = WAREHOUSE_COLUMN_CELL_BGS[wi % WAREHOUSE_COLUMN_CELL_BGS.length];
-                              const whCell = `${cellBase} text-center tabular-nums ${whBg}`;
-                              if (!cell || cell.rowRefs.length === 0) {
-                                return (
-                                  <td key={wh} className={whCell}>
-                                    —
-                                  </td>
-                                );
-                              }
-                              const sumP = cell.rowRefs.reduce((s, r) => s + effInboundPlanned(r.inboundId, r.rowIndex), 0);
-                              const sumF = cell.rowRefs.reduce((s, r) => s + effInboundFactual(r.inboundId, r.rowIndex), 0);
-                              return (
-                                <td key={wh} className={whCell}>
-                                  <div className="leading-tight">
-                                    <div>П: {sumP}</div>
-                                    <div className="text-muted-foreground">Ф: {sumF}</div>
-                                  </div>
-                                </td>
-                              );
-                            })}
+                            <td className={`${cellBase} text-center font-medium ${statusCell}`}>{statusText}</td>
                           </tr>
                         );
                       })
