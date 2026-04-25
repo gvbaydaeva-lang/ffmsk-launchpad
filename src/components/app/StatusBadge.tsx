@@ -53,20 +53,12 @@ export default function StatusBadge({
   mismatch = false,
   className,
 }: StatusBadgeProps) {
-  const needReview = requiresReview || mismatch;
+  void requiresReview;
+  void mismatch;
 
   return (
-    <span className={cn("inline-flex flex-wrap items-center gap-1", className)}>
+    <span className={cn("inline-flex", className)}>
       <PrimaryBadge status={status} />
-      {needReview ? (
-        <span
-          className={cn(
-            "inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-950",
-          )}
-        >
-          Требует проверки
-        </span>
-      ) : null}
     </span>
   );
 }
