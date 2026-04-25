@@ -9,15 +9,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
+import ReceivingTaskWorkScreen from "@/components/app/ReceivingTaskWorkScreen";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace, TaskWorkflowStatus } from "@/types/domain";
-import {
-  taskWorkflowActionButtonClass,
-  taskWorkflowActionLabel,
-  workflowFromInbound,
-} from "@/lib/taskWorkflowUi";
+import { workflowFromInbound } from "@/lib/taskWorkflowUi";
 import { toast } from "sonner";
 
 const ReceivingPage = () => {
@@ -68,19 +65,16 @@ const ReceivingPage = () => {
   }, [data, mp, legalEntityId, search, entityName, statusFilter, warehouseFilter, dateFrom, dateTo]);
   const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
   const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
-  const receivingStarted = startedSupply ? workflowFromInbound(startedSupply) === "processing" : false;
-
-  const totals = React.useMemo(() => {
-    if (!startedSupply) return { plan: 0, fact: 0, done: false };
-    const plan = startedSupply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
-    const fact = startedSupply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
-    return { plan, fact, done: plan > 0 && plan === fact };
-  }, [startedSupply]);
 
   const mutateItemFact = async (supply: InboundSupply, index: number, value: number) => {
     const nextValue = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
     const nextItems = supply.items.map((item, idx) => (idx === index ? { ...item, factualQuantity: nextValue } : item));
     await updateInboundDraft({ id: supply.id, items: nextItems });
+    await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
+  };
+
+  const saveSupplyItems = async (supply: InboundSupply, items: InboundSupply["items"]) => {
+    await updateInboundDraft({ id: supply.id, items });
     await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
   };
 
@@ -102,10 +96,13 @@ const ReceivingPage = () => {
   };
 
   const closeReceiving = async () => {
-    if (!startedSupply || !totals.done) return;
+    if (!startedSupply) return;
+    const plan = startedSupply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+    const fact = startedSupply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
+    if (plan <= 0 || plan !== fact) return;
     try {
       await updateInboundDraft({ id: startedSupply.id, items: startedSupply.items, workflowStatus: "completed" });
-      await setInboundStatus({ id: startedSupply.id, status: "принято", receivedUnits: totals.fact });
+      await setInboundStatus({ id: startedSupply.id, status: "принято", receivedUnits: fact });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
       setStartedSupplyId(null);
       toast.success("Приёмка закрыта и убрана из активных.");
@@ -233,92 +230,16 @@ const ReceivingPage = () => {
       ) : null}
 
       {startedSupply ? (
-        <Card className="border-slate-200 bg-white shadow-sm">
-          <CardHeader>
-            <CardTitle className="font-display text-lg text-slate-900">Документ {startedSupply.documentNo}</CardTitle>
-            <CardDescription>{entityName(startedSupply.legalEntityId)}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-slate-900">Принято {totals.fact} из {totals.plan}</span>
-                <span className="text-slate-600">{totals.plan > 0 ? Math.round((totals.fact / totals.plan) * 100) : 0}%</span>
-              </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all"
-                  style={{ width: `${totals.plan > 0 ? Math.min(100, Math.round((totals.fact / totals.plan) * 100)) : 0}%` }}
-                />
-              </div>
-            </div>
-
-            <div className="overflow-x-auto rounded-md border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-100">
-                  <tr>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Артикул</th>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Наименование</th>
-                    <th className="border-b border-r px-3 py-2 text-right font-medium">План</th>
-                    <th className="border-b px-3 py-2 text-right font-medium">Факт</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {startedSupply.items.map((item, index) => (
-                    <tr key={`${startedSupply.id}-${item.barcode}-${index}`} className="odd:bg-white even:bg-slate-50/50">
-                      <td className="border-b border-r px-3 py-2">{item.supplierArticle || "—"}</td>
-                      <td className="border-b border-r px-3 py-2">{item.name || item.barcode || "—"}</td>
-                      <td className="border-b border-r px-3 py-2 text-right tabular-nums">{item.plannedQuantity}</td>
-                      <td className="border-b px-3 py-2">
-                        <Input
-                          type="number"
-                          min={0}
-                          value={item.factualQuantity}
-                          disabled={!receivingStarted || isUpdatingInboundDraft}
-                          className="h-9 text-right tabular-nums"
-                          onChange={(e) => {
-                            const value = Number(e.target.value);
-                            void mutateItemFact(startedSupply, index, value);
-                          }}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {!receivingStarted && workflowFromInbound(startedSupply) !== "completed" ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className={taskWorkflowActionButtonClass("pending")}
-                onClick={() => void startReceiving(startedSupply)}
-                disabled={isUpdatingInbound}
-              >
-                {taskWorkflowActionLabel("pending")}
-              </Button>
-            ) : null}
-            {receivingStarted && totals.done ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
-                onClick={() => void closeReceiving()}
-                disabled={isUpdatingInbound}
-              >
-                Закрыть приёмку
-              </Button>
-            ) : null}
-            {workflowFromInbound(startedSupply) === "completed" ? (
-              <Button type="button" variant="ghost" className={taskWorkflowActionButtonClass("completed")} disabled>
-                {taskWorkflowActionLabel("completed")}
-              </Button>
-            ) : null}
-            <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedSupplyId(null)}>
-              Вернуться к списку заданий
-            </Button>
-          </CardContent>
-        </Card>
+        <ReceivingTaskWorkScreen
+          supply={startedSupply}
+          legalEntityName={entityName(startedSupply.legalEntityId)}
+          isUpdatingInboundDraft={isUpdatingInboundDraft}
+          isUpdatingInbound={isUpdatingInbound}
+          onBack={() => setStartedSupplyId(null)}
+          onStartReceiving={() => startReceiving(startedSupply)}
+          onSaveItems={(items) => saveSupplyItems(startedSupply, items)}
+          onComplete={() => closeReceiving()}
+        />
       ) : null}
     </div>
   );
