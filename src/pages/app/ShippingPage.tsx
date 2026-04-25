@@ -205,11 +205,13 @@ const ShippingPage = () => {
                 mismatch: doc.planned !== doc.fact && doc.workflowStatus === "completed",
               }))}
               selectedId={selectedId}
+              actionLabel="Открыть"
+              disableActionForCompleted={false}
               onOpen={(id) => setSelectedId((prev) => (prev === id ? null : id))}
               onAction={(id) => {
                 const doc = documents.find((x) => x.id === id);
-                if (!doc || doc.workflowStatus === "completed") return;
-                setSelectedId(id);
+                if (!doc) return;
+                setSelectedId((prev) => (prev === id ? null : id));
               }}
             />
           )}

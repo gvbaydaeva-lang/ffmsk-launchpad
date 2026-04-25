@@ -26,6 +26,8 @@ type Props = {
   rows: TaskRegistryRow[];
   onOpen?: (id: string) => void;
   onAction?: (id: string) => void;
+  actionLabel?: string;
+  disableActionForCompleted?: boolean;
   selectedId?: string | null;
   showLegalEntity?: boolean;
   emptyText?: string;
@@ -35,11 +37,13 @@ export default function TaskRegistryTable({
   rows,
   onOpen,
   onAction,
+  actionLabel,
+  disableActionForCompleted = true,
   selectedId,
   showLegalEntity = true,
   emptyText = "Нет заданий для отображения.",
 }: Props) {
-  const actionLabel = (status: TaskWorkflowStatus) => {
+  const workflowActionLabel = (status: TaskWorkflowStatus) => {
     if (status === "processing") return "Продолжить";
     if (status === "completed") return "Завершено";
     return "В работу";
@@ -110,10 +114,10 @@ export default function TaskRegistryTable({
                     variant="outline"
                     size="sm"
                     className="h-8 border-slate-200 text-xs"
-                    disabled={row.status === "completed"}
+                    disabled={disableActionForCompleted && row.status === "completed"}
                     onClick={() => onAction?.(row.id)}
                   >
-                    {actionLabel(row.status)}
+                    {actionLabel ?? workflowActionLabel(row.status)}
                   </Button>
                 </TableCell>
               </TableRow>

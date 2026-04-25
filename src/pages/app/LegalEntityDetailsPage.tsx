@@ -2509,7 +2509,7 @@ const LegalEntityDetailsPage = () => {
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{doc.documentNo}</TableCell>
                             <TableCell className="px-3 py-2">
                               <span
-                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${inboundRegistryBadgeClass(wf)}`}
+                                className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${inboundRegistryBadgeClass(wf)}`}
                               >
                                 {workflowStatusLabel(wf)}
                               </span>
@@ -3038,7 +3038,7 @@ const LegalEntityDetailsPage = () => {
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{doc.assignmentNo}</TableCell>
                             <TableCell className="px-3 py-2">
                               <span
-                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${outboundRegistryBadgeClass(doc.workflowStatus)}`}
+                                className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${outboundRegistryBadgeClass(doc.workflowStatus)}`}
                               >
                                 {workflowStatusLabel(doc.workflowStatus)}
                               </span>
@@ -3116,7 +3116,7 @@ const LegalEntityDetailsPage = () => {
                             <TableCell className="max-w-[160px] truncate px-3 py-2 text-slate-700">{sh.sourceWarehouse}</TableCell>
                             <TableCell className="px-3 py-2">
                               <span
-                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                                className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
                                   mismatch ? "bg-red-100 text-red-700 ring-1 ring-red-200" : outboundRegistryBadgeClass(wf)
                                 }`}
                               >
