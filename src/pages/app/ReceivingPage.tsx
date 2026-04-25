@@ -115,7 +115,12 @@ const ReceivingPage = () => {
     }
     const plan = latest.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
     const fact = latest.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
-    if (plan <= 0 || plan !== fact) return;
+    if (plan <= 0) return;
+    const hasDiscrepancy = latest.items.some((it) => {
+      const p = Number(it.plannedQuantity) || 0;
+      const f = Number(it.factualQuantity) || 0;
+      return p !== f;
+    });
     const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementRows) ?? [];
     try {
       if (!hasTaskMovements(latest.id, "INBOUND", invSnapshot)) {
@@ -152,20 +157,41 @@ const ReceivingPage = () => {
           await addInventoryMovements(moves);
         }
       }
-      await updateInboundDraft({ id: latest.id, items: latest.items, workflowStatus: "completed" });
+      await updateInboundDraft({
+        id: latest.id,
+        items: latest.items,
+        workflowStatus: "completed",
+        completedWithDiscrepancies: hasDiscrepancy,
+      });
       await setInboundStatus({ id: latest.id, status: "принято", receivedUnits: fact });
+      if (hasDiscrepancy) {
+        appendOperationLog({
+          type: "ERROR_DETECTED",
+          legalEntityId: latest.legalEntityId,
+          legalEntityName: entityName(latest.legalEntityId),
+          taskId: latest.id,
+          taskNumber: latest.documentNo,
+          description: `Обнаружено расхождение в задании №${latest.documentNo}`,
+        });
+      }
       appendOperationLog({
         type: "RECEIVING_COMPLETED",
         legalEntityId: latest.legalEntityId,
         legalEntityName: entityName(latest.legalEntityId),
         taskId: latest.id,
         taskNumber: latest.documentNo,
-        description: `Приёмка №${latest.documentNo} завершена`,
+        description: hasDiscrepancy
+          ? `Приёмка №${latest.documentNo} завершена с расхождениями`
+          : `Приёмка №${latest.documentNo} завершена`,
       });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       setStartedSupplyId(null);
-      toast.success("Приёмка закрыта и убрана из активных.");
+      if (hasDiscrepancy) {
+        toast.warning("Приёмка закрыта с расхождениями", { description: "Проверьте план и факт по строкам." });
+      } else {
+        toast.success("Приёмка закрыта и убрана из активных.");
+      }
     } catch {
       toast.error("Не удалось закрыть приёмку.");
     }
@@ -259,6 +285,10 @@ const ReceivingPage = () => {
                   const plan = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
                   const fact = supply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
                   const wf = workflowFromInbound(supply);
+                  const overrun = Math.max(0, fact - plan);
+                  const requiresReview = plan > 0 && plan !== fact;
+                  const mismatch =
+                    wf === "completed" && (plan !== fact || Boolean(supply.completedWithDiscrepancies));
                   return {
                     id: supply.id,
                     createdAtLabel: supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy HH:mm", { locale: ru }) : "—",
@@ -270,7 +300,9 @@ const ReceivingPage = () => {
                     plan,
                     fact,
                     isNew: wf === "pending",
-                    mismatch: wf === "completed" && plan !== fact,
+                    requiresReview,
+                    mismatch,
+                    overrun,
                   };
                 })}
                 onOpen={(id) => {
