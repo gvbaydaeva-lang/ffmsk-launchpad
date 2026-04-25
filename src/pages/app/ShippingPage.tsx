@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,7 +31,14 @@ type ShipmentDoc = {
   workflowStatus: TaskWorkflowStatus;
 };
 
+function shippingDispatcherHint(status: TaskWorkflowStatus): string {
+  if (status === "pending") return "Задание создано и ожидает сборки";
+  if (status === "processing") return "Задание находится в сборке";
+  return "Сборка завершена";
+}
+
 const ShippingPage = () => {
+  const navigate = useNavigate();
   const { data, isLoading, error } = useOutboundShipments();
   const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
@@ -143,6 +151,13 @@ const ShippingPage = () => {
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 
+  const goToPacker = React.useCallback(
+    (assignmentId: string) => {
+      navigate(`/packing?openAssignment=${encodeURIComponent(assignmentId)}`);
+    },
+    [navigate],
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
@@ -245,62 +260,130 @@ const ShippingPage = () => {
                       const rem = Math.max(0, doc.planned - doc.fact);
                       const over = Math.max(0, doc.fact - doc.planned);
                       const isSel = selectedId === doc.id;
+                      const legalLabel = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
                       return (
-                        <TableRow
-                          key={doc.id}
-                          className={`cursor-pointer border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
-                          onClick={() => setSelectedId(doc.id)}
-                        >
-                          <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
-                            {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{doc.assignmentNo}</TableCell>
-                          <TableCell className="whitespace-nowrap px-3 py-2">
-                            {entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId}
-                          </TableCell>
-                          <TableCell className="px-3 py-2">
-                            <StatusBadge status={doc.workflowStatus} />
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap px-3 py-2">{doc.sourceWarehouse}</TableCell>
-                          <TableCell className="px-3 py-2">{doc.marketplace.toUpperCase()}</TableCell>
-                          <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.planned}</TableCell>
-                          <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.fact}</TableCell>
-                          <TableCell
-                            className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${
-                              doc.planned > doc.fact ? "font-medium text-amber-800" : doc.planned < doc.fact ? "font-medium text-red-700" : ""
-                            }`}
+                        <React.Fragment key={doc.id}>
+                          <TableRow
+                            className={`cursor-pointer border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
+                            onClick={() => setSelectedId(doc.id)}
                           >
-                            {rem}
-                          </TableCell>
-                          <TableCell className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${over > 0 ? "font-medium text-red-700" : ""}`}>
-                            {over}
-                          </TableCell>
-                          <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 hover:bg-slate-50"
-                              onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
+                              {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{doc.assignmentNo}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
+                            <TableCell className="px-3 py-2">
+                              <StatusBadge status={doc.workflowStatus} />
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">{doc.sourceWarehouse}</TableCell>
+                            <TableCell className="px-3 py-2">{doc.marketplace.toUpperCase()}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.planned}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.fact}</TableCell>
+                            <TableCell
+                              className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${
+                                doc.planned > doc.fact ? "font-medium text-amber-800" : doc.planned < doc.fact ? "font-medium text-red-700" : ""
+                              }`}
                             >
-                              Открыть
-                            </button>
-                          </TableCell>
-                        </TableRow>
+                              {rem}
+                            </TableCell>
+                            <TableCell className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${over > 0 ? "font-medium text-red-700" : ""}`}>
+                              {over}
+                            </TableCell>
+                            <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 hover:bg-slate-50"
+                                onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
+                              >
+                                Открыть
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                          {isSel ? (
+                            <TableRow className="border-slate-100 bg-slate-50/90">
+                              <TableCell colSpan={11} className="align-top p-0">
+                                <div className="space-y-4 border-t border-slate-200 p-4">
+                                  <div>
+                                    <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
+                                    <p className="mt-1 text-sm text-slate-600">{shippingDispatcherHint(doc.workflowStatus)}</p>
+                                  </div>
+                                  <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                                    <div>
+                                      <span className="text-slate-500">Юрлицо</span>
+                                      <div className="font-medium text-slate-900">{legalLabel}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Склад</span>
+                                      <div className="font-medium text-slate-900">{doc.sourceWarehouse}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Статус</span>
+                                      <div className="mt-0.5">
+                                        <StatusBadge status={doc.workflowStatus} />
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">МП</span>
+                                      <div className="font-medium text-slate-900">{doc.marketplace.toUpperCase()}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">План</span>
+                                      <div className="font-medium tabular-nums text-slate-900">{doc.planned}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Факт</span>
+                                      <div className="font-medium tabular-nums text-slate-900">{doc.fact}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Осталось</span>
+                                      <div className={`font-medium tabular-nums ${rem > 0 ? "text-amber-800" : "text-slate-900"}`}>{rem}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Перерасход</span>
+                                      <div className={`font-medium tabular-nums ${over > 0 ? "text-red-700" : "text-slate-900"}`}>{over}</div>
+                                    </div>
+                                  </div>
+                                  {(doc.planned > doc.fact || doc.fact > doc.planned) && (
+                                    <div className="flex flex-wrap gap-3 text-sm">
+                                      {doc.planned > doc.fact ? (
+                                        <span className="font-medium text-amber-800">Осталось: {rem}</span>
+                                      ) : null}
+                                      {doc.fact > doc.planned ? <span className="font-medium text-red-700">Перерасход: {over}</span> : null}
+                                    </div>
+                                  )}
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {doc.workflowStatus === "completed" ? (
+                                      <Button type="button" size="sm" variant="secondary" disabled>
+                                        Сборка завершена
+                                      </Button>
+                                    ) : doc.workflowStatus === "processing" ? (
+                                      <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                        Продолжить сборку
+                                      </Button>
+                                    ) : (
+                                      <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                        Открыть в упаковщике
+                                      </Button>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="mb-2 text-xs font-medium text-slate-600">Состав задания</p>
+                                    {selectedShipmentItemRows.length === 0 ? (
+                                      <p className="text-sm text-slate-600">Состав задания не найден</p>
+                                    ) : (
+                                      <TaskItemsTable variant="outboundLines" rows={selectedShipmentItemRows} />
+                                    )}
+                                  </div>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </React.Fragment>
                       );
                     })}
                   </TableBody>
                 </Table>
               </div>
-
-              {selectedDoc ? (
-                <div className="space-y-3 border-t border-slate-200 pt-4">
-                  <h3 className="font-display text-base font-semibold text-slate-900">Состав задания №{selectedDoc.assignmentNo}</h3>
-                  {selectedShipmentItemRows.length === 0 ? (
-                    <p className="text-sm text-slate-600">Состав задания не найден</p>
-                  ) : (
-                    <TaskItemsTable variant="outboundLines" rows={selectedShipmentItemRows} />
-                  )}
-                </div>
-              ) : null}
             </>
           )}
         </CardContent>

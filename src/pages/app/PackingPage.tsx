@@ -83,7 +83,7 @@ const PackingPage = () => {
       .sort((a, b) => (a.assignmentNo || a.id).localeCompare(b.assignmentNo || b.id, "ru"));
   }, [outbound, legalEntityId]);
 
-  const assignments = React.useMemo<PackingAssignment[]>(() => {
+  const allGroupedAssignments = React.useMemo<PackingAssignment[]>(() => {
     const groups = new Map<string, PackingAssignment>();
     for (const sh of allShipments) {
       const assignmentNo = sh.assignmentNo?.trim() || sh.assignmentId?.trim() || sh.id;
@@ -107,13 +107,15 @@ const PackingPage = () => {
         }
       }
     }
-    const all = Array.from(groups.values())
-      .map((group) => {
-        const allCompleted = group.shipments.every((sh) => (sh.workflowStatus ?? "pending") === "completed");
-        return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus };
-      });
+    return Array.from(groups.values()).map((group) => {
+      const allCompleted = group.shipments.every((sh) => (sh.workflowStatus ?? "pending") === "completed");
+      return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus };
+    });
+  }, [allShipments, legal]);
+
+  const assignments = React.useMemo<PackingAssignment[]>(() => {
     const q = search.trim().toLowerCase();
-    return all
+    return allGroupedAssignments
       .filter((group) => {
         const first = group.shipments[0];
         if (!first) return false;
@@ -143,13 +145,14 @@ const PackingPage = () => {
         const db = Date.parse(b.shipments[0]?.createdAt || "") || 0;
         return db - da;
       });
-  }, [allShipments, legal, search, viewMode, statusFilter, warehouseFilter, mpFilter, dateFrom, dateTo]);
+  }, [allGroupedAssignments, legal, search, viewMode, statusFilter, warehouseFilter, mpFilter, dateFrom, dateTo]);
   const warehouses = React.useMemo(
-    () => Array.from(new Set(assignments.map((a) => a.shipments[0]?.sourceWarehouse || ""))).filter(Boolean),
-    [assignments],
+    () => Array.from(new Set(allGroupedAssignments.map((a) => a.shipments[0]?.sourceWarehouse || ""))).filter(Boolean),
+    [allGroupedAssignments],
   );
 
-  const startedAssignment = assignments.find((x) => x.id === startedAssignmentId) ?? null;
+  const startedAssignment =
+    startedAssignmentId == null ? null : (allGroupedAssignments.find((x) => x.id === startedAssignmentId) ?? null);
 
   const scanLines = React.useMemo<ScanLine[]>(() => {
     if (!startedAssignment) return [];
@@ -529,10 +532,10 @@ const PackingPage = () => {
   }, [queryClient]);
 
   React.useEffect(() => {
-    if (startedAssignmentId && !assignments.some((t) => t.id === startedAssignmentId)) {
+    if (startedAssignmentId && !allGroupedAssignments.some((t) => t.id === startedAssignmentId)) {
       setStartedAssignmentId(null);
     }
-  }, [assignments, startedAssignmentId]);
+  }, [allGroupedAssignments, startedAssignmentId]);
 
   React.useEffect(() => {
     if (startedAssignment) focusScanInput();
@@ -571,7 +574,7 @@ const PackingPage = () => {
       return;
     }
     if (isLoading || error) return;
-    const assignment = assignments.find((a) => a.id === openId);
+    const assignment = allGroupedAssignments.find((a) => a.id === openId);
     if (!assignment) return;
     if (consumedOpenAssignmentRef.current === openId) return;
     consumedOpenAssignmentRef.current = openId;
@@ -586,7 +589,7 @@ const PackingPage = () => {
         { replace: true },
       );
     })();
-  }, [searchParams, assignments, isLoading, error, setSearchParams]);
+  }, [searchParams, allGroupedAssignments, isLoading, error, setSearchParams]);
 
   const startedFirst = startedAssignment?.shipments[0] ?? null;
   const startedAssignmentNo =
