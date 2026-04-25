@@ -7,12 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
-import TaskItemsTable from "@/components/app/TaskItemsTable";
+import TaskItemsTable, { type TaskItemRow } from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
-import { useLegalEntities, useOutboundShipments } from "@/hooks/useWmsMock";
+import { useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
@@ -32,6 +32,7 @@ type ShipmentDoc = {
 
 const ShippingPage = () => {
   const { data, isLoading, error } = useOutboundShipments();
+  const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
   useUserRole();
@@ -110,6 +111,35 @@ const ShippingPage = () => {
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
+
+  /** Строки отгрузки из хранилища часто без import* — подставляем поля из каталога по productId (как в упаковщике). */
+  const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
+    if (!selectedDoc?.shipments?.length) return [];
+    const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+    return selectedDoc.shipments.map((sh) => {
+      const product = byProduct.get(sh.productId) ?? null;
+      const name = (sh.importName || product?.name || "").trim() || "—";
+      const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
+      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+      const color = (sh.importColor || product?.color || "").trim() || "—";
+      const size = (sh.importSize || product?.size || "").trim() || "—";
+      const plan = Number(sh.plannedUnits) || 0;
+      const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      return {
+        id: sh.id,
+        name,
+        article,
+        barcode,
+        marketplace: sh.marketplace.toUpperCase(),
+        color,
+        size,
+        plan,
+        fact,
+        warehouse: sh.sourceWarehouse || "—",
+        status: sh.workflowStatus ?? "pending",
+      };
+    });
+  }, [selectedDoc, catalog]);
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 
@@ -264,22 +294,11 @@ const ShippingPage = () => {
               {selectedDoc ? (
                 <div className="space-y-3 border-t border-slate-200 pt-4">
                   <h3 className="font-display text-base font-semibold text-slate-900">Состав задания №{selectedDoc.assignmentNo}</h3>
-                  <TaskItemsTable
-                    variant="outboundLines"
-                    rows={selectedDoc.shipments.map((sh) => ({
-                      id: sh.id,
-                      name: sh.importName || "—",
-                      article: sh.importArticle || "—",
-                      barcode: sh.importBarcode || "—",
-                      marketplace: sh.marketplace.toUpperCase(),
-                      color: sh.importColor || "—",
-                      size: sh.importSize || "—",
-                      plan: Number(sh.plannedUnits) || 0,
-                      fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
-                      warehouse: sh.sourceWarehouse || "—",
-                      status: sh.workflowStatus ?? "pending",
-                    }))}
-                  />
+                  {selectedShipmentItemRows.length === 0 ? (
+                    <p className="text-sm text-slate-600">Состав задания не найден</p>
+                  ) : (
+                    <TaskItemsTable variant="outboundLines" rows={selectedShipmentItemRows} />
+                  )}
                 </div>
               ) : null}
             </>
