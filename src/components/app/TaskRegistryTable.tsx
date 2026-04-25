@@ -51,7 +51,7 @@ export default function TaskRegistryTable({
 
   return (
     <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
-    <Table className="min-w-[1100px] table-fixed">
+    <Table className="min-w-[1200px] table-auto">
       <TableHeader>
         <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
           <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
@@ -86,12 +86,12 @@ export default function TaskRegistryTable({
                 onClick={() => onOpen?.(row.id)}
               >
                 <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">{row.createdAtLabel || "—"}</TableCell>
-                <TableCell className="max-w-[180px] truncate whitespace-nowrap px-3 py-2 font-medium">{row.taskNo || "—"}</TableCell>
-                {showLegalEntity ? <TableCell className="max-w-[210px] truncate px-3 py-2">{row.legalEntityLabel || "—"}</TableCell> : null}
+                <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{row.taskNo || "—"}</TableCell>
+                {showLegalEntity ? <TableCell className="whitespace-nowrap px-3 py-2">{row.legalEntityLabel || "—"}</TableCell> : null}
                 <TableCell className="px-3 py-2">
                   <StatusBadge status={row.status} mismatch={row.mismatch} requiresReview={row.requiresReview} />
                 </TableCell>
-                <TableCell className="max-w-[190px] truncate px-3 py-2">{row.warehouseLabel || "—"}</TableCell>
+                <TableCell className="whitespace-nowrap px-3 py-2">{row.warehouseLabel || "—"}</TableCell>
                 <TableCell className="px-3 py-2">{row.marketplaceLabel || "—"}</TableCell>
                 <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{row.plan}</TableCell>
                 <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{row.fact}</TableCell>

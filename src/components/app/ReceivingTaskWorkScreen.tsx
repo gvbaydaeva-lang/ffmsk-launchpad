@@ -289,7 +289,7 @@ export default function ReceivingTaskWorkScreen({
           ) : null}
         </div>
 
-        <Button variant="outline" className="h-10 w-full max-w-sm" onClick={onBack}>
+        <Button type="button" variant="outline" className="h-10 w-full max-w-sm" onClick={onBack}>
           Назад к списку
         </Button>
       </CardContent>

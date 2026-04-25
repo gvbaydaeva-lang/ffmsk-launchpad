@@ -18,13 +18,14 @@ export type TaskItemRow = {
 
 export default function TaskItemsTable({ rows }: { rows: TaskItemRow[] }) {
   return (
-    <Table>
+    <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
+    <Table className="min-w-[1100px] table-auto">
       <TableHeader>
         <TableRow className="border-slate-200 bg-white">
-          <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Название</TableHead>
-          <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Артикул</TableHead>
-          <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Баркод</TableHead>
-          <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">МП</TableHead>
+          <TableHead className="h-9 min-w-[220px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Название</TableHead>
+          <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Артикул</TableHead>
+          <TableHead className="h-9 min-w-[160px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Баркод</TableHead>
+          <TableHead className="h-9 min-w-[90px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">МП</TableHead>
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Цвет</TableHead>
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Размер</TableHead>
           <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
@@ -38,7 +39,7 @@ export default function TaskItemsTable({ rows }: { rows: TaskItemRow[] }) {
           const mismatch = row.plan !== row.fact;
           return (
             <TableRow key={row.id} className={`text-sm ${mismatch ? "bg-red-50/50" : ""}`}>
-              <TableCell className="max-w-[220px] truncate px-3 py-2">{row.name || "—"}</TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2">{row.name || "—"}</TableCell>
               <TableCell className="whitespace-nowrap px-3 py-2">{row.article || "—"}</TableCell>
               <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs">{row.barcode || "—"}</TableCell>
               <TableCell className="px-3 py-2">{row.marketplace || "—"}</TableCell>
@@ -46,7 +47,7 @@ export default function TaskItemsTable({ rows }: { rows: TaskItemRow[] }) {
               <TableCell className="px-3 py-2">{row.size || "—"}</TableCell>
               <TableCell className="px-3 py-2 text-right tabular-nums">{row.plan}</TableCell>
               <TableCell className="px-3 py-2 text-right tabular-nums">{row.fact}</TableCell>
-              <TableCell className="max-w-[180px] truncate px-3 py-2">{row.warehouse || "—"}</TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2">{row.warehouse || "—"}</TableCell>
               <TableCell className="px-3 py-2">
                 <StatusBadge status={row.status ?? "pending"} mismatch={mismatch} />
               </TableCell>
@@ -55,5 +56,6 @@ export default function TaskItemsTable({ rows }: { rows: TaskItemRow[] }) {
         })}
       </TableBody>
     </Table>
+    </div>
   );
 }
