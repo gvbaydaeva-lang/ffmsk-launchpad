@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,6 +62,7 @@ const PackingPage = () => {
   const appendOperationLog = useAppendOperationLog();
   const { legalEntityId } = useAppFilters();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [startedAssignmentId, setStartedAssignmentId] = React.useState<string | null>(null);
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
@@ -557,6 +559,34 @@ const PackingPage = () => {
     }
     setStartedAssignmentId(assignment.id);
   };
+
+  const startAssignmentRef = React.useRef(startAssignment);
+  startAssignmentRef.current = startAssignment;
+  const consumedOpenAssignmentRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    const openId = searchParams.get("openAssignment");
+    if (!openId) {
+      consumedOpenAssignmentRef.current = null;
+      return;
+    }
+    if (isLoading || error) return;
+    const assignment = assignments.find((a) => a.id === openId);
+    if (!assignment) return;
+    if (consumedOpenAssignmentRef.current === openId) return;
+    consumedOpenAssignmentRef.current = openId;
+    void (async () => {
+      await startAssignmentRef.current(assignment);
+      setSearchParams(
+        (prev) => {
+          const n = new URLSearchParams(prev);
+          n.delete("openAssignment");
+          return n;
+        },
+        { replace: true },
+      );
+    })();
+  }, [searchParams, assignments, isLoading, error, setSearchParams]);
 
   const startedFirst = startedAssignment?.shipments[0] ?? null;
   const startedAssignmentNo =

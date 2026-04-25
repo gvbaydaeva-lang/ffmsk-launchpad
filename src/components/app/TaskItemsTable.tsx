@@ -1,5 +1,11 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import StatusBadge from "@/components/app/StatusBadge";
+import {
+  planFactLineBadgeClass,
+  planFactLineStatusLabel,
+  planFactRemaining,
+  planFactRowBgClass,
+} from "@/lib/planFactDiscrepancy";
 import type { TaskWorkflowStatus } from "@/types/domain";
 
 export type TaskItemRow = {
@@ -16,7 +22,14 @@ export type TaskItemRow = {
   status?: TaskWorkflowStatus;
 };
 
-export default function TaskItemsTable({ rows }: { rows: TaskItemRow[] }) {
+type TaskItemsTableProps = {
+  rows: TaskItemRow[];
+  /** Реестр отгрузки: колонка «Осталось» и статус план/факт вместо склада и бейджа workflow */
+  variant?: "default" | "outboundLines";
+};
+
+export default function TaskItemsTable({ rows, variant = "default" }: TaskItemsTableProps) {
+  const outbound = variant === "outboundLines";
   return (
     <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
     <Table className="min-w-[1100px] table-auto">
@@ -30,15 +43,21 @@ export default function TaskItemsTable({ rows }: { rows: TaskItemRow[] }) {
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Размер</TableHead>
           <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
           <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
-          <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+          {!outbound ? (
+            <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+          ) : (
+            <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
+          )}
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map((row) => {
           const mismatch = row.plan !== row.fact;
+          const remaining = planFactRemaining(row.plan, row.fact);
+          const rowBg = outbound ? planFactRowBgClass(row.plan, row.fact) : mismatch ? "bg-red-50/50" : "";
           return (
-            <TableRow key={row.id} className={`text-sm ${mismatch ? "bg-red-50/50" : ""}`}>
+            <TableRow key={row.id} className={`text-sm ${rowBg}`}>
               <TableCell className="whitespace-nowrap px-3 py-2">{row.name || "—"}</TableCell>
               <TableCell className="whitespace-nowrap px-3 py-2">{row.article || "—"}</TableCell>
               <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs">{row.barcode || "—"}</TableCell>
@@ -47,9 +66,21 @@ export default function TaskItemsTable({ rows }: { rows: TaskItemRow[] }) {
               <TableCell className="px-3 py-2">{row.size || "—"}</TableCell>
               <TableCell className="px-3 py-2 text-right tabular-nums">{row.plan}</TableCell>
               <TableCell className="px-3 py-2 text-right tabular-nums">{row.fact}</TableCell>
-              <TableCell className="whitespace-nowrap px-3 py-2">{row.warehouse || "—"}</TableCell>
+              {!outbound ? (
+                <TableCell className="whitespace-nowrap px-3 py-2">{row.warehouse || "—"}</TableCell>
+              ) : (
+                <TableCell className="px-3 py-2 text-right tabular-nums text-slate-800">{remaining}</TableCell>
+              )}
               <TableCell className="px-3 py-2">
-                <StatusBadge status={row.status ?? "pending"} mismatch={mismatch} />
+                {outbound ? (
+                  <span
+                    className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${planFactLineBadgeClass(row.plan, row.fact)}`}
+                  >
+                    {planFactLineStatusLabel(row.plan, row.fact)}
+                  </span>
+                ) : (
+                  <StatusBadge status={row.status ?? "pending"} mismatch={mismatch} />
+                )}
               </TableCell>
             </TableRow>
           );

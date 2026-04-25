@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
-import ShippingTaskWorkScreen from "@/components/app/ShippingTaskWorkScreen";
+import TaskItemsTable from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
@@ -31,6 +31,7 @@ type ShipmentDoc = {
 };
 
 const ShippingPage = () => {
+  const navigate = useNavigate();
   const { data, isLoading, error } = useOutboundShipments();
   const { data: entities } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
@@ -59,12 +60,13 @@ const ShippingPage = () => {
       groups.set(key, cur);
     }
     const docs: ShipmentDoc[] = [];
-    for (const [groupId, shipments] of groups) {
+    for (const [, shipments] of groups) {
       const first = shipments[0];
       const createdAt = shipments.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
       const planned = shipments.reduce((s, sh) => s + (Number(sh.plannedUnits) || 0), 0);
       const fact = shipments.reduce((s, sh) => s + (Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0), 0);
       const workflowStatus = workflowFromOutboundGroup(shipments);
+      const groupId = `${first.legalEntityId}::${first.assignmentId ?? first.assignmentNo ?? first.id}`;
       docs.push({
         id: groupId,
         legalEntityId: first.legalEntityId,
@@ -114,9 +116,37 @@ const ShippingPage = () => {
     setSelectedId((prev) => (prev === id ? null : id));
   }, []);
 
+  const goToPacker = React.useCallback(() => {
+    if (!selectedDoc) return;
+    navigate(`/packing?openAssignment=${encodeURIComponent(selectedDoc.id)}`);
+  }, [navigate, selectedDoc]);
+
+  const packerButton = (() => {
+    if (!selectedDoc) return null;
+    const st = selectedDoc.workflowStatus;
+    if (st === "completed") {
+      return (
+        <Button type="button" size="sm" variant="secondary" disabled>
+          Сборка завершена
+        </Button>
+      );
+    }
+    if (st === "processing") {
+      return (
+        <Button type="button" size="sm" onClick={goToPacker}>
+          Продолжить сборку
+        </Button>
+      );
+    }
+    return (
+      <Button type="button" size="sm" onClick={goToPacker}>
+        Открыть в упаковщике
+      </Button>
+    );
+  })();
+
   return (
     <div className="space-y-4">
-      {!selectedDoc ? (
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Отгрузка</h2>
@@ -175,21 +205,14 @@ const ShippingPage = () => {
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" />
         </div>
       </div>
-      ) : (
-        <div>
-          <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Отгрузка</h2>
-          <p className="mt-1 text-sm text-slate-600">Просмотр выбранного задания.</p>
-        </div>
-      )}
 
       <GlobalFiltersBar />
 
-      {!selectedDoc ? (
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader>
           <CardTitle className="font-display text-lg text-slate-900">Реестр заданий на отгрузку</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {isLoading ? (
             <div className="grid gap-3">
               <Skeleton className="h-36 w-full" />
@@ -222,42 +245,40 @@ const ShippingPage = () => {
               onAction={toggleSelectedDoc}
             />
           )}
+
+          {selectedDoc ? (
+            <div className="space-y-3 border-t border-slate-200 pt-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="font-display text-base font-semibold text-slate-900">
+                  Состав задания №{selectedDoc.assignmentNo}
+                </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  {packerButton}
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to={`/legal-entities/${selectedDoc.legalEntityId}?tab=shipping`}>Карточка юрлица</Link>
+                  </Button>
+                </div>
+              </div>
+              <TaskItemsTable
+                variant="outboundLines"
+                rows={selectedDoc.shipments.map((sh) => ({
+                  id: sh.id,
+                  name: sh.importName || "—",
+                  article: sh.importArticle || "—",
+                  barcode: sh.importBarcode || "—",
+                  marketplace: sh.marketplace.toUpperCase(),
+                  color: sh.importColor || "—",
+                  size: sh.importSize || "—",
+                  plan: Number(sh.plannedUnits) || 0,
+                  fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
+                  warehouse: sh.sourceWarehouse || "—",
+                  status: sh.workflowStatus ?? "pending",
+                }))}
+              />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
-      ) : null}
-
-      {selectedDoc ? (
-        <div className="space-y-3">
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" asChild>
-              <Link to={`/legal-entities/${selectedDoc.legalEntityId}?tab=shipping`}>Открыть в карточке юрлица</Link>
-            </Button>
-          </div>
-          <ShippingTaskWorkScreen
-            assignmentNo={selectedDoc.assignmentNo}
-            legalEntityName={entities?.find((e) => e.id === selectedDoc.legalEntityId)?.shortName ?? selectedDoc.legalEntityId}
-            warehouseName={selectedDoc.sourceWarehouse}
-            createdAt={selectedDoc.createdAt}
-            status={selectedDoc.workflowStatus}
-            plan={selectedDoc.planned}
-            fact={selectedDoc.fact}
-            rows={selectedDoc.shipments.map((sh) => ({
-              id: sh.id,
-              name: sh.importName || "—",
-              article: sh.importArticle || "—",
-              barcode: sh.importBarcode || "—",
-              marketplace: sh.marketplace.toUpperCase(),
-              color: sh.importColor || "—",
-              size: sh.importSize || "—",
-              plan: Number(sh.plannedUnits) || 0,
-              fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
-              warehouse: sh.sourceWarehouse || "—",
-              status: sh.workflowStatus ?? "pending",
-            }))}
-            onBack={() => setSelectedId(null)}
-          />
-        </div>
-      ) : null}
     </div>
   );
 };
