@@ -1,8 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { Download } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -105,10 +103,6 @@ const ShippingPage = () => {
               <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline" className="gap-2" disabled>
-            <Download className="h-4 w-4" />
-            Экспорт shk-excel
-          </Button>
         </div>
       </div>
 

@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import Barcode from "react-barcode";
-import { QRCodeSVG } from "qrcode.react";
 import { Download, FileSpreadsheet, Plus, Printer, Upload } from "lucide-react";
 import { ExcelColumnFilterMenu, ExcelThWithFilter } from "@/components/wms/ExcelColumnFilterMenu";
 import * as XLSX from "xlsx";
@@ -414,9 +413,6 @@ const LegalEntityDetailsPage = () => {
     "name" | "article" | "barcode" | "size" | "color" | "marketplace" | "warehouse" | "plan" | "fact"
   >("article");
   const [shipSortDir, setShipSortDir] = React.useState<"asc" | "desc">("asc");
-  const [scanDraftByShipment, setScanDraftByShipment] = React.useState<Record<string, string>>({});
-  const [scanErrorByShipment, setScanErrorByShipment] = React.useState<Record<string, boolean>>({});
-  const [qrBoxPayload, setQrBoxPayload] = React.useState<{ barcode: string; warehouse: string } | null>(null);
   /** null — нет статуса; durable — IndexedDB+LS; durable+warn — облако не синхронизировалось */
   const [outboundPersistStatus, setOutboundPersistStatus] = React.useState<"durable" | "durable_warn" | "fail" | null>(null);
   const inboundDraftsRef = React.useRef<Record<string, InboundRowDraft>>({});
@@ -983,71 +979,6 @@ const LegalEntityDetailsPage = () => {
   const effOutboundFact = (sh: OutboundShipment) =>
     Number(outboundRowDrafts[sh.id]?.factualUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
 
-
-  const beepError = () => {
-    if (typeof window === "undefined") return;
-    const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = "square";
-    oscillator.frequency.value = 880;
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-    gain.gain.value = 0.12;
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + 0.14);
-  };
-
-  const shippingRows = React.useMemo(() => {
-    const productByEntity = new Map(rows.map((p) => [p.id, p]));
-    const productByGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
-    const s = shippingSearch.trim().toLowerCase();
-    const arr = outboundRowsForUi
-      .map((x) => {
-        const product = productByEntity.get(x.productId) ?? productByGlobal.get(x.productId) ?? null;
-        const draft = outboundRowDrafts[x.id];
-        const article =
-          (draft?.supplierArticle || "").trim() ||
-          (product?.supplierArticle || "").trim() ||
-          (x.importArticle || "").trim() ||
-          "";
-        const barcode =
-          (draft?.barcode || "").trim() ||
-          (product?.barcode || "").trim() ||
-          (x.importBarcode || "").trim() ||
-          "";
-        const name =
-          (draft?.productName || "").trim() || (product?.name || "").trim() || (x.importName || "").trim() || "";
-        return {
-          shipment: x,
-          name,
-          article,
-          barcode,
-          size: (draft?.size || "").trim() || (x.importSize || "").trim() || (product?.size || "").trim(),
-          color: (draft?.color || "").trim() || product?.color || x.importColor || "",
-          marketplace: draft?.marketplace ?? x.marketplace,
-          warehouse: x.sourceWarehouse,
-          plan: Number(draft?.plannedUnits ?? x.plannedUnits ?? 0) || 0,
-          fact: Number(draft?.factualUnits ?? (x.shippedUnits ?? x.packedUnits ?? 0)) || 0,
-        };
-      })
-      .filter((r) => {
-        if (!s) return true;
-        return [r.name, r.article, r.barcode, r.size, r.color, r.marketplace, r.warehouse].some((v) =>
-          String(v).toLowerCase().includes(s),
-        );
-      });
-    const sd = shipSortDir === "asc" ? 1 : -1;
-    return [...arr].sort((a, b) => {
-      if (shippingSort === "plan") return (a.plan - b.plan) * sd;
-      if (shippingSort === "fact") return (a.fact - b.fact) * sd;
-      if (shippingSort === "name") return a.name.localeCompare(b.name, "ru") * sd;
-      return String(a[shippingSort]).localeCompare(String(b[shippingSort]), "ru") * sd;
-    });
-  }, [outboundRowsForUi, outboundRowDrafts, rows, catalog, shippingSearch, shippingSort, shipSortDir]);
-
   const shippingMatrix = React.useMemo(() => {
     const productByEntity = new Map(rows.map((p) => [p.id, p]));
     const productByGlobal = new Map((catalog ?? []).map((p) => [p.id, p]));
@@ -1233,105 +1164,6 @@ const LegalEntityDetailsPage = () => {
     return { warehouses, lines: matrixLines };
   }, [inboundRows, inboundRowDrafts, showOnlyDiff, recvColFilters, recvSortKey, recvSortDir]);
 
-  const onAddBox = async (shipmentId: string) => {
-    const row = outboundRowsForUi.find((x) => x.id === shipmentId);
-    if (!row) return;
-    const nextBox = {
-      id: `box-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      clientBoxBarcode: "",
-      scannedBarcodes: [] as string[],
-    };
-    await updateOutboundDraft({
-      id: shipmentId,
-      patch: {
-        boxes: [...(row.boxes ?? []), nextBox],
-        activeBoxId: nextBox.id,
-        status: "к отгрузке",
-      },
-    });
-    toast.success("Короб добавлен");
-  };
-
-  const barcodesMatch = (a: string, b: string) => {
-    const A = a.trim();
-    const B = b.trim();
-    if (!A || !B) return false;
-    if (A === B) return true;
-    const da = digitsOnly(A);
-    const db = digitsOnly(B);
-    if (da.length >= 8 && da === db) return true;
-    const at = A.replace(/^0+/, "") || A;
-    const bt = B.replace(/^0+/, "") || B;
-    return at === bt;
-  };
-
-  const onScanIntoActiveBox = async (shipmentId: string) => {
-    const row = outboundRowsForUi.find((x) => x.id === shipmentId);
-    const scanned = (scanDraftByShipment[shipmentId] ?? "").trim();
-    const barcode =
-      outboundRowDrafts[shipmentId]?.barcode ??
-      rows.find((p) => p.id === row?.productId)?.barcode ??
-      row?.importBarcode ??
-      "";
-    if (!row || !row.activeBoxId) {
-      return toast.error(
-        (row.boxes ?? []).length ? "Выберите активный короб — кнопка «Открыть»" : "Сначала нажмите «Добавить короб»",
-      );
-    }
-    if (!scanned) return toast.error("Введите баркод для сканирования");
-    if (!barcodesMatch(scanned, barcode)) {
-      setScanErrorByShipment((s) => ({ ...s, [shipmentId]: true }));
-      beepError();
-      return toast.error("Баркод не входит в план отгрузки");
-    }
-    const boxes = row.boxes ?? [];
-    const active = boxes.find((b) => b.id === row.activeBoxId);
-    if (!active) return toast.error("Активный короб не найден");
-    const currentPacked = boxes.reduce((sum, b) => sum + b.scannedBarcodes.length, 0);
-    if (currentPacked + 1 > row.plannedUnits) {
-      setScanErrorByShipment((s) => ({ ...s, [shipmentId]: true }));
-      beepError();
-      return toast.error("Превышение плана");
-    }
-    const nextBoxes = boxes.map((b) => (b.id === row.activeBoxId ? { ...b, scannedBarcodes: [...b.scannedBarcodes, scanned] } : b));
-    setScanErrorByShipment((s) => ({ ...s, [shipmentId]: false }));
-    setScanDraftByShipment((s) => ({ ...s, [shipmentId]: "" }));
-    await updateOutboundDraft({
-      id: shipmentId,
-      patch: {
-        boxes: nextBoxes,
-        packedUnits: currentPacked + 1,
-      },
-    });
-  };
-
-  const exportPackingExcelFromBoxes = () => {
-    const rowsExport: Array<Record<string, string | number>> = [];
-    for (const out of outboundRowsForUi) {
-      const boxes = out.boxes ?? [];
-      const productBarcode =
-        outboundRowDrafts[out.id]?.barcode ??
-        rows.find((p) => p.id === out.productId)?.barcode ??
-        out.importBarcode ??
-        "";
-      for (const box of boxes) {
-        const boxSk = box.clientBoxBarcode || box.id;
-        for (const scanned of box.scannedBarcodes) {
-          rowsExport.push({
-            "Баркод товара": scanned || productBarcode,
-            "Кол-во товаров": 1,
-            "ШК короба": boxSk,
-            "Срок годности": out.expiryDate || "",
-          });
-        }
-      }
-    }
-    if (!rowsExport.length) return toast.error("Нет данных для выгрузки");
-    const ws = XLSX.utils.json_to_sheet(rowsExport);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Упаковка");
-    XLSX.writeFile(wb, "shk-excel-export.xlsx");
-  };
 
   const onUploadPhoto = async (idProduct: string, file: File) => {
     const url = URL.createObjectURL(file);
@@ -2776,21 +2608,6 @@ const LegalEntityDetailsPage = () => {
               </div>
             </CardContent>
           </Card>
-          <Dialog open={Boolean(qrBoxPayload)} onOpenChange={(v) => !v && setQrBoxPayload(null)}>
-            <DialogContent className="sm:max-w-md">
-              <style>{`@media print{ @page { size: 58mm 40mm; margin:0; } body *{ visibility:hidden !important;} #box-qr-label,#box-qr-label *{ visibility:visible !important;} #box-qr-label{ position:fixed; left:0; top:0; width:58mm; height:40mm; } }`}</style>
-              <DialogHeader><DialogTitle>Печать QR этикетки 58x40</DialogTitle></DialogHeader>
-              {qrBoxPayload ? (
-                <div className="space-y-3">
-                  <div id="box-qr-label" className="mx-auto flex h-[40mm] w-[58mm] flex-col items-center justify-center gap-2 border p-2">
-                    <QRCodeSVG value={qrBoxPayload.barcode} size={120} />
-                    <p className="text-xs font-medium">{qrBoxPayload.warehouse}</p>
-                  </div>
-                  <Button onClick={() => window.print()}>Печать</Button>
-                </div>
-              ) : null}
-            </DialogContent>
-          </Dialog>
         </TabsContent>
 
         <TabsContent value="shipping">
@@ -2919,9 +2736,6 @@ const LegalEntityDetailsPage = () => {
                 <SelectItem value="fact">Сортировка: Факт</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" onClick={exportPackingExcelFromBoxes}>
-              Экспорт shk-excel
-            </Button>
             {canChangeOutboundStatus(role) &&
               (!shippingMatrixEdit ? (
                 <Button variant="secondary" onClick={() => setShippingMatrixEdit(true)}>
@@ -3088,12 +2902,6 @@ const LegalEntityDetailsPage = () => {
                       ) : (
                         shippingMatrix.lines.map((line, idx) => {
                           const ld = outboundRowDrafts[line.leaderShipmentId];
-                          let scanErr = false;
-                          line.byWarehouse.forEach((c) => {
-                            c.shipments.forEach((sh) => {
-                              if (scanErrorByShipment[sh.id]) scanErr = true;
-                            });
-                          });
                           let totalPlanDraft = 0;
                           let totalFactDraft = 0;
                           line.byWarehouse.forEach((c) => {
@@ -3106,7 +2914,6 @@ const LegalEntityDetailsPage = () => {
                           const rowBg = excelRowBg(idx, false);
                           const cellBase = `border-b border-r border-slate-200 px-2 py-1.5 align-middle text-[11px] ${rowBg}`;
                           const diffPlanFact = planMismatch ? "bg-red-50/90 ring-1 ring-inset ring-red-300/70" : "";
-                          const scanHighlight = scanErr ? "bg-amber-50/80 ring-1 ring-inset ring-amber-400/70" : "";
                           const mpLabel =
                             line.marketplace === "wb" ? "WB" : line.marketplace === "ozon" ? "Ozon" : "Яндекс";
                           return (
@@ -3133,7 +2940,7 @@ const LegalEntityDetailsPage = () => {
                                   <span className="block whitespace-nowrap">{(ld?.supplierArticle ?? line.article) || "—"}</span>
                                 )}
                               </td>
-                              <td className={`${cellBase} whitespace-nowrap font-mono ${scanHighlight}`}>
+                              <td className={`${cellBase} whitespace-nowrap font-mono`}>
                                 {shippingMatrixEdit ? (
                                   <Input
                                     className="h-7 min-w-[140px] border-slate-300 bg-white px-1.5 text-[11px] font-mono"
@@ -3254,102 +3061,6 @@ const LegalEntityDetailsPage = () => {
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
-
-        <TabsContent value="packer" className="space-y-3">
-          <p className="text-sm text-slate-600">Сканирование и короба по отгрузкам клиента (отдельный модуль).</p>
-          <Card className="border-slate-200 shadow-sm">
-            <CardContent className="max-h-[min(78vh,820px)] space-y-3 overflow-y-auto p-3 text-[11px]">
-              {shippingRows.map((row) => {
-                const x = row.shipment;
-                const boxes = x.boxes ?? [];
-                const activeBox = boxes.find((b) => b.id === x.activeBoxId) ?? null;
-                const packerFieldsEnabled = canChangeOutboundStatus(role);
-                return (
-                  <div key={`pack-${x.id}`} className="rounded-md border border-slate-200 bg-slate-50/50 p-2.5">
-                    <div className="mb-2 space-y-1">
-                      <p className="whitespace-nowrap font-medium text-slate-800">
-                        {row.article || "—"} · <span className="font-mono">{row.barcode || "—"}</span>
-                      </p>
-                      <p className="text-muted-foreground">
-                        План: {row.plan} · Упаковано: {x.packedUnits} · {x.sourceWarehouse}
-                      </p>
-                    </div>
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void onAddBox(x.id)}>
-                        Добавить короб
-                      </Button>
-                      <Input
-                        className="h-7 min-w-[140px] flex-1 font-mono text-[11px]"
-                        placeholder={activeBox ? "Скан баркода" : "Сначала «Открыть» короб"}
-                        disabled={!activeBox}
-                        value={scanDraftByShipment[x.id] ?? ""}
-                        onChange={(e) => setScanDraftByShipment((s) => ({ ...s, [x.id]: e.target.value }))}
-                      />
-                      <Button size="sm" className="h-7 text-[11px]" onClick={() => void onScanIntoActiveBox(x.id)}>
-                        В короб
-                      </Button>
-                    </div>
-                    {activeBox && <p className="mb-2 text-[10px] text-slate-500">Активный короб: {activeBox.id}</p>}
-                    <div className="space-y-2">
-                      {boxes.map((box) => (
-                        <div key={box.id} className="grid gap-1.5 rounded border border-slate-200 bg-white p-2">
-                          <Input
-                            disabled={!packerFieldsEnabled}
-                            className="h-7 text-[11px]"
-                            placeholder="ШК короба (из ЛК)"
-                            value={box.clientBoxBarcode}
-                            onChange={(e) =>
-                              void updateOutboundDraft({
-                                id: x.id,
-                                patch: {
-                                  boxes: boxes.map((b) => (b.id === box.id ? { ...b, clientBoxBarcode: e.target.value } : b)),
-                                },
-                              })
-                            }
-                          />
-                          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                            <Input
-                              disabled={!packerFieldsEnabled}
-                              className="h-7 text-[11px]"
-                              placeholder="Номер поставки"
-                              value={x.supplyNumber}
-                              onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { supplyNumber: e.target.value } })}
-                            />
-                            <Input
-                              disabled={!packerFieldsEnabled}
-                              className="h-7 text-[11px]"
-                              placeholder="ШК пропуска"
-                              value={x.gateBarcode}
-                              onChange={(e) => void updateOutboundDraft({ id: x.id, patch: { gateBarcode: e.target.value } })}
-                            />
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-[11px]"
-                              onClick={() => void updateOutboundDraft({ id: x.id, patch: { activeBoxId: box.id } })}
-                            >
-                              Открыть
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-[11px]"
-                              onClick={() => setQrBoxPayload({ barcode: box.clientBoxBarcode || box.id, warehouse: x.sourceWarehouse })}
-                            >
-                              QR
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
         </TabsContent>
 
         <TabsContent value="history">

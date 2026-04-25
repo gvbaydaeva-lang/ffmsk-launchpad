@@ -10,7 +10,8 @@ import AppShellLayout from "./layouts/AppShellLayout.tsx";
 import DashboardPage from "./pages/app/DashboardPage.tsx";
 import ReceivingPage from "./pages/app/ReceivingPage.tsx";
 import ShippingPage from "./pages/app/ShippingPage.tsx";
-import PackerPage from "./pages/app/PackerPage.tsx";
+import PackingPage from "./pages/app/PackingPage.tsx";
+import HistoryOperationsPage from "./pages/app/HistoryOperationsPage.tsx";
 import WarehousePage from "./pages/app/WarehousePage.tsx";
 import FinancePage from "./pages/app/FinancePage.tsx";
 import LegalEntitiesPage from "./pages/app/LegalEntitiesPage.tsx";
@@ -38,7 +39,9 @@ const App = () => (
                   <Route path="dashboard" element={<DashboardPage />} />
                   <Route path="receiving" element={<ReceivingPage />} />
                   <Route path="shipping" element={<ShippingPage />} />
-                  <Route path="packer" element={<PackerPage />} />
+                  <Route path="packing" element={<PackingPage />} />
+                  <Route path="packer" element={<Navigate to="/packing" replace />} />
+                  <Route path="history" element={<HistoryOperationsPage />} />
                   <Route path="warehouse" element={<WarehousePage />} />
                   <Route path="finance" element={<FinancePage />} />
                   <Route path="legal-entities" element={<LegalEntitiesPage />} />
