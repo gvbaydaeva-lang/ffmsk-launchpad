@@ -70,11 +70,7 @@ const ReceivingPage = () => {
     return [...filtered].sort((a, b) => (Date.parse(b.eta || "") || 0) - (Date.parse(a.eta || "") || 0));
   }, [data, mp, legalEntityId, search, entityName, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
   const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
-  /** Рабочий экран привязан к полному списку inbound, а не к отфильтрованным строкам — иначе при смене фильтров пропадает документ и «Назад» ломает UI */
-  const startedSupply = React.useMemo(() => {
-    if (!startedSupplyId) return null;
-    return (data ?? []).find((r) => r.id === startedSupplyId) ?? null;
-  }, [data, startedSupplyId]);
+  const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
 
   const mutateItemFact = async (supply: InboundSupply, index: number, value: number) => {
     const nextValue = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -223,14 +219,14 @@ const ReceivingPage = () => {
   }, [queryClient]);
 
   React.useEffect(() => {
-    if (startedSupplyId && !(data ?? []).some((r) => r.id === startedSupplyId)) {
+    if (startedSupplyId && !rows.some((r) => r.id === startedSupplyId)) {
       setStartedSupplyId(null);
     }
-  }, [data, startedSupplyId]);
+  }, [rows, startedSupplyId]);
 
-  const backToReceivingList = React.useCallback(() => {
+  const handleBackToList = () => {
     setStartedSupplyId(null);
-  }, []);
+  };
 
 
   return (
@@ -367,7 +363,7 @@ const ReceivingPage = () => {
           legalEntityName={entityName(startedSupply.legalEntityId)}
           isUpdatingInboundDraft={isUpdatingInboundDraft}
           isUpdatingInbound={isUpdatingInbound}
-          onBack={backToReceivingList}
+          onBack={handleBackToList}
           onStartReceiving={() => startReceiving(startedSupply)}
           onSaveItems={(items) => saveSupplyItems(startedSupply, items)}
           onComplete={() => closeReceiving()}

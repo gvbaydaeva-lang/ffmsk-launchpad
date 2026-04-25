@@ -857,7 +857,7 @@ const PackingPage = () => {
                 <p className="text-xs text-slate-600">Осталось отсканировать: {progress.remaining} шт.</p>
               ) : null}
             </div>
-            <Button type="button" variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>
+            <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>
               Назад к списку
             </Button>
           </CardContent>

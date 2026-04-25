@@ -1,16 +1,15 @@
 import * as React from "react";
-import { Link, useNavigate } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
-import TaskRegistryTable from "@/components/app/TaskRegistryTable";
-import type { TaskRegistryRow } from "@/components/app/TaskRegistryTable";
 import TaskItemsTable from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
+import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
 import { useLegalEntities, useOutboundShipments } from "@/hooks/useWmsMock";
@@ -32,7 +31,6 @@ type ShipmentDoc = {
 };
 
 const ShippingPage = () => {
-  const navigate = useNavigate();
   const { data, isLoading, error } = useOutboundShipments();
   const { data: entities } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
@@ -111,6 +109,8 @@ const ShippingPage = () => {
     return withFilters.sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
+  const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
+
   React.useEffect(() => {
     if (selectedId && !documents.some((d) => d.id === selectedId)) {
       setSelectedId(null);
@@ -118,66 +118,11 @@ const ShippingPage = () => {
   }, [documents, selectedId]);
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
-  const toggleSelectedDoc = React.useCallback((id: string) => {
-    setSelectedId((prev) => (prev === id ? null : id));
-  }, []);
 
-  const goToPacker = React.useCallback(
-    (doc: ShipmentDoc) => {
-      navigate(`/packing?openAssignment=${encodeURIComponent(doc.id)}`);
-    },
-    [navigate],
-  );
-
-  const renderExpandedRow = React.useCallback(
-    (row: TaskRegistryRow) => {
-      const doc = documents.find((d) => d.id === row.id);
-      if (!doc) return null;
-      const st = doc.workflowStatus;
-      return (
-        <div className="space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h3 className="font-display text-base font-semibold text-slate-900">Состав задания №{doc.assignmentNo}</h3>
-            <div className="flex flex-wrap items-center gap-2">
-              {st === "completed" ? (
-                <Button type="button" size="sm" variant="secondary" disabled>
-                  Сборка завершена
-                </Button>
-              ) : st === "processing" ? (
-                <Button type="button" size="sm" onClick={() => goToPacker(doc)}>
-                  Продолжить сборку
-                </Button>
-              ) : (
-                <Button type="button" size="sm" onClick={() => goToPacker(doc)}>
-                  Открыть в упаковщике
-                </Button>
-              )}
-              <Button variant="outline" size="sm" asChild>
-                <Link to={`/legal-entities/${doc.legalEntityId}?tab=shipping`}>Карточка юрлица</Link>
-              </Button>
-            </div>
-          </div>
-          <TaskItemsTable
-            variant="outboundLines"
-            rows={doc.shipments.map((sh) => ({
-              id: sh.id,
-              name: sh.importName || "—",
-              article: sh.importArticle || "—",
-              barcode: sh.importBarcode || "—",
-              marketplace: sh.marketplace.toUpperCase(),
-              color: sh.importColor || "—",
-              size: sh.importSize || "—",
-              plan: Number(sh.plannedUnits) || 0,
-              fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
-              warehouse: sh.sourceWarehouse || "—",
-              status: sh.workflowStatus ?? "pending",
-            }))}
-          />
-        </div>
-      );
-    },
-    [documents, goToPacker],
-  );
+  const handleShippingOpenClick = (taskId: string) => {
+    console.log("shipping open clicked", taskId);
+    setSelectedId((prev) => (prev === taskId ? null : taskId));
+  };
 
   return (
     <div className="space-y-4">
@@ -246,7 +191,7 @@ const ShippingPage = () => {
         <CardHeader>
           <CardTitle className="font-display text-lg text-slate-900">Реестр заданий на отгрузку</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {isLoading ? (
             <div className="grid gap-3">
               <Skeleton className="h-36 w-full" />
@@ -258,27 +203,98 @@ const ShippingPage = () => {
               {viewMode === "active" ? "Нет активных заданий для отображения." : "Архив отгрузок пуст."}
             </p>
           ) : (
-            <TaskRegistryTable
-              rows={documents.map((doc) => ({
-                id: doc.id,
-                createdAtLabel: doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—",
-                taskNo: doc.assignmentNo,
-                legalEntityLabel: entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId,
-                status: doc.workflowStatus,
-                warehouseLabel: doc.sourceWarehouse,
-                marketplaceLabel: doc.marketplace.toUpperCase(),
-                plan: doc.planned,
-                fact: doc.fact,
-                isNew: doc.workflowStatus === "pending",
-                mismatch: doc.planned !== doc.fact && doc.workflowStatus === "completed",
-              }))}
-              selectedId={selectedId}
-              actionLabel="Открыть"
-              disableActionForCompleted={false}
-              enableRowClick={false}
-              onAction={toggleSelectedDoc}
-              renderExpandedRow={renderExpandedRow}
-            />
+            <>
+              <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
+                <Table className="min-w-[1200px] table-auto">
+                  <TableHeader>
+                    <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
+                      <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+                      <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
+                      <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
+                      <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
+                      <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+                      <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Перерасход</TableHead>
+                      <TableHead className="h-9 w-[110px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {documents.map((doc) => {
+                      const rem = Math.max(0, doc.planned - doc.fact);
+                      const over = Math.max(0, doc.fact - doc.planned);
+                      const isSel = selectedId === doc.id;
+                      return (
+                        <TableRow
+                          key={doc.id}
+                          className={`border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
+                        >
+                          <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
+                            {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{doc.assignmentNo}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2">
+                            {entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId}
+                          </TableCell>
+                          <TableCell className="px-3 py-2">
+                            <StatusBadge status={doc.workflowStatus} />
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2">{doc.sourceWarehouse}</TableCell>
+                          <TableCell className="px-3 py-2">{doc.marketplace.toUpperCase()}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.planned}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.fact}</TableCell>
+                          <TableCell
+                            className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${
+                              doc.planned > doc.fact ? "font-medium text-amber-800" : doc.planned < doc.fact ? "font-medium text-red-700" : ""
+                            }`}
+                          >
+                            {rem}
+                          </TableCell>
+                          <TableCell className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${over > 0 ? "font-medium text-red-700" : ""}`}>
+                            {over}
+                          </TableCell>
+                          <TableCell className="px-3 py-2 text-right">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 border-slate-200 text-xs"
+                              onClick={() => handleShippingOpenClick(doc.id)}
+                            >
+                              Открыть
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {selectedDoc ? (
+                <div className="space-y-3 border-t border-slate-200 pt-4">
+                  <h3 className="font-display text-base font-semibold text-slate-900">Состав задания №{selectedDoc.assignmentNo}</h3>
+                  <TaskItemsTable
+                    variant="outboundLines"
+                    rows={selectedDoc.shipments.map((sh) => ({
+                      id: sh.id,
+                      name: sh.importName || "—",
+                      article: sh.importArticle || "—",
+                      barcode: sh.importBarcode || "—",
+                      marketplace: sh.marketplace.toUpperCase(),
+                      color: sh.importColor || "—",
+                      size: sh.importSize || "—",
+                      plan: Number(sh.plannedUnits) || 0,
+                      fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
+                      warehouse: sh.sourceWarehouse || "—",
+                      status: sh.workflowStatus ?? "pending",
+                    }))}
+                  />
+                </div>
+              ) : null}
+            </>
           )}
         </CardContent>
       </Card>

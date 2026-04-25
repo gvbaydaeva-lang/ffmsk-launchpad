@@ -289,18 +289,9 @@ export default function ReceivingTaskWorkScreen({
           ) : null}
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          className="h-10 w-full max-w-sm"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onBack();
-          }}
-        >
+        <button type="button" className="h-10 w-full max-w-sm rounded-md border border-slate-200 bg-white text-sm font-medium text-slate-900 hover:bg-slate-50" onClick={onBack}>
           Вернуться к списку
-        </Button>
+        </button>
       </CardContent>
     </Card>
   );
