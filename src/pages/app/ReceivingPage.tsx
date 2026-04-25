@@ -31,7 +31,7 @@ const ReceivingPage = () => {
   const rows = React.useMemo(() => {
     const base = filterInboundByMarketplace(data ?? [], mp);
     const byEntity = legalEntityId === "all" ? base : base.filter((r) => r.legalEntityId === legalEntityId);
-    const activeOnly = byEntity.filter((r) => r.status !== "принято");
+    const activeOnly = byEntity.filter((r) => (r.workflowStatus ?? "pending") !== "completed");
     const q = search.trim().toLowerCase();
     if (!q) return activeOnly;
     return activeOnly.filter((r) => {
@@ -40,7 +40,7 @@ const ReceivingPage = () => {
     });
   }, [data, mp, legalEntityId]);
   const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
-  const receivingStarted = startedSupply?.status === "на приёмке";
+  const receivingStarted = (startedSupply?.workflowStatus ?? "pending") === "processing";
 
   const totals = React.useMemo(() => {
     if (!startedSupply) return { plan: 0, fact: 0, done: false };
@@ -59,6 +59,7 @@ const ReceivingPage = () => {
   const startReceiving = async (supply: InboundSupply) => {
     try {
       await setInboundStatus({ id: supply.id, status: "на приёмке" });
+      await updateInboundDraft({ id: supply.id, items: supply.items, workflowStatus: "processing" });
       setStartedSupplyId(supply.id);
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
     } catch {
@@ -69,6 +70,7 @@ const ReceivingPage = () => {
   const closeReceiving = async () => {
     if (!startedSupply || !totals.done) return;
     try {
+      await updateInboundDraft({ id: startedSupply.id, items: startedSupply.items, workflowStatus: "completed" });
       await setInboundStatus({ id: startedSupply.id, status: "принято", receivedUnits: totals.fact });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inbound"] });
       setStartedSupplyId(null);
@@ -148,7 +150,10 @@ const ReceivingPage = () => {
                   const planUnits = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
                   const dateLabel = supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy", { locale: ru }) : "без даты";
                   return (
-                    <Card key={supply.id} className="border-slate-200">
+                    <Card
+                      key={supply.id}
+                      className={(supply.workflowStatus ?? "pending") === "processing" ? "border-sky-200 bg-sky-50/40" : "border-slate-200"}
+                    >
                       <CardHeader className="space-y-2 pb-2">
                         <CardTitle className="text-base">№ {supply.documentNo}</CardTitle>
                         <CardDescription>{entityName(supply.legalEntityId)}</CardDescription>
@@ -159,7 +164,7 @@ const ReceivingPage = () => {
                           <p>Товаров по плану: {planUnits}</p>
                         </div>
                         <Button className="h-11 w-full text-base" onClick={() => void startReceiving(supply)}>
-                          Начать приёмку
+                          {(supply.workflowStatus ?? "pending") === "processing" ? "Продолжить приёмку" : "Начать приёмку"}
                         </Button>
                       </CardContent>
                     </Card>

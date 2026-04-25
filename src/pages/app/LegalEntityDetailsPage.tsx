@@ -34,7 +34,7 @@ import {
 } from "@/hooks/useWmsMock";
 import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
-import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem } from "@/types/domain";
+import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
 import {
   EXCEL_STICKY_NAME_TD,
   EXCEL_STICKY_NAME_TH,
@@ -333,6 +333,12 @@ function paramsLabel(item: ProductCatalogItem) {
   return `${dims} — ${weight}`;
 }
 
+function workflowStatusLabel(status: TaskWorkflowStatus | undefined) {
+  if (status === "processing") return "В работе";
+  if (status === "completed") return "Завершено";
+  return "Новое";
+}
+
 const LegalEntityDetailsPage = () => {
   const { id = "" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -415,6 +421,8 @@ const LegalEntityDetailsPage = () => {
   const [shipSortDir, setShipSortDir] = React.useState<"asc" | "desc">("asc");
   /** null — нет статуса; durable — IndexedDB+LS; durable+warn — облако не синхронизировалось */
   const [outboundPersistStatus, setOutboundPersistStatus] = React.useState<"durable" | "durable_warn" | "fail" | null>(null);
+  const [selectedInboundDocId, setSelectedInboundDocId] = React.useState<string | null>(null);
+  const [selectedOutboundDocId, setSelectedOutboundDocId] = React.useState<string | null>(null);
   const inboundDraftsRef = React.useRef<Record<string, InboundRowDraft>>({});
   const [form, setForm] = React.useState({
     category: "",
@@ -475,6 +483,43 @@ const LegalEntityDetailsPage = () => {
     () => (outboundDebugAll ? (outbound ?? []) : outboundRows) as OutboundShipment[],
     [outbound, outboundDebugAll, outboundRows],
   );
+  const inboundDocuments = React.useMemo(
+    () =>
+      [...inboundRows].sort((a, b) => {
+        const da = Date.parse(a.eta || "") || 0;
+        const db = Date.parse(b.eta || "") || 0;
+        return db - da;
+      }),
+    [inboundRows],
+  );
+  const outboundDocuments = React.useMemo(() => {
+    const groups = new Map<
+      string,
+      { id: string; createdAt: string; assignmentNo: string; sourceWarehouse: string; marketplace: Marketplace; workflowStatus: TaskWorkflowStatus; shipments: OutboundShipment[] }
+    >();
+    for (const row of outboundRows) {
+      const key = `${row.legalEntityId}::${row.assignmentId ?? row.assignmentNo ?? row.id}`;
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
+          id: key,
+          createdAt: row.createdAt,
+          assignmentNo: row.assignmentNo?.trim() || row.assignmentId?.trim() || row.id,
+          sourceWarehouse: row.sourceWarehouse,
+          marketplace: row.marketplace,
+          workflowStatus: (row.workflowStatus ?? (row.status === "отгружено" ? "completed" : "pending")) as TaskWorkflowStatus,
+          shipments: [row],
+        });
+      } else {
+        existing.shipments.push(row);
+        if ((row.workflowStatus ?? "pending") === "processing") existing.workflowStatus = "processing";
+        if (row.createdAt > existing.createdAt) existing.createdAt = row.createdAt;
+      }
+    }
+    return Array.from(groups.values()).sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
+  }, [outboundRows]);
+  const selectedInboundDoc = inboundDocuments.find((x) => x.id === selectedInboundDocId) ?? null;
+  const selectedOutboundDoc = outboundDocuments.find((x) => x.id === selectedOutboundDocId) ?? null;
   const filteredProducts = React.useMemo(() => {
     const s = productSearch.trim().toLowerCase();
     if (!s) return rows;
@@ -542,6 +587,18 @@ const LegalEntityDetailsPage = () => {
   React.useEffect(() => {
     setOutboundRowDrafts(buildOutboundRowDraftsFromShipments(outboundRowsForUi, rows, catalog));
   }, [outboundRowsForUi, rows, catalog]);
+
+  React.useEffect(() => {
+    if (selectedInboundDocId && !inboundDocuments.some((doc) => doc.id === selectedInboundDocId)) {
+      setSelectedInboundDocId(null);
+    }
+  }, [inboundDocuments, selectedInboundDocId]);
+
+  React.useEffect(() => {
+    if (selectedOutboundDocId && !outboundDocuments.some((doc) => doc.id === selectedOutboundDocId)) {
+      setSelectedOutboundDocId(null);
+    }
+  }, [outboundDocuments, selectedOutboundDocId]);
 
   React.useEffect(() => {
     console.log("[wms:outbound] загрузка на страницу юрлица", {
@@ -1198,6 +1255,7 @@ const LegalEntityDetailsPage = () => {
       expectedUnits: qty,
       receivedUnits: null,
       status: "ожидается",
+      workflowStatus: "pending",
       eta: inboundDraft.eta || new Date().toISOString().slice(0, 10),
     });
     toast.success("Задание на приёмку создано");
@@ -1212,9 +1270,13 @@ const LegalEntityDetailsPage = () => {
     const product = rows.find((p) => p.id === selectedOutboundProductId);
     if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
     if (!product || qty > product.stockOnHand) return toast.error("Количество превышает остаток");
+    const assignmentId = `ass-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const assignmentNo = `ОТГ-${Date.now().toString().slice(-8)}`;
     await createOutbound({
       legalEntityId: entity.id.trim(),
       productId: selectedOutboundProductId,
+      assignmentId,
+      assignmentNo,
       marketplace: outboundDraft.marketplace,
       sourceWarehouse: outboundDraft.warehouse.trim() || "Склад Коледино",
       shippingMethod: outboundDraft.shippingMethod,
@@ -1227,6 +1289,7 @@ const LegalEntityDetailsPage = () => {
       plannedUnits: qty,
       shippedUnits: null,
       status: "готов к отгрузке (резерв)",
+      workflowStatus: "pending",
       boxes: [],
       activeBoxId: null,
     });
@@ -1436,6 +1499,7 @@ const LegalEntityDetailsPage = () => {
       expectedUnits: totalPlanned,
       receivedUnits: null,
       status: "ожидается",
+      workflowStatus: "pending",
       eta: new Date().toISOString().slice(0, 10),
     });
     toast.success(`Успешно загружено ${items.length} уникальных строк`);
@@ -1522,6 +1586,7 @@ const LegalEntityDetailsPage = () => {
         plannedUnits: planned,
         shippedUnits: null,
         status: "готов к отгрузке (резерв)",
+        workflowStatus: "pending",
         boxes: [],
         activeBoxId: null,
       });
@@ -1594,6 +1659,7 @@ const LegalEntityDetailsPage = () => {
         plannedUnits: qty,
         shippedUnits: null,
         status: "готов к отгрузке (резерв)",
+        workflowStatus: "pending",
         boxes: [],
         activeBoxId: null,
       });
@@ -2309,7 +2375,172 @@ const LegalEntityDetailsPage = () => {
               )}
             </div>
           </div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Card className="mb-3 border-slate-200 shadow-sm">
+            <CardContent className="p-0 sm:p-2">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Дата создания</TableHead>
+                    <TableHead>Номер задания</TableHead>
+                    <TableHead>Склад / МП</TableHead>
+                    <TableHead>Статус</TableHead>
+                    <TableHead className="text-right">Кол-во товаров</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {outboundDocuments.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-slate-500">
+                        Документов отгрузки пока нет
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    outboundDocuments.map((doc) => {
+                      const statusClass =
+                        doc.workflowStatus === "processing"
+                          ? "text-sky-700 bg-sky-50 ring-1 ring-sky-200"
+                          : doc.workflowStatus === "completed"
+                            ? "text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200"
+                            : "text-amber-700 bg-amber-50 ring-1 ring-amber-200";
+                      const totalPlan = doc.shipments.reduce((sum, item) => sum + (Number(item.plannedUnits) || 0), 0);
+                      return (
+                        <TableRow
+                          key={doc.id}
+                          className="cursor-pointer"
+                          onClick={() => setSelectedOutboundDocId((prev) => (prev === doc.id ? null : doc.id))}
+                        >
+                          <TableCell>{doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy", { locale: ru }) : "—"}</TableCell>
+                          <TableCell className="font-medium">{doc.assignmentNo}</TableCell>
+                          <TableCell>{doc.sourceWarehouse} / {doc.marketplace.toUpperCase()}</TableCell>
+                          <TableCell>
+                            <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${statusClass}`}>
+                              {workflowStatusLabel(doc.workflowStatus)}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{totalPlan}</TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+          {selectedOutboundDoc ? (
+            <Card className="mb-3 border-slate-200 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-base">Состав задания {selectedOutboundDoc.assignmentNo}</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0 sm:p-2">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Артикул</TableHead>
+                      <TableHead>Баркод</TableHead>
+                      <TableHead>Цвет / Размер</TableHead>
+                      <TableHead className="text-right">План</TableHead>
+                      <TableHead className="text-right">Факт</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedOutboundDoc.shipments.map((sh) => (
+                      <TableRow key={sh.id}>
+                        <TableCell>{sh.importArticle || "—"}</TableCell>
+                        <TableCell className="font-mono text-xs">{sh.importBarcode || "—"}</TableCell>
+                        <TableCell>{sh.importColor || "—"} / {sh.importSize || "—"}</TableCell>
+                        <TableCell className="text-right tabular-nums">{sh.plannedUnits}</TableCell>
+                        <TableCell className="text-right tabular-nums">{sh.packedUnits ?? sh.shippedUnits ?? 0}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ) : null}
+          <div className="mb-3 flex flex-wrap items-center gap-2 hidden">
+            <Card className="w-full border-slate-200 shadow-sm">
+              <CardContent className="p-0 sm:p-2">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Дата создания</TableHead>
+                      <TableHead>Номер задания</TableHead>
+                      <TableHead>Склад / МП</TableHead>
+                      <TableHead>Статус</TableHead>
+                      <TableHead className="text-right">Кол-во товаров</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inboundDocuments.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-slate-500">
+                          Документов приёмки пока нет
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      inboundDocuments.map((doc) => {
+                        const status = (doc.workflowStatus ?? "pending") as TaskWorkflowStatus;
+                        const statusClass =
+                          status === "processing"
+                            ? "text-sky-700 bg-sky-50 ring-1 ring-sky-200"
+                            : status === "completed"
+                              ? "text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200"
+                              : "text-amber-700 bg-amber-50 ring-1 ring-amber-200";
+                        const count = doc.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+                        return (
+                          <TableRow
+                            key={doc.id}
+                            className="cursor-pointer"
+                            onClick={() => setSelectedInboundDocId((prev) => (prev === doc.id ? null : doc.id))}
+                          >
+                            <TableCell>{doc.eta ? format(parseISO(doc.eta), "dd.MM.yyyy", { locale: ru }) : "—"}</TableCell>
+                            <TableCell className="font-medium">{doc.documentNo}</TableCell>
+                            <TableCell>{doc.destinationWarehouse} / {doc.marketplace.toUpperCase()}</TableCell>
+                            <TableCell>
+                              <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${statusClass}`}>
+                                {workflowStatusLabel(status)}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{count}</TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+            {selectedInboundDoc ? (
+              <Card className="w-full border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-base">Состав документа {selectedInboundDoc.documentNo}</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0 sm:p-2">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Артикул</TableHead>
+                        <TableHead>Баркод</TableHead>
+                        <TableHead>Цвет / Размер</TableHead>
+                        <TableHead className="text-right">План</TableHead>
+                        <TableHead className="text-right">Факт</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedInboundDoc.items.map((item, idx) => (
+                        <TableRow key={`${selectedInboundDoc.id}-${idx}`}>
+                          <TableCell>{item.supplierArticle || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs">{item.barcode || "—"}</TableCell>
+                          <TableCell>{item.color || "—"} / {item.size || "—"}</TableCell>
+                          <TableCell className="text-right tabular-nums">{item.plannedQuantity}</TableCell>
+                          <TableCell className="text-right tabular-nums">{item.factualQuantity}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            ) : null}
             <Button variant={showOnlyDiff ? "default" : "outline"} size="sm" onClick={() => setShowOnlyDiff((v) => !v)}>
               {showOnlyDiff ? "Показать все" : "Только расхождения"}
             </Button>
@@ -2707,7 +2938,7 @@ const LegalEntityDetailsPage = () => {
               )}
             </div>
           </div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2 hidden">
             <Input
               placeholder="Поиск по складу, артикулу, баркоду, цвету, размеру, площадке"
               value={shippingSearch}

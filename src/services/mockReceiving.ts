@@ -107,6 +107,7 @@ type InboundDbRow = {
   expected_units: number;
   received_units: number | null;
   status: InboundSupply["status"];
+  workflow_status?: InboundSupply["workflowStatus"];
   eta: string;
 };
 
@@ -122,6 +123,7 @@ function toDb(row: InboundSupply): InboundDbRow {
     expected_units: row.expectedUnits,
     received_units: row.receivedUnits,
     status: row.status,
+    workflow_status: row.workflowStatus ?? "pending",
     eta: row.eta,
   };
 }
@@ -140,6 +142,7 @@ function fromDb(row: InboundDbRow & { legalEntityId?: string }): InboundSupply {
     expectedUnits: row.expected_units ?? (row as { expectedUnits?: number }).expectedUnits ?? 0,
     receivedUnits: row.received_units ?? (row as { receivedUnits?: number | null }).receivedUnits ?? null,
     status: row.status,
+    workflowStatus: row.workflow_status ?? (row.status === "принято" ? "completed" : row.status === "на приёмке" ? "processing" : "pending"),
     eta: row.eta,
   };
 }

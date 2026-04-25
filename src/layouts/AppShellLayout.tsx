@@ -60,15 +60,13 @@ const AppShellLayout = () => {
   const { data: inbound } = useInboundSupplies();
   const { data: outbound } = useOutboundShipments();
 
-  const inboundBadge = (inbound ?? []).filter((x) => x.status !== "принято").length;
+  const inboundBadge = (inbound ?? []).filter((x) => (x.workflowStatus ?? "pending") === "pending").length;
   const outboundBadge = (() => {
     const rows = outbound ?? [];
     const activeAssignments = new Set<string>();
     for (const row of rows) {
-      const plan = Number(row.plannedUnits) || 0;
-      const fact = Number(row.packedUnits ?? row.shippedUnits ?? 0) || 0;
-      const isActive = row.status !== "отгружено" && fact < plan;
-      if (!isActive) continue;
+      const workflow = row.workflowStatus ?? (row.status === "отгружено" ? "completed" : "pending");
+      if (workflow !== "pending") continue;
       const assignmentKey = `${row.legalEntityId}::${row.assignmentId ?? row.assignmentNo ?? row.id}`;
       activeAssignments.add(assignmentKey);
     }

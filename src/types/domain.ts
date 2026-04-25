@@ -94,6 +94,9 @@ export type ShipmentBox = {
 };
 
 /** Входящая поставка (приёмка) */
+export type TaskWorkflowStatus = "pending" | "processing" | "completed";
+
+/** Входящая поставка (приёмка) */
 export type InboundSupply = {
   id: string;
   legalEntityId: string;
@@ -105,6 +108,7 @@ export type InboundSupply = {
   expectedUnits: number;
   receivedUnits: number | null;
   status: "ожидается" | "на приёмке" | "принято";
+  workflowStatus?: TaskWorkflowStatus;
   eta: string;
 };
 
@@ -231,6 +235,7 @@ export type OutboundShipment = {
   plannedShipDate: string | null;
   shippedUnits: number | null;
   status: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено";
+  workflowStatus?: TaskWorkflowStatus;
   boxes?: Array<{
     id: string;
     clientBoxBarcode: string;

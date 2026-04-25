@@ -143,7 +143,7 @@ export function useInboundSupplies() {
   });
 
   const updateDraft = useMutation({
-    mutationFn: async (args: { id: string; items: InboundSupply["items"]; marketplace?: Marketplace }) => {
+    mutationFn: async (args: { id: string; items: InboundSupply["items"]; marketplace?: Marketplace; workflowStatus?: InboundSupply["workflowStatus"] }) => {
       const inbound = qc.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? (await fetchMockInboundSupplies());
       const next = inbound.map((x) =>
         x.id === args.id
@@ -151,6 +151,7 @@ export function useInboundSupplies() {
               ...x,
               items: args.items,
               marketplace: args.marketplace ?? x.marketplace,
+              workflowStatus: args.workflowStatus ?? x.workflowStatus,
               expectedUnits: args.items.reduce((s, it) => s + it.plannedQuantity, 0),
               receivedUnits: args.items.reduce((s, it) => s + it.factualQuantity, 0),
             }

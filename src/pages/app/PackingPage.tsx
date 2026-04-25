@@ -9,10 +9,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
-import type { OutboundShipment } from "@/types/domain";
+import type { OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { toast } from "sonner";
 
-type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[] };
+type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
 
 type ScanLine = {
   key: string;
@@ -61,13 +61,21 @@ const PackingPage = () => {
           display: line,
           legalEntityId: sh.legalEntityId,
           shipments: [sh],
+          workflowStatus: (sh.workflowStatus ?? "pending") as TaskWorkflowStatus,
         });
       } else {
         existing.shipments.push(sh);
+        if ((sh.workflowStatus ?? "pending") === "processing") {
+          existing.workflowStatus = "processing";
+        }
       }
     }
     return Array.from(groups.values())
-      .filter((group) => group.shipments.some((sh) => (Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0) < (Number(sh.plannedUnits) || 0)))
+      .map((group) => {
+        const allCompleted = group.shipments.every((sh) => (sh.workflowStatus ?? "pending") === "completed");
+        return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus };
+      })
+      .filter((group) => group.workflowStatus !== "completed")
       .sort((a, b) => a.display.localeCompare(b.display, "ru"));
   }, [allShipments, legal]);
 
@@ -195,7 +203,7 @@ const PackingPage = () => {
         const plan = Number(sh.plannedUnits) || 0;
         await updateOutboundDraft({
           id: sh.id,
-          patch: { packedUnits: plan, shippedUnits: plan },
+          patch: { packedUnits: plan, shippedUnits: plan, workflowStatus: "completed" },
         });
         await setOutboundStatus({ id: sh.id, status: "отгружено", shippedUnits: plan });
       }
@@ -227,6 +235,16 @@ const PackingPage = () => {
   React.useEffect(() => {
     if (startedAssignment) focusScanInput();
   }, [startedAssignment, focusScanInput]);
+
+  const startAssignment = async (assignment: PackingAssignment) => {
+    if (assignment.workflowStatus === "pending") {
+      for (const sh of assignment.shipments) {
+        await updateOutboundDraft({ id: sh.id, patch: { workflowStatus: "processing", status: "к отгрузке" } });
+      }
+      await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
+    }
+    setStartedAssignmentId(assignment.id);
+  };
 
   return (
     <div
@@ -266,7 +284,10 @@ const PackingPage = () => {
                   const dateLabel = first?.createdAt ? format(parseISO(first.createdAt), "dd.MM.yyyy", { locale: ru }) : "без даты";
                   const totalPlan = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.plannedUnits) || 0), 0);
                   return (
-                    <Card key={assignment.id} className="border-slate-200">
+                    <Card
+                      key={assignment.id}
+                      className={assignment.workflowStatus === "processing" ? "border-sky-200 bg-sky-50/40" : "border-slate-200"}
+                    >
                       <CardHeader className="space-y-2 pb-2">
                         <CardTitle className="text-base">№ {assignmentNo}</CardTitle>
                         <CardDescription>{legalName}</CardDescription>
@@ -276,8 +297,8 @@ const PackingPage = () => {
                           <p>Дата: {dateLabel}</p>
                           <p>Товаров по плану: {totalPlan}</p>
                         </div>
-                        <Button className="h-11 w-full text-base" onClick={() => setStartedAssignmentId(assignment.id)}>
-                          Взять в сборку
+                        <Button className="h-11 w-full text-base" onClick={() => void startAssignment(assignment)}>
+                          {assignment.workflowStatus === "processing" ? "Продолжить сборку" : "Взять в сборку"}
                         </Button>
                       </CardContent>
                     </Card>

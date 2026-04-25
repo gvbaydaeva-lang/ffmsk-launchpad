@@ -113,6 +113,7 @@ type OutboundDbRow = {
   planned_ship_date: string | null;
   shipped_units: number | null;
   status: OutboundShipment["status"];
+  workflow_status?: OutboundShipment["workflowStatus"];
   boxes: OutboundShipment["boxes"];
   active_box_id: string | null;
   created_at: string;
@@ -156,6 +157,7 @@ function toDb(row: OutboundShipment): OutboundDbRow {
     planned_ship_date: row.plannedShipDate,
     shipped_units: row.shippedUnits,
     status: row.status,
+    workflow_status: row.workflowStatus ?? "pending",
     boxes: row.boxes ?? [],
     active_box_id: row.activeBoxId ?? null,
     created_at: row.createdAt,
@@ -187,6 +189,7 @@ function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipme
     plannedShipDate: row.planned_ship_date ?? null,
     shippedUnits: row.shipped_units ?? null,
     status: row.status,
+    workflowStatus: row.workflow_status ?? (row.status === "отгружено" ? "completed" : "pending"),
     boxes: normalizeBoxesFromDb(row.boxes),
     activeBoxId: row.active_box_id ?? null,
     createdAt: row.created_at ?? new Date().toISOString(),
