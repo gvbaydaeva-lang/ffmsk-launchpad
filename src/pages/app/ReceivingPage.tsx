@@ -72,6 +72,7 @@ const ReceivingPage = () => {
   const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
   const startedSupply =
     startedSupplyId == null ? null : ((data ?? []).find((d) => d.id === startedSupplyId) ?? null);
+  const receivingWorkOpen = startedSupplyId != null;
 
   const mutateItemFact = async (supply: InboundSupply, index: number, value: number) => {
     const nextValue = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -292,7 +293,7 @@ const ReceivingPage = () => {
 
       <GlobalFiltersBar />
 
-      {!startedSupply ? (
+      {!receivingWorkOpen ? (
         <Card className="border-slate-200 bg-white shadow-sm">
           <CardHeader>
             <CardTitle className="font-display text-lg text-slate-900">Очередь на приёмку</CardTitle>
@@ -352,8 +353,9 @@ const ReceivingPage = () => {
         </Card>
       ) : null}
 
-      {startedSupply ? (
+      {receivingWorkOpen && startedSupply ? (
         <ReceivingTaskWorkScreen
+          key={startedSupplyId}
           supply={startedSupply}
           legalEntityName={entityName(startedSupply.legalEntityId)}
           isUpdatingInboundDraft={isUpdatingInboundDraft}
@@ -376,6 +378,21 @@ const ReceivingPage = () => {
             });
           }}
         />
+      ) : null}
+
+      {receivingWorkOpen && !startedSupply ? (
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <CardContent className="space-y-3 pt-6">
+            <p className="text-sm text-slate-600">Документ не найден в данных. Вернитесь к списку.</p>
+            <button
+              type="button"
+              className="h-10 rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 hover:bg-slate-50"
+              onClick={handleBackToList}
+            >
+              Вернуться к списку
+            </button>
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );

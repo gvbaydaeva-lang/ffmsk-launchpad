@@ -59,8 +59,10 @@ export default function ReceivingTaskWorkScreen({
   }, []);
 
   React.useEffect(() => {
-    focusScanInput();
-  }, [focusScanInput]);
+    if (workflow === "processing") {
+      focusScanInput();
+    }
+  }, [workflow, focusScanInput]);
 
   const progress = React.useMemo(() => {
     const plan = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
@@ -129,6 +131,13 @@ export default function ReceivingTaskWorkScreen({
         <CardDescription>Сканирование и приёмка товаров по выбранному заданию</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <button
+          type="button"
+          className="h-10 w-full max-w-sm rounded-md border border-slate-200 bg-white text-sm font-medium text-slate-900 hover:bg-slate-50"
+          onClick={() => onBack()}
+        >
+          Вернуться к списку
+        </button>
         <div className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm md:grid-cols-5">
           <div>
             <span className="text-slate-500">№ задания:</span>
@@ -163,7 +172,6 @@ export default function ReceivingTaskWorkScreen({
             value={scanValue}
             onChange={(e) => setScanValue(e.target.value)}
             className="h-14 text-xl"
-            onBlur={() => focusScanInput()}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -288,10 +296,6 @@ export default function ReceivingTaskWorkScreen({
             <p className="text-xs text-slate-600">Осталось принять: {progress.remaining} шт.</p>
           ) : null}
         </div>
-
-        <button type="button" className="h-10 w-full max-w-sm rounded-md border border-slate-200 bg-white text-sm font-medium text-slate-900 hover:bg-slate-50" onClick={onBack}>
-          Вернуться к списку
-        </button>
       </CardContent>
     </Card>
   );
