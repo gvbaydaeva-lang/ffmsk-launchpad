@@ -419,6 +419,7 @@ const LegalEntityDetailsPage = () => {
   const [qrBoxPayload, setQrBoxPayload] = React.useState<{ barcode: string; warehouse: string } | null>(null);
   /** null — нет статуса; durable — IndexedDB+LS; durable+warn — облако не синхронизировалось */
   const [outboundPersistStatus, setOutboundPersistStatus] = React.useState<"durable" | "durable_warn" | "fail" | null>(null);
+  const inboundDraftsRef = React.useRef<Record<string, InboundRowDraft>>({});
   const [form, setForm] = React.useState({
     category: "",
     photoUrl: "",
@@ -537,6 +538,10 @@ const LegalEntityDetailsPage = () => {
   React.useEffect(() => {
     setInboundRowDrafts(buildInboundRowDraftsFromRows(inboundRows));
   }, [inboundRows]);
+
+  React.useEffect(() => {
+    inboundDraftsRef.current = inboundRowDrafts;
+  }, [inboundRowDrafts]);
 
   React.useEffect(() => {
     setOutboundRowDrafts(buildOutboundRowDraftsFromShipments(outboundRowsForUi, rows, catalog));
@@ -757,7 +762,7 @@ const LegalEntityDetailsPage = () => {
 
   const onSaveInboundRow = async (inboundId: string, rowIndex: number, opts?: { quiet?: boolean }) => {
     const key = `${inboundId}-${rowIndex}`;
-    const draft = inboundRowDrafts[key];
+    const draft = inboundDraftsRef.current[key] ?? inboundRowDrafts[key];
     const source = inboundRows.find((x) => x.id === inboundId);
     if (!draft || !source) return;
     const nextItems = source.items.map((it, idx) =>
@@ -774,19 +779,54 @@ const LegalEntityDetailsPage = () => {
         : it,
     );
     await updateInboundDraft({ id: inboundId, items: nextItems, marketplace: draft.marketplace });
+    queryClient.setQueryData<InboundSupply[]>(["wms", "inbound"], (prev) =>
+      (prev ?? inboundRows).map((x) =>
+        x.id === inboundId
+          ? {
+              ...x,
+              marketplace: draft.marketplace,
+              items: nextItems,
+              expectedUnits: nextItems.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0),
+              receivedUnits: nextItems.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0),
+            }
+          : x,
+      ),
+    );
     if (!opts?.quiet) toast.success("Строка приёмки сохранена");
   };
 
   const handleSaveAllInboundDrafts = async () => {
     setSavingInboundAll(true);
     try {
-      for (const inb of inboundRows) {
-        for (let idx = 0; idx < inb.items.length; idx += 1) {
-          await onSaveInboundRow(inb.id, idx, { quiet: true });
-        }
-      }
-      const nextInbound = queryClient.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? inboundRows;
+      const drafts = inboundDraftsRef.current;
+      const nextInbound = inboundRows.map((inb) => {
+        const nextItems = inb.items.map((it, idx) => {
+          const d = drafts[`${inb.id}-${idx}`];
+          if (!d) return it;
+          return {
+            ...it,
+            supplierArticle: d.supplierArticle.trim(),
+            barcode: d.barcode.trim(),
+            size: d.size.trim(),
+            color: d.color.trim(),
+            plannedQuantity: Number(d.plannedQuantity) || 0,
+            factualQuantity: Number(d.factualQuantity) || 0,
+          };
+        });
+        const firstDraft = drafts[`${inb.id}-0`];
+        return {
+          ...inb,
+          marketplace: firstDraft?.marketplace ?? inb.marketplace,
+          items: nextItems,
+          expectedUnits: nextItems.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0),
+          receivedUnits: nextItems.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0),
+        };
+      });
+      console.log("Данные подготовленные к отправке в БД:", nextInbound);
+      queryClient.setQueryData(["wms", "inbound"], nextInbound);
       await persistInboundDurably(nextInbound);
+      await queryClient.refetchQueries({ queryKey: ["wms", "inbound"] });
+      setInboundRowDrafts(buildInboundRowDraftsFromRows(nextInbound));
       setInboundMatrixEdit(false);
       toast.success("Приёмки сохранены");
     } finally {
