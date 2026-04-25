@@ -12,6 +12,13 @@ import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, Marketplace } from "@/types/domain";
+import {
+  compareWorkflowPriority,
+  taskWorkflowActionButtonClass,
+  taskWorkflowActionLabel,
+  taskWorkflowCardClass,
+  workflowFromInbound,
+} from "@/lib/taskWorkflowUi";
 import { toast } from "sonner";
 
 const ReceivingPage = () => {
@@ -31,16 +38,21 @@ const ReceivingPage = () => {
   const rows = React.useMemo(() => {
     const base = filterInboundByMarketplace(data ?? [], mp);
     const byEntity = legalEntityId === "all" ? base : base.filter((r) => r.legalEntityId === legalEntityId);
-    const activeOnly = byEntity.filter((r) => (r.workflowStatus ?? "pending") !== "completed");
     const q = search.trim().toLowerCase();
-    if (!q) return activeOnly;
-    return activeOnly.filter((r) => {
-      const label = `${r.documentNo} ${entityName(r.legalEntityId)} ${r.supplier}`.toLowerCase();
-      return label.includes(q);
+    const filtered = !q
+      ? byEntity
+      : byEntity.filter((r) => {
+          const label = `${r.documentNo} ${entityName(r.legalEntityId)} ${r.supplier}`.toLowerCase();
+          return label.includes(q);
+        });
+    return [...filtered].sort((a, b) => {
+      const w = compareWorkflowPriority(workflowFromInbound(a), workflowFromInbound(b));
+      if (w !== 0) return w;
+      return (a.documentNo || "").localeCompare(b.documentNo || "", "ru");
     });
-  }, [data, mp, legalEntityId]);
+  }, [data, mp, legalEntityId, search, entityName]);
   const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
-  const receivingStarted = (startedSupply?.workflowStatus ?? "pending") === "processing";
+  const receivingStarted = startedSupply ? workflowFromInbound(startedSupply) === "processing" : false;
 
   const totals = React.useMemo(() => {
     if (!startedSupply) return { plan: 0, fact: 0, done: false };
@@ -57,6 +69,12 @@ const ReceivingPage = () => {
   };
 
   const startReceiving = async (supply: InboundSupply) => {
+    const wf = workflowFromInbound(supply);
+    if (wf === "completed") return;
+    if (wf === "processing") {
+      setStartedSupplyId(supply.id);
+      return;
+    }
     try {
       await setInboundStatus({ id: supply.id, status: "на приёмке" });
       await updateInboundDraft({ id: supply.id, items: supply.items, workflowStatus: "processing" });
@@ -132,7 +150,7 @@ const ReceivingPage = () => {
         <Card className="border-slate-200 bg-white shadow-sm">
           <CardHeader>
             <CardTitle className="font-display text-lg text-slate-900">Очередь на приёмку</CardTitle>
-            <CardDescription className="text-slate-500">Возьмите документ в работу кнопкой "Начать приёмку".</CardDescription>
+            <CardDescription className="text-slate-500">Нажмите «Взять в работу», чтобы открыть документ.</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -143,17 +161,15 @@ const ReceivingPage = () => {
             ) : error ? (
               <p className="p-2 text-sm text-destructive">Не удалось загрузить список.</p>
             ) : rows.length === 0 ? (
-              <p className="text-sm text-slate-600">Активных задач по приёмке нет.</p>
+              <p className="text-sm text-slate-600">Нет документов приёмки.</p>
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {rows.map((supply) => {
                   const planUnits = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
                   const dateLabel = supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy", { locale: ru }) : "без даты";
+                  const wf = workflowFromInbound(supply);
                   return (
-                    <Card
-                      key={supply.id}
-                      className={(supply.workflowStatus ?? "pending") === "processing" ? "border-sky-200 bg-sky-50/40" : "border-slate-200"}
-                    >
+                    <Card key={supply.id} className={taskWorkflowCardClass(wf)}>
                       <CardHeader className="space-y-2 pb-2">
                         <CardTitle className="text-base">№ {supply.documentNo}</CardTitle>
                         <CardDescription>{entityName(supply.legalEntityId)}</CardDescription>
@@ -163,8 +179,14 @@ const ReceivingPage = () => {
                           <p>Дата: {dateLabel}</p>
                           <p>Товаров по плану: {planUnits}</p>
                         </div>
-                        <Button className="h-11 w-full text-base" onClick={() => void startReceiving(supply)}>
-                          {(supply.workflowStatus ?? "pending") === "processing" ? "Продолжить приёмку" : "Начать приёмку"}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className={taskWorkflowActionButtonClass(wf)}
+                          disabled={wf === "completed"}
+                          onClick={() => void startReceiving(supply)}
+                        >
+                          {taskWorkflowActionLabel(wf)}
                         </Button>
                       </CardContent>
                     </Card>
@@ -231,14 +253,31 @@ const ReceivingPage = () => {
               </table>
             </div>
 
-            {!receivingStarted ? (
-              <Button className="h-11 w-full max-w-sm" onClick={() => void startReceiving(startedSupply)} disabled={isUpdatingInbound}>
-                Начать приёмку
+            {!receivingStarted && workflowFromInbound(startedSupply) !== "completed" ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className={taskWorkflowActionButtonClass("pending")}
+                onClick={() => void startReceiving(startedSupply)}
+                disabled={isUpdatingInbound}
+              >
+                {taskWorkflowActionLabel("pending")}
               </Button>
             ) : null}
             {receivingStarted && totals.done ? (
-              <Button className="h-11 w-full max-w-sm" onClick={() => void closeReceiving()} disabled={isUpdatingInbound}>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
+                onClick={() => void closeReceiving()}
+                disabled={isUpdatingInbound}
+              >
                 Закрыть приёмку
+              </Button>
+            ) : null}
+            {workflowFromInbound(startedSupply) === "completed" ? (
+              <Button type="button" variant="ghost" className={taskWorkflowActionButtonClass("completed")} disabled>
+                {taskWorkflowActionLabel("completed")}
               </Button>
             ) : null}
             <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedSupplyId(null)}>

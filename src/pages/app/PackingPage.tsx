@@ -10,6 +10,13 @@ import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import type { OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
+import {
+  compareWorkflowPriority,
+  normalizeWorkflowStatus,
+  taskWorkflowActionButtonClass,
+  taskWorkflowActionLabel,
+  taskWorkflowCardClass,
+} from "@/lib/taskWorkflowUi";
 import { toast } from "sonner";
 
 type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
@@ -75,8 +82,11 @@ const PackingPage = () => {
         const allCompleted = group.shipments.every((sh) => (sh.workflowStatus ?? "pending") === "completed");
         return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus };
       })
-      .filter((group) => group.workflowStatus !== "completed")
-      .sort((a, b) => a.display.localeCompare(b.display, "ru"));
+      .sort((a, b) => {
+        const w = compareWorkflowPriority(a.workflowStatus, b.workflowStatus);
+        if (w !== 0) return w;
+        return a.display.localeCompare(b.display, "ru");
+      });
   }, [allShipments, legal]);
 
   const startedAssignment = assignments.find((x) => x.id === startedAssignmentId) ?? null;
@@ -237,6 +247,7 @@ const PackingPage = () => {
   }, [startedAssignment, focusScanInput]);
 
   const startAssignment = async (assignment: PackingAssignment) => {
+    if (normalizeWorkflowStatus(assignment.workflowStatus) === "completed") return;
     if (assignment.workflowStatus === "pending") {
       for (const sh of assignment.shipments) {
         await updateOutboundDraft({ id: sh.id, patch: { workflowStatus: "processing", status: "к отгрузке" } });
@@ -263,7 +274,7 @@ const PackingPage = () => {
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle className="text-base">Очередь заданий на отгрузку</CardTitle>
-            <CardDescription>Выберите документ и возьмите его в сборку.</CardDescription>
+            <CardDescription>Выберите документ и нажмите «Взять в работу».</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {isLoading ? (
@@ -283,11 +294,9 @@ const PackingPage = () => {
                   const legalName = legal?.find((x) => x.id === assignment.legalEntityId)?.shortName ?? assignment.legalEntityId;
                   const dateLabel = first?.createdAt ? format(parseISO(first.createdAt), "dd.MM.yyyy", { locale: ru }) : "без даты";
                   const totalPlan = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.plannedUnits) || 0), 0);
+                  const wf = normalizeWorkflowStatus(assignment.workflowStatus);
                   return (
-                    <Card
-                      key={assignment.id}
-                      className={assignment.workflowStatus === "processing" ? "border-sky-200 bg-sky-50/40" : "border-slate-200"}
-                    >
+                    <Card key={assignment.id} className={taskWorkflowCardClass(wf)}>
                       <CardHeader className="space-y-2 pb-2">
                         <CardTitle className="text-base">№ {assignmentNo}</CardTitle>
                         <CardDescription>{legalName}</CardDescription>
@@ -297,8 +306,17 @@ const PackingPage = () => {
                           <p>Дата: {dateLabel}</p>
                           <p>Товаров по плану: {totalPlan}</p>
                         </div>
-                        <Button className="h-11 w-full text-base" onClick={() => void startAssignment(assignment)}>
-                          {assignment.workflowStatus === "processing" ? "Продолжить сборку" : "Взять в сборку"}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className={taskWorkflowActionButtonClass(wf)}
+                          disabled={wf === "completed"}
+                          onClick={() => {
+                            if (wf === "completed") return;
+                            void startAssignment(assignment);
+                          }}
+                        >
+                          {taskWorkflowActionLabel(wf)}
                         </Button>
                       </CardContent>
                     </Card>
@@ -331,7 +349,13 @@ const PackingPage = () => {
                   }
                 }}
               />
-              <Button onClick={() => void applyScan()} disabled={!scanValue.trim() || isSubmittingScan || isUpdatingOutboundDraft}>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-14 shrink-0 rounded-lg bg-blue-600 px-6 text-base font-semibold text-white shadow-none hover:bg-blue-700 disabled:opacity-50"
+                onClick={() => void applyScan()}
+                disabled={!scanValue.trim() || isSubmittingScan || isUpdatingOutboundDraft}
+              >
                 {isSubmittingScan || isUpdatingOutboundDraft ? "Обработка..." : "Пикнуть"}
               </Button>
             </div>
@@ -372,7 +396,9 @@ const PackingPage = () => {
 
             {progress.totalPlan > 0 && progress.totalPlan === progress.totalFact ? (
               <Button
-                className="h-11 w-full max-w-sm"
+                type="button"
+                variant="ghost"
+                className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
                 onClick={() => void finalizeAssignment()}
                 disabled={isUpdatingOutboundDraft || isUpdatingOutbound}
               >

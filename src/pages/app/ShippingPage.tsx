@@ -1,16 +1,38 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
+import { format, parseISO } from "date-fns";
+import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
 import { useLegalEntities, useOutboundShipments } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
-import type { Marketplace } from "@/types/domain";
+import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
+import {
+  compareWorkflowPriority,
+  taskWorkflowActionButtonClass,
+  taskWorkflowActionLabel,
+  taskWorkflowCardClass,
+  workflowFromOutboundGroup,
+} from "@/lib/taskWorkflowUi";
+
+type ShipmentDoc = {
+  id: string;
+  legalEntityId: string;
+  assignmentNo: string;
+  createdAt: string;
+  sourceWarehouse: string;
+  marketplace: Marketplace;
+  planned: number;
+  fact: number;
+  shipments: OutboundShipment[];
+  workflowStatus: TaskWorkflowStatus;
+};
 
 const ShippingPage = () => {
   const { data, isLoading, error } = useOutboundShipments();
@@ -19,71 +41,54 @@ const ShippingPage = () => {
   useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
-  const [sortKey, setSortKey] = React.useState<"entity" | "planned" | "fact" | "reserved">("entity");
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
 
   const filtered = React.useMemo(() => {
     const base = filterOutboundByMarketplace(data ?? [], mp);
     if (legalEntityId === "all") return base;
     return base.filter((x) => x.legalEntityId === legalEntityId);
   }, [data, mp, legalEntityId]);
-  const summaryRows = React.useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        legalEntityId: string;
-        assignmentKey: string;
-        assignmentLabel: string;
-        planned: number;
-        fact: number;
-        reserved: number;
-        warehouses: Set<string>;
-        statuses: Set<string>;
-      }
-    >();
+
+  const documents = React.useMemo(() => {
+    const groups = new Map<string, OutboundShipment[]>();
     for (const x of filtered) {
-      const assignmentKey = x.assignmentId ?? "legacy";
-      const groupId = `${x.legalEntityId}|${assignmentKey}`;
-      const assignmentLabel = x.assignmentNo?.trim() || (x.assignmentId ? "Задание" : "—");
-      const cur = grouped.get(groupId) ?? {
-        legalEntityId: x.legalEntityId,
-        assignmentKey,
-        assignmentLabel,
-        planned: 0,
-        fact: 0,
-        reserved: 0,
-        warehouses: new Set<string>(),
-        statuses: new Set<string>(),
-      };
-      cur.planned += x.plannedUnits;
-      cur.fact += x.shippedUnits ?? 0;
-      if (x.status === "готов к отгрузке (резерв)") cur.reserved += x.plannedUnits;
-      cur.warehouses.add(x.sourceWarehouse);
-      cur.statuses.add(x.status);
-      grouped.set(groupId, cur);
+      const key = `${x.legalEntityId}::${x.assignmentId ?? x.assignmentNo ?? x.id}`;
+      const cur = groups.get(key) ?? [];
+      cur.push(x);
+      groups.set(key, cur);
     }
-    const arr = Array.from(grouped.values()).map((g) => ({
-      ...g,
-      entity: entities?.find((e) => e.id === g.legalEntityId)?.shortName ?? g.legalEntityId,
-    }));
-    const s = search.trim().toLowerCase();
-    const dir = sortDir === "asc" ? 1 : -1;
-    return arr
-      .filter((r) => !s || r.entity.toLowerCase().includes(s) || r.assignmentLabel.toLowerCase().includes(s))
-      .sort((a, b) => {
-        if (sortKey === "planned") return (a.planned - b.planned) * dir;
-        if (sortKey === "fact") return (a.fact - b.fact) * dir;
-        if (sortKey === "reserved") return (a.reserved - b.reserved) * dir;
-        return a.entity.localeCompare(b.entity, "ru") * dir;
+    const docs: ShipmentDoc[] = [];
+    for (const [groupId, shipments] of groups) {
+      const first = shipments[0];
+      const createdAt = shipments.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
+      const planned = shipments.reduce((s, sh) => s + (Number(sh.plannedUnits) || 0), 0);
+      const fact = shipments.reduce((s, sh) => s + (Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0), 0);
+      const workflowStatus = workflowFromOutboundGroup(shipments);
+      docs.push({
+        id: groupId,
+        legalEntityId: first.legalEntityId,
+        assignmentNo: first.assignmentNo?.trim() || first.assignmentId?.trim() || first.id,
+        createdAt,
+        sourceWarehouse: first.sourceWarehouse,
+        marketplace: first.marketplace,
+        planned,
+        fact,
+        shipments,
+        workflowStatus,
       });
-  }, [entities, filtered, search, sortDir, sortKey]);
-  const onSort = (key: "entity" | "planned" | "fact" | "reserved") => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
     }
-  };
+    const q = search.trim().toLowerCase();
+    const filteredDocs = !q
+      ? docs
+      : docs.filter((d) => {
+          const entity = entities?.find((e) => e.id === d.legalEntityId)?.shortName ?? d.legalEntityId;
+          return `${entity} ${d.assignmentNo}`.toLowerCase().includes(q);
+        });
+    return filteredDocs.sort((a, b) => {
+      const w = compareWorkflowPriority(a.workflowStatus, b.workflowStatus);
+      if (w !== 0) return w;
+      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    });
+  }, [filtered, search, entities]);
 
   return (
     <div className="space-y-4">
@@ -93,9 +98,11 @@ const ShippingPage = () => {
           <p className="mt-1 text-sm text-slate-600">Задания на выдачу со склада FF и контроль остатков.</p>
         </div>
         <div className="flex gap-2">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: юрлицо" className="w-[250px]" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: юрлицо, номер" className="w-[250px]" />
           <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
-            <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[190px]">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Все площадки</SelectItem>
               <SelectItem value="wb">Wildberries</SelectItem>
@@ -110,53 +117,60 @@ const ShippingPage = () => {
 
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader>
-          <CardTitle className="font-display text-lg text-slate-900">Отгрузки</CardTitle>
-          <CardDescription className="text-slate-500">Статусы: создано → к отгрузке → отгружено</CardDescription>
+          <CardTitle className="font-display text-lg text-slate-900">Задания на отгрузку</CardTitle>
+          <CardDescription className="text-slate-500">
+            Карточки документов. Для работы со сканированием откройте раздел «Упаковщик».
+          </CardDescription>
         </CardHeader>
-        <CardContent className="p-0 sm:p-6">
+        <CardContent>
           {isLoading ? (
-            <div className="space-y-2 p-6"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Skeleton className="h-36 w-full" />
+              <Skeleton className="h-36 w-full" />
+            </div>
           ) : error ? (
-            <p className="p-6 text-sm text-destructive">Не удалось загрузить отгрузки.</p>
+            <p className="text-sm text-destructive">Не удалось загрузить отгрузки.</p>
+          ) : documents.length === 0 ? (
+            <p className="text-sm text-slate-600">Нет заданий для отображения.</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="cursor-pointer" onClick={() => onSort("entity")}>
-                    Юрлицо
-                  </TableHead>
-                  <TableHead>Номер задания</TableHead>
-                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("planned")}>
-                    Общее кол-во
-                  </TableHead>
-                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("fact")}>
-                    Факт отгрузки
-                  </TableHead>
-                  <TableHead className="text-right cursor-pointer" onClick={() => onSort("reserved")}>
-                    В резерве
-                  </TableHead>
-                  <TableHead>Склад</TableHead>
-                  <TableHead>Статус</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summaryRows.map((row) => (
-                  <TableRow key={`${row.legalEntityId}-${row.assignmentKey}`}>
-                    <TableCell>
-                      <Link to={`/legal-entities/${row.legalEntityId}?tab=shipping`} className="font-medium hover:underline">
-                        {row.entity}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-sm text-slate-600">{row.assignmentLabel}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.planned}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.fact}</TableCell>
-                    <TableCell className="text-right tabular-nums">{row.reserved}</TableCell>
-                    <TableCell>{Array.from(row.warehouses).join(", ")}</TableCell>
-                    <TableCell>{Array.from(row.statuses).join(", ")}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {documents.map((doc) => {
+                const entity = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
+                const wf = doc.workflowStatus;
+                const dateLabel = doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy", { locale: ru }) : "—";
+                return (
+                  <Card key={doc.id} className={taskWorkflowCardClass(wf)}>
+                    <CardHeader className="space-y-2 pb-2">
+                      <CardTitle className="text-base">№ {doc.assignmentNo}</CardTitle>
+                      <CardDescription>{entity}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm text-slate-600">
+                        <p>Дата: {dateLabel}</p>
+                        <p>
+                          {doc.sourceWarehouse} / {doc.marketplace.toUpperCase()}
+                        </p>
+                        <p>
+                          План {doc.planned} · Факт {doc.fact}
+                        </p>
+                      </div>
+                      {wf === "completed" ? (
+                        <Button type="button" variant="ghost" className={taskWorkflowActionButtonClass("completed")} disabled>
+                          {taskWorkflowActionLabel("completed")}
+                        </Button>
+                      ) : (
+                        <Button type="button" variant="ghost" className={taskWorkflowActionButtonClass(wf)} asChild>
+                          <Link to="/packing">{taskWorkflowActionLabel(wf)}</Link>
+                        </Button>
+                      )}
+                      <Button variant="outline" className="h-9 w-full border-slate-200 text-slate-700 shadow-none" asChild>
+                        <Link to={`/legal-entities/${doc.legalEntityId}?tab=shipping`}>Карточка юрлица</Link>
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           )}
         </CardContent>
       </Card>
