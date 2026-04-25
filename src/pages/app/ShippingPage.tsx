@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
+import type { TaskRegistryRow } from "@/components/app/TaskRegistryTable";
 import TaskItemsTable from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
@@ -110,40 +111,73 @@ const ShippingPage = () => {
     return withFilters.sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
-  const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
+  React.useEffect(() => {
+    if (selectedId && !documents.some((d) => d.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [documents, selectedId]);
+
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
   const toggleSelectedDoc = React.useCallback((id: string) => {
     setSelectedId((prev) => (prev === id ? null : id));
   }, []);
 
-  const goToPacker = React.useCallback(() => {
-    if (!selectedDoc) return;
-    navigate(`/packing?openAssignment=${encodeURIComponent(selectedDoc.id)}`);
-  }, [navigate, selectedDoc]);
+  const goToPacker = React.useCallback(
+    (doc: ShipmentDoc) => {
+      navigate(`/packing?openAssignment=${encodeURIComponent(doc.id)}`);
+    },
+    [navigate],
+  );
 
-  const packerButton = (() => {
-    if (!selectedDoc) return null;
-    const st = selectedDoc.workflowStatus;
-    if (st === "completed") {
+  const renderExpandedRow = React.useCallback(
+    (row: TaskRegistryRow) => {
+      const doc = documents.find((d) => d.id === row.id);
+      if (!doc) return null;
+      const st = doc.workflowStatus;
       return (
-        <Button type="button" size="sm" variant="secondary" disabled>
-          Сборка завершена
-        </Button>
+        <div className="space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="font-display text-base font-semibold text-slate-900">Состав задания №{doc.assignmentNo}</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              {st === "completed" ? (
+                <Button type="button" size="sm" variant="secondary" disabled>
+                  Сборка завершена
+                </Button>
+              ) : st === "processing" ? (
+                <Button type="button" size="sm" onClick={() => goToPacker(doc)}>
+                  Продолжить сборку
+                </Button>
+              ) : (
+                <Button type="button" size="sm" onClick={() => goToPacker(doc)}>
+                  Открыть в упаковщике
+                </Button>
+              )}
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/legal-entities/${doc.legalEntityId}?tab=shipping`}>Карточка юрлица</Link>
+              </Button>
+            </div>
+          </div>
+          <TaskItemsTable
+            variant="outboundLines"
+            rows={doc.shipments.map((sh) => ({
+              id: sh.id,
+              name: sh.importName || "—",
+              article: sh.importArticle || "—",
+              barcode: sh.importBarcode || "—",
+              marketplace: sh.marketplace.toUpperCase(),
+              color: sh.importColor || "—",
+              size: sh.importSize || "—",
+              plan: Number(sh.plannedUnits) || 0,
+              fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
+              warehouse: sh.sourceWarehouse || "—",
+              status: sh.workflowStatus ?? "pending",
+            }))}
+          />
+        </div>
       );
-    }
-    if (st === "processing") {
-      return (
-        <Button type="button" size="sm" onClick={goToPacker}>
-          Продолжить сборку
-        </Button>
-      );
-    }
-    return (
-      <Button type="button" size="sm" onClick={goToPacker}>
-        Открыть в упаковщике
-      </Button>
-    );
-  })();
+    },
+    [documents, goToPacker],
+  );
 
   return (
     <div className="space-y-4">
@@ -212,7 +246,7 @@ const ShippingPage = () => {
         <CardHeader>
           <CardTitle className="font-display text-lg text-slate-900">Реестр заданий на отгрузку</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent>
           {isLoading ? (
             <div className="grid gap-3">
               <Skeleton className="h-36 w-full" />
@@ -241,42 +275,11 @@ const ShippingPage = () => {
               selectedId={selectedId}
               actionLabel="Открыть"
               disableActionForCompleted={false}
-              onOpen={toggleSelectedDoc}
+              enableRowClick={false}
               onAction={toggleSelectedDoc}
+              renderExpandedRow={renderExpandedRow}
             />
           )}
-
-          {selectedDoc ? (
-            <div className="space-y-3 border-t border-slate-200 pt-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h3 className="font-display text-base font-semibold text-slate-900">
-                  Состав задания №{selectedDoc.assignmentNo}
-                </h3>
-                <div className="flex flex-wrap items-center gap-2">
-                  {packerButton}
-                  <Button variant="outline" size="sm" asChild>
-                    <Link to={`/legal-entities/${selectedDoc.legalEntityId}?tab=shipping`}>Карточка юрлица</Link>
-                  </Button>
-                </div>
-              </div>
-              <TaskItemsTable
-                variant="outboundLines"
-                rows={selectedDoc.shipments.map((sh) => ({
-                  id: sh.id,
-                  name: sh.importName || "—",
-                  article: sh.importArticle || "—",
-                  barcode: sh.importBarcode || "—",
-                  marketplace: sh.marketplace.toUpperCase(),
-                  color: sh.importColor || "—",
-                  size: sh.importSize || "—",
-                  plan: Number(sh.plannedUnits) || 0,
-                  fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
-                  warehouse: sh.sourceWarehouse || "—",
-                  status: sh.workflowStatus ?? "pending",
-                }))}
-              />
-            </div>
-          ) : null}
         </CardContent>
       </Card>
     </div>

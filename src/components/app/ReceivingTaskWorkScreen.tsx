@@ -289,8 +289,17 @@ export default function ReceivingTaskWorkScreen({
           ) : null}
         </div>
 
-        <Button type="button" variant="outline" className="h-10 w-full max-w-sm" onClick={onBack}>
-          Назад к списку
+        <Button
+          type="button"
+          variant="outline"
+          className="h-10 w-full max-w-sm"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onBack();
+          }}
+        >
+          Вернуться к списку
         </Button>
       </CardContent>
     </Card>
