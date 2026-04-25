@@ -33,6 +33,7 @@ import {
   useProductCatalog,
   useUpdateLegalEntitySettings,
 } from "@/hooks/useWmsMock";
+import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
 import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem } from "@/types/domain";
 import {
@@ -339,8 +340,22 @@ const LegalEntityDetailsPage = () => {
   const { role } = useUserRole();
   const { data: legal } = useLegalEntities();
   const { data: history } = useOperationHistory();
-  const { data: inbound, createInbound, setInboundStatus, isCreating, isUpdatingInbound, updateInboundDraft } = useInboundSupplies();
-  const { data: outbound, createOutbound, setOutboundStatus, isCreatingOutbound, isUpdatingOutbound, updateOutboundDraft } = useOutboundShipments();
+  const {
+    data: inbound,
+    createInbound,
+    setInboundStatus,
+    isCreating,
+    isUpdatingInboundDraft,
+    updateInboundDraft,
+  } = useInboundSupplies();
+  const {
+    data: outbound,
+    createOutbound,
+    setOutboundStatus,
+    isCreatingOutbound,
+    isUpdatingOutboundDraft,
+    updateOutboundDraft,
+  } = useOutboundShipments();
   const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
   const queryClient = useQueryClient();
@@ -390,6 +405,8 @@ const LegalEntityDetailsPage = () => {
   const [inboundMatrixEdit, setInboundMatrixEdit] = React.useState(false);
   /** Режим правки плана и полей отгрузки в матрице + поля коробов в сайдбаре упаковщика */
   const [shippingMatrixEdit, setShippingMatrixEdit] = React.useState(false);
+  const [savingInboundAll, setSavingInboundAll] = React.useState(false);
+  const [savingShippingAll, setSavingShippingAll] = React.useState(false);
   const [inboundRowDrafts, setInboundRowDrafts] = React.useState<Record<string, InboundRowDraft>>({});
   const [outboundRowDrafts, setOutboundRowDrafts] = React.useState<Record<string, OutboundRowDraft>>({});
   const [shippingSearch, setShippingSearch] = React.useState("");
@@ -761,13 +778,20 @@ const LegalEntityDetailsPage = () => {
   };
 
   const handleSaveAllInboundDrafts = async () => {
-    for (const inb of inboundRows) {
-      for (let idx = 0; idx < inb.items.length; idx += 1) {
-        await onSaveInboundRow(inb.id, idx, { quiet: true });
+    setSavingInboundAll(true);
+    try {
+      for (const inb of inboundRows) {
+        for (let idx = 0; idx < inb.items.length; idx += 1) {
+          await onSaveInboundRow(inb.id, idx, { quiet: true });
+        }
       }
+      const nextInbound = queryClient.getQueryData<InboundSupply[]>(["wms", "inbound"]) ?? inboundRows;
+      await persistInboundDurably(nextInbound);
+      setInboundMatrixEdit(false);
+      toast.success("Приёмки сохранены");
+    } finally {
+      setSavingInboundAll(false);
     }
-    setInboundMatrixEdit(false);
-    toast.success("Приёмки сохранены");
   };
 
   const cancelInboundMatrixEdit = () => {
@@ -805,29 +829,6 @@ const LegalEntityDetailsPage = () => {
     });
   };
 
-  const autoSaveInboundQty = (ref: { rowId: string; inboundId: string; rowIndex: number }, field: "plan" | "fact", raw: string) => {
-    const value = String(Math.max(0, Number(raw) || 0));
-    if (field === "plan") setInboundDraftPlanned(ref.rowId, value);
-    else setInboundDraftFactual(ref.rowId, value);
-
-    const source = inboundRows.find((x) => x.id === ref.inboundId);
-    if (!source) return;
-    const rowKey = ref.rowId;
-    const draft = inboundRowDrafts[rowKey];
-    const nextPlan = field === "plan" ? Number(value) || 0 : Number(draft?.plannedQuantity ?? source.items[ref.rowIndex]?.plannedQuantity ?? 0) || 0;
-    const nextFact = field === "fact" ? Number(value) || 0 : Number(draft?.factualQuantity ?? source.items[ref.rowIndex]?.factualQuantity ?? 0) || 0;
-
-    const nextItems = source.items.map((it, idx) =>
-      idx === ref.rowIndex
-        ? {
-            ...it,
-            plannedQuantity: nextPlan,
-            factualQuantity: nextFact,
-          }
-        : it,
-    );
-    void updateInboundDraft({ id: ref.inboundId, items: nextItems, marketplace: draft?.marketplace ?? source.marketplace });
-  };
 
   const effInboundPlanned = (inboundId: string, rowIndex: number) => {
     const key = `${inboundId}-${rowIndex}`;
@@ -879,11 +880,25 @@ const LegalEntityDetailsPage = () => {
   };
 
   const handleSaveAllShippingDrafts = async () => {
-    for (const sh of outboundRowsForUi) {
-      if (outboundRowDrafts[sh.id]) await onSaveOutboundRow(sh.id, { quiet: true });
+    setSavingShippingAll(true);
+    try {
+      for (const sh of outboundRowsForUi) {
+        if (outboundRowDrafts[sh.id]) await onSaveOutboundRow(sh.id, { quiet: true });
+      }
+      const nextOutbound = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? outboundRowsForUi;
+      const persistence = await persistOutboundDurably(nextOutbound);
+      if (persistence.durable && persistence.supabaseOk) {
+        setOutboundPersistStatus("durable");
+      } else if (persistence.durable && !persistence.supabaseOk) {
+        setOutboundPersistStatus("durable_warn");
+      } else {
+        setOutboundPersistStatus("fail");
+      }
+      setShippingMatrixEdit(false);
+      toast.success("Отгрузки сохранены");
+    } finally {
+      setSavingShippingAll(false);
     }
-    setShippingMatrixEdit(false);
-    toast.success("Отгрузки сохранены");
   };
 
   const cancelShippingMatrixEdit = () => {
@@ -913,32 +928,21 @@ const LegalEntityDetailsPage = () => {
     });
   };
 
+  const setShipmentDraftField = (shipmentId: string, patch: Partial<OutboundRowDraft>) => {
+    setOutboundRowDrafts((s) => {
+      const cur = s[shipmentId];
+      if (cur) return { ...s, [shipmentId]: { ...cur, ...patch } };
+      const source = outboundRowsForUi.find((x) => x.id === shipmentId);
+      if (!source) return s;
+      return { ...s, [shipmentId]: { ...outboundToDraft(source), ...patch } };
+    });
+  };
+
   const effOutboundPlanned = (sh: OutboundShipment) =>
     Number(outboundRowDrafts[sh.id]?.plannedUnits ?? sh.plannedUnits) || 0;
   const effOutboundFact = (sh: OutboundShipment) =>
     Number(outboundRowDrafts[sh.id]?.factualUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
 
-  const autoSaveOutboundQty = (shipmentId: string, field: "plan" | "fact", raw: string) => {
-    const value = String(Math.max(0, Number(raw) || 0));
-    setOutboundRowDrafts((s) => {
-      const cur = s[shipmentId];
-      if (!cur) return s;
-      return {
-        ...s,
-        [shipmentId]: {
-          ...cur,
-          plannedUnits: field === "plan" ? value : cur.plannedUnits,
-          factualUnits: field === "fact" ? value : cur.factualUnits,
-        },
-      };
-    });
-    if (field === "plan") {
-      void updateOutboundDraft({ id: shipmentId, patch: { plannedUnits: Number(value) || 0 } });
-      return;
-    }
-    const fact = Number(value) || 0;
-    void updateOutboundDraft({ id: shipmentId, patch: { packedUnits: fact, shippedUnits: fact } });
-  };
 
   const beepError = () => {
     if (typeof window === "undefined") return;
@@ -2444,10 +2448,10 @@ const LegalEntityDetailsPage = () => {
                 </Button>
               ) : (
                 <>
-                  <Button size="sm" onClick={() => void handleSaveAllInboundDrafts()} disabled={isUpdatingInbound}>
-                    {isUpdatingInbound ? "Сохранение..." : "Сохранить всё"}
+                  <Button size="sm" onClick={() => void handleSaveAllInboundDrafts()} disabled={savingInboundAll || isUpdatingInboundDraft}>
+                    {savingInboundAll || isUpdatingInboundDraft ? "Сохранение..." : "Сохранить всё"}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => cancelInboundMatrixEdit()} disabled={isUpdatingInbound}>
+                  <Button variant="outline" size="sm" onClick={() => cancelInboundMatrixEdit()} disabled={savingInboundAll || isUpdatingInboundDraft}>
                     Отмена
                   </Button>
                 </>
@@ -2697,28 +2701,30 @@ const LegalEntityDetailsPage = () => {
                               )}
                             </td>
                             <td className={`${cellBase} text-center tabular-nums font-medium`}>
-                              <Input
-                                type="number"
-                                min={0}
-                                className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
-                                value={String(effInboundPlanned(soleRef?.inboundId ?? "", soleRef?.rowIndex ?? 0))}
-                                onChange={(e) => {
-                                  if (!soleRef) return;
-                                  autoSaveInboundQty(soleRef, "plan", e.target.value);
-                                }}
-                              />
+                              {inboundMatrixEdit && soleRef ? (
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                  value={String(effInboundPlanned(soleRef.inboundId, soleRef.rowIndex))}
+                                  onChange={(e) => setInboundDraftPlanned(soleRef.rowId, e.target.value)}
+                                />
+                              ) : (
+                                line.totalPlan
+                              )}
                             </td>
                             <td className={`${cellBase} text-center tabular-nums`}>
-                              <Input
-                                type="number"
-                                min={0}
-                                className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
-                                value={String(effInboundFactual(soleRef?.inboundId ?? "", soleRef?.rowIndex ?? 0))}
-                                onChange={(e) => {
-                                  if (!soleRef) return;
-                                  autoSaveInboundQty(soleRef, "fact", e.target.value);
-                                }}
-                              />
+                              {inboundMatrixEdit && soleRef ? (
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                  value={String(effInboundFactual(soleRef.inboundId, soleRef.rowIndex))}
+                                  onChange={(e) => setInboundDraftFactual(soleRef.rowId, e.target.value)}
+                                />
+                              ) : (
+                                line.totalFact
+                              )}
                             </td>
                             <td className={`${cellBase} text-center font-medium ${statusCell}`}>{statusText}</td>
                           </tr>
@@ -2883,10 +2889,10 @@ const LegalEntityDetailsPage = () => {
                 </Button>
               ) : (
                 <>
-                  <Button onClick={() => void handleSaveAllShippingDrafts()} disabled={isUpdatingOutbound}>
-                    {isUpdatingOutbound ? "Сохранение..." : "Сохранить всё"}
+                  <Button onClick={() => void handleSaveAllShippingDrafts()} disabled={savingShippingAll || isUpdatingOutboundDraft}>
+                    {savingShippingAll || isUpdatingOutboundDraft ? "Сохранение..." : "Сохранить всё"}
                   </Button>
-                  <Button variant="outline" onClick={() => cancelShippingMatrixEdit()} disabled={isUpdatingOutbound}>
+                  <Button variant="outline" onClick={() => cancelShippingMatrixEdit()} disabled={savingShippingAll || isUpdatingOutboundDraft}>
                     Отмена
                   </Button>
                 </>
@@ -3142,22 +3148,30 @@ const LegalEntityDetailsPage = () => {
                                 )}
                               </td>
                               <td className={`${cellBase} text-center tabular-nums font-medium ${diffPlanFact}`}>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  className="mx-auto h-7 w-[80px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
-                                  value={String(totalPlanDraft)}
-                                  onChange={(e) => autoSaveOutboundQty(line.leaderShipmentId, "plan", e.target.value)}
-                                />
+                                {shippingMatrixEdit ? (
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    className="mx-auto h-7 w-[80px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                    value={ld?.plannedUnits ?? String(totalPlanDraft)}
+                                    onChange={(e) => setShipmentDraftField(line.leaderShipmentId, { plannedUnits: e.target.value })}
+                                  />
+                                ) : (
+                                  totalPlanDraft
+                                )}
                               </td>
                               <td className={`${cellBase} text-center tabular-nums ${diffPlanFact}`}>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  className="mx-auto h-7 w-[80px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
-                                  value={String(totalFactDraft)}
-                                  onChange={(e) => autoSaveOutboundQty(line.leaderShipmentId, "fact", e.target.value)}
-                                />
+                                {shippingMatrixEdit ? (
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    className="mx-auto h-7 w-[80px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                    value={ld?.factualUnits ?? String(totalFactDraft)}
+                                    onChange={(e) => setShipmentDraftField(line.leaderShipmentId, { factualUnits: e.target.value })}
+                                  />
+                                ) : (
+                                  totalFactDraft
+                                )}
                               </td>
                               {shippingMatrix.warehouses.map((wh) => {
                                 const cell = line.byWarehouse.get(wh);
