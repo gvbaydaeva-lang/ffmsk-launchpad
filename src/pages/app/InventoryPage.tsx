@@ -24,6 +24,16 @@ const sourceLabel: Record<InventoryMovement["source"], string> = {
   shipping: "Отгрузка",
 };
 
+const movementTypeLabel: Record<InventoryMovement["type"], string> = {
+  INBOUND: "Приёмка",
+  OUTBOUND: "Отгрузка",
+};
+
+const movementTypeClass: Record<InventoryMovement["type"], string> = {
+  INBOUND: "text-emerald-700",
+  OUTBOUND: "text-red-600",
+};
+
 function mpDisplay(mp: string): string {
   const m = mp.trim().toLowerCase();
   if (m === "wb") return "WB";
@@ -241,7 +251,9 @@ const InventoryPage = () => {
                       <TableCell className="whitespace-nowrap px-2 py-1 tabular-nums">
                         {format(parseISO(m.createdAt), "dd.MM.yyyy HH:mm", { locale: ru })}
                       </TableCell>
-                      <TableCell className="px-2 py-1 font-mono">{m.type}</TableCell>
+                      <TableCell className={`px-2 py-1 font-medium ${movementTypeClass[m.type]}`}>
+                        {movementTypeLabel[m.type]}
+                      </TableCell>
                       <TableCell className="px-2 py-1">{m.taskNumber}</TableCell>
                       <TableCell className="max-w-[120px] truncate px-2 py-1">{m.legalEntityName}</TableCell>
                       <TableCell className="max-w-[100px] truncate px-2 py-1">{m.warehouseName ?? "—"}</TableCell>
