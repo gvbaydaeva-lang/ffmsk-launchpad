@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
+import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import type { OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
@@ -21,8 +22,11 @@ type PackingAssignment = { id: string; display: string; legalEntityId: string; s
 
 type ScanLine = {
   key: string;
+  name: string;
   barcode: string;
   article: string;
+  marketplace: "wb" | "ozon" | "yandex";
+  warehouse: string;
   color: string;
   size: string;
   plan: number;
@@ -129,6 +133,7 @@ const PackingPage = () => {
     for (const sh of startedAssignment.shipments) {
       const product = byProduct.get(sh.productId) ?? null;
       const article = (sh.importArticle || product?.supplierArticle || "").trim();
+      const name = (sh.importName || product?.name || "").trim();
       const color = (sh.importColor || product?.color || "").trim();
       const size = (sh.importSize || product?.size || "").trim();
       const barcode = (sh.importBarcode || product?.barcode || "").trim();
@@ -139,8 +144,11 @@ const PackingPage = () => {
       if (!existing) {
         lineMap.set(lineKey, {
           key: lineKey,
+          name,
           barcode,
           article,
+          marketplace: sh.marketplace,
+          warehouse: sh.sourceWarehouse || "—",
           color,
           size,
           plan,
@@ -159,7 +167,8 @@ const PackingPage = () => {
   const progress = React.useMemo(() => {
     const totalPlan = scanLines.reduce((sum, line) => sum + line.plan, 0);
     const totalFact = scanLines.reduce((sum, line) => sum + line.fact, 0);
-    return { totalPlan, totalFact, percent: totalPlan > 0 ? Math.min(100, Math.round((totalFact / totalPlan) * 100)) : 0 };
+    const remaining = Math.max(0, totalPlan - totalFact);
+    return { totalPlan, totalFact, remaining, percent: totalPlan > 0 ? Math.min(100, Math.round((totalFact / totalPlan) * 100)) : 0 };
   }, [scanLines]);
 
   const triggerFlash = React.useCallback((kind: "ok" | "error") => {
@@ -199,19 +208,26 @@ const PackingPage = () => {
   const applyScan = async () => {
     const code = scanValue.trim();
     if (!code || !startedAssignment) return;
-    const line = scanLines.find((x) => x.barcode && x.barcode === code && x.fact < x.plan);
-    if (!line) {
+    const lineByBarcode = scanLines.find((x) => x.barcode && x.barcode === code);
+    if (!lineByBarcode) {
       triggerFlash("error");
       playErrorSignal();
-      toast.error("Штрихкод не найден в задании или план уже выполнен.");
+      toast.error("Товар не найден в задании");
       focusScanInput();
       return;
     }
-    const target = line.shipmentRefs.find((r) => r.fact < r.plan);
+    if (lineByBarcode.fact >= lineByBarcode.plan) {
+      triggerFlash("error");
+      playErrorSignal();
+      toast.error("Количество по товару уже выполнено");
+      focusScanInput();
+      return;
+    }
+    const target = lineByBarcode.shipmentRefs.find((r) => r.fact < r.plan);
     if (!target) {
       triggerFlash("error");
       playErrorSignal();
-      toast.error("Для позиции нет доступного остатка по плану.");
+      toast.error("Количество по товару уже выполнено");
       focusScanInput();
       return;
     }
@@ -231,7 +247,7 @@ const PackingPage = () => {
       setScanValue("");
       triggerFlash("ok");
       focusScanInput();
-      toast.success(`Пик принят: ${line.article || line.barcode}`);
+      toast.success(`Пик принят: ${lineByBarcode.article || lineByBarcode.barcode}`);
     } finally {
       setIsSubmittingScan(false);
     }
@@ -287,6 +303,18 @@ const PackingPage = () => {
     }
     setStartedAssignmentId(assignment.id);
   };
+
+  const startedFirst = startedAssignment?.shipments[0] ?? null;
+  const startedAssignmentNo =
+    startedFirst?.assignmentNo?.trim() || startedFirst?.assignmentId?.trim() || startedFirst?.id || "—";
+  const startedLegalName = startedAssignment
+    ? legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId
+    : "—";
+  const startedCreatedLabel = startedFirst?.createdAt
+    ? format(parseISO(startedFirst.createdAt), "dd.MM.yyyy HH:mm", { locale: ru })
+    : "—";
+  const startedWarehouse = startedFirst?.sourceWarehouse ?? "—";
+  const startedStatus = startedAssignment ? normalizeWorkflowStatus(startedAssignment.workflowStatus) : "pending";
 
   return (
     <div
@@ -392,10 +420,20 @@ const PackingPage = () => {
       {startedAssignment ? (
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle className="text-base">Режим сканирования</CardTitle>
-            <CardDescription>{startedAssignment.display}</CardDescription>
+            <CardTitle className="text-base">Рабочий экран задания</CardTitle>
+            <CardDescription>Сканирование и сборка выбранного задания</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm md:grid-cols-5">
+              <div><span className="text-slate-500">№ задания:</span><div className="font-medium text-slate-900">{startedAssignmentNo}</div></div>
+              <div><span className="text-slate-500">Юрлицо:</span><div className="font-medium text-slate-900">{startedLegalName}</div></div>
+              <div><span className="text-slate-500">Склад:</span><div className="font-medium text-slate-900">{startedWarehouse}</div></div>
+              <div>
+                <span className="text-slate-500">Статус:</span>
+                <div className="mt-0.5"><StatusBadge status={startedStatus} /></div>
+              </div>
+              <div><span className="text-slate-500">Дата создания:</span><div className="font-medium text-slate-900">{startedCreatedLabel}</div></div>
+            </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 ref={scanInputRef}
@@ -403,6 +441,7 @@ const PackingPage = () => {
                 value={scanValue}
                 onChange={(e) => setScanValue(e.target.value)}
                 className="h-14 text-xl"
+                onBlur={() => focusScanInput()}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -422,7 +461,9 @@ const PackingPage = () => {
             </div>
             <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
               <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-slate-900">Собрано {progress.totalFact} из {progress.totalPlan}</span>
+                <span className="font-medium text-slate-900">
+                  План {progress.totalPlan} · Факт {progress.totalFact} · Осталось {progress.remaining}
+                </span>
                 <span className="text-slate-600">{progress.percent}%</span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
@@ -434,23 +475,54 @@ const PackingPage = () => {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-100">
                   <tr>
+                    <th className="border-b border-r px-3 py-2 text-left font-medium">Название</th>
                     <th className="border-b border-r px-3 py-2 text-left font-medium">Артикул</th>
+                    <th className="border-b border-r px-3 py-2 text-left font-medium">Баркод</th>
+                    <th className="border-b border-r px-3 py-2 text-left font-medium">Маркетплейс</th>
                     <th className="border-b border-r px-3 py-2 text-left font-medium">Цвет</th>
                     <th className="border-b border-r px-3 py-2 text-left font-medium">Размер</th>
                     <th className="border-b border-r px-3 py-2 text-right font-medium">План</th>
-                    <th className="border-b px-3 py-2 text-right font-medium">Факт</th>
+                    <th className="border-b border-r px-3 py-2 text-right font-medium">Факт</th>
+                    <th className="border-b border-r px-3 py-2 text-right font-medium">Осталось</th>
+                    <th className="border-b px-3 py-2 text-left font-medium">Статус строки</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {scanLines.map((line) => (
-                    <tr key={line.key} className={`odd:bg-white even:bg-slate-50/50 ${line.plan !== line.fact ? "bg-red-50/60" : ""}`}>
+                  {scanLines.map((line) => {
+                    const remaining = line.plan - line.fact;
+                    const isError = line.fact > line.plan;
+                    const rowStatus = isError
+                      ? "Ошибка"
+                      : line.fact === 0
+                        ? "Не начато"
+                        : line.fact < line.plan
+                          ? "В процессе"
+                          : "Готово";
+                    const rowStatusClass = isError
+                      ? "bg-red-100 text-red-700 ring-red-200"
+                      : line.fact === 0
+                        ? "bg-slate-100 text-slate-700 ring-slate-200"
+                        : line.fact < line.plan
+                          ? "bg-violet-100 text-violet-700 ring-violet-200"
+                          : "bg-emerald-100 text-emerald-700 ring-emerald-200";
+                    return (
+                    <tr key={line.key} className={`odd:bg-white even:bg-slate-50/50 ${isError ? "bg-red-50/80" : ""}`}>
+                      <td className="border-b border-r px-3 py-2">{line.name || "—"}</td>
                       <td className="border-b border-r px-3 py-2">{line.article || "—"}</td>
+                      <td className="border-b border-r px-3 py-2 font-mono text-xs">{line.barcode || "—"}</td>
+                      <td className="border-b border-r px-3 py-2">{line.marketplace.toUpperCase()}</td>
                       <td className="border-b border-r px-3 py-2">{line.color || "—"}</td>
                       <td className="border-b border-r px-3 py-2">{line.size || "—"}</td>
                       <td className="border-b border-r px-3 py-2 text-right tabular-nums">{line.plan}</td>
-                      <td className="border-b px-3 py-2 text-right tabular-nums">{line.fact}</td>
+                      <td className="border-b border-r px-3 py-2 text-right tabular-nums">{line.fact}</td>
+                      <td className={`border-b border-r px-3 py-2 text-right tabular-nums ${remaining !== 0 ? "font-medium text-red-700" : ""}`}>
+                        {Math.max(0, remaining)}
+                      </td>
+                      <td className="border-b px-3 py-2">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${rowStatusClass}`}>{rowStatus}</span>
+                      </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
@@ -463,14 +535,16 @@ const PackingPage = () => {
                 onClick={() => void finalizeAssignment()}
                 disabled={isUpdatingOutboundDraft || isUpdatingOutbound || progress.totalPlan === 0 || progress.totalPlan !== progress.totalFact}
               >
-                Завершить отгрузку
+                Завершить задание
               </Button>
               {progress.totalPlan !== progress.totalFact ? (
-                <p className="text-sm font-medium text-red-600">Не все товары обработаны</p>
+                <p className="text-sm font-medium text-red-600">
+                  Не все товары обработаны. Осталось: {progress.remaining}
+                </p>
               ) : null}
             </div>
             <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>
-              Вернуться к списку заданий
+              Назад к списку
             </Button>
           </CardContent>
         </Card>
