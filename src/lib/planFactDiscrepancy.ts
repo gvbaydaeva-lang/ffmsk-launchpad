@@ -32,3 +32,19 @@ export function planFactRowBgClass(plan: number, fact: number): string {
   if (st === "surplus" || st === "error") return "bg-red-50/90";
   return "";
 }
+
+export function planFactLineStatusLabel(plan: number, fact: number): string {
+  const st = planFactLineStatus(plan, fact);
+  if (st === "ok") return "Ок";
+  if (st === "short") return "Не хватает";
+  if (st === "surplus") return "Лишнее";
+  return "Ошибка";
+}
+
+export function planFactLineBadgeClass(plan: number, fact: number): string {
+  const st = planFactLineStatus(plan, fact);
+  if (st === "ok") return "bg-emerald-100 text-emerald-800 ring-emerald-200";
+  if (st === "short") return "bg-amber-100 text-amber-900 ring-amber-200";
+  if (st === "surplus") return "bg-red-100 text-red-800 ring-red-200";
+  return "bg-slate-200 text-slate-800 ring-slate-300";
+}

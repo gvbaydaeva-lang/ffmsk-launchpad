@@ -10,7 +10,8 @@ import type { InboundLineItem, InboundSupply } from "@/types/domain";
 import { workflowFromInbound } from "@/lib/taskWorkflowUi";
 import {
   planFactDiscrepancyText,
-  planFactLineStatus,
+  planFactLineBadgeClass,
+  planFactLineStatusLabel,
   planFactOverrun,
   planFactRemaining,
   planFactRowBgClass,
@@ -27,22 +28,6 @@ type Props = {
   onComplete: () => Promise<void>;
   onScanError?: (code: string, kind: "unknown" | "over") => void;
 };
-
-function lineStatusLabel(plan: number, fact: number): string {
-  const st = planFactLineStatus(plan, fact);
-  if (st === "ok") return "Ок";
-  if (st === "short") return "Не хватает";
-  if (st === "surplus") return "Лишнее";
-  return "Ошибка";
-}
-
-function lineStatusBadgeClass(plan: number, fact: number): string {
-  const st = planFactLineStatus(plan, fact);
-  if (st === "ok") return "bg-emerald-100 text-emerald-800 ring-emerald-200";
-  if (st === "short") return "bg-amber-100 text-amber-900 ring-amber-200";
-  if (st === "surplus") return "bg-red-100 text-red-800 ring-red-200";
-  return "bg-slate-200 text-slate-800 ring-slate-300";
-}
 
 export default function ReceivingTaskWorkScreen({
   supply,
@@ -262,9 +247,9 @@ export default function ReceivingTaskWorkScreen({
                     <td className="border-b border-r px-2 py-1.5 text-xs text-slate-700">{disc ?? "—"}</td>
                     <td className="border-b px-2 py-1.5">
                       <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineStatusBadgeClass(plan, fact)}`}
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${planFactLineBadgeClass(plan, fact)}`}
                       >
-                        {lineStatusLabel(plan, fact)}
+                        {planFactLineStatusLabel(plan, fact)}
                       </span>
                     </td>
                   </tr>

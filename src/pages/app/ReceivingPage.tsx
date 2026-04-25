@@ -331,6 +331,19 @@ const ReceivingPage = () => {
           onStartReceiving={() => startReceiving(startedSupply)}
           onSaveItems={(items) => saveSupplyItems(startedSupply, items)}
           onComplete={() => closeReceiving()}
+          onScanError={(code, kind) => {
+            appendOperationLog({
+              type: "SCAN_ERROR",
+              legalEntityId: startedSupply.legalEntityId,
+              legalEntityName: entityName(startedSupply.legalEntityId),
+              taskId: startedSupply.id,
+              taskNumber: startedSupply.documentNo,
+              description:
+                kind === "over"
+                  ? `Ошибка сканирования (превышение по штрихкоду ${code})`
+                  : `Ошибка сканирования (штрихкод ${code})`,
+            });
+          }}
         />
       ) : null}
     </div>

@@ -25,6 +25,14 @@ import type { InventoryMovement, OutboundShipment, TaskWorkflowStatus } from "@/
 import {
   normalizeWorkflowStatus,
 } from "@/lib/taskWorkflowUi";
+import {
+  planFactDiscrepancyText,
+  planFactLineBadgeClass,
+  planFactLineStatusLabel,
+  planFactOverrun,
+  planFactRemaining,
+  planFactRowBgClass,
+} from "@/lib/planFactDiscrepancy";
 import { toast } from "sonner";
 
 type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
@@ -179,8 +187,20 @@ const PackingPage = () => {
     const totalPlan = scanLines.reduce((sum, line) => sum + line.plan, 0);
     const totalFact = scanLines.reduce((sum, line) => sum + line.fact, 0);
     const remaining = Math.max(0, totalPlan - totalFact);
-    return { totalPlan, totalFact, remaining, percent: totalPlan > 0 ? Math.min(100, Math.round((totalFact / totalPlan) * 100)) : 0 };
+    const overrun = Math.max(0, totalFact - totalPlan);
+    return {
+      totalPlan,
+      totalFact,
+      remaining,
+      overrun,
+      percent: totalPlan > 0 ? Math.min(100, Math.round((totalFact / totalPlan) * 100)) : 0,
+    };
   }, [scanLines]);
+
+  const taskNeedsReview = React.useMemo(
+    () => progress.totalPlan > 0 && scanLines.some((line) => line.plan !== line.fact),
+    [scanLines, progress.totalPlan],
+  );
 
   const triggerFlash = React.useCallback((kind: "ok" | "error") => {
     setFlashState(kind);
@@ -223,6 +243,20 @@ const PackingPage = () => {
     if (!lineByBarcode) {
       triggerFlash("error");
       playErrorSignal();
+      const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const noErr =
+        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
+        startedAssignment.shipments[0]?.assignmentId?.trim() ||
+        startedAssignment.shipments[0]?.id ||
+        "—";
+      appendOperationLog({
+        type: "SCAN_ERROR",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: leNameErr,
+        taskId: startedAssignment.id,
+        taskNumber: noErr,
+        description: `Ошибка сканирования (штрихкод ${code})`,
+      });
       toast.error("Товар не найден в задании");
       focusScanInput();
       return;
@@ -230,6 +264,20 @@ const PackingPage = () => {
     if (lineByBarcode.fact >= lineByBarcode.plan) {
       triggerFlash("error");
       playErrorSignal();
+      const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const noErr =
+        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
+        startedAssignment.shipments[0]?.assignmentId?.trim() ||
+        startedAssignment.shipments[0]?.id ||
+        "—";
+      appendOperationLog({
+        type: "SCAN_ERROR",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: leNameErr,
+        taskId: startedAssignment.id,
+        taskNumber: noErr,
+        description: `Ошибка сканирования (превышение по штрихкоду ${code})`,
+      });
       toast.error("Количество по товару уже выполнено");
       focusScanInput();
       return;
@@ -279,7 +327,7 @@ const PackingPage = () => {
   };
 
   const finalizeAssignment = async () => {
-    if (!startedAssignment || progress.totalPlan === 0 || progress.totalPlan !== progress.totalFact) return;
+    if (!startedAssignment || progress.totalPlan === 0) return;
     const taskId = startedAssignment.id;
     const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
     if (hasTaskMovements(taskId, "OUTBOUND", invSnapshot)) {
@@ -299,7 +347,9 @@ const PackingPage = () => {
       const size = (sh.importSize || product?.size || "").trim() || "—";
       const wh = (sh.sourceWarehouse || "").trim() || "—";
       const plan = Number(sh.plannedUnits) || 0;
-      if (plan <= 0) continue;
+      const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+      const shipQty = Math.min(packed, plan);
+      if (shipQty <= 0) continue;
       const key = makeInventoryBalanceKey({
         legalEntityId: sh.legalEntityId,
         warehouseName: wh,
@@ -310,7 +360,7 @@ const PackingPage = () => {
       });
       const prev = needByKey.get(key);
       needByKey.set(key, {
-        need: (prev?.need ?? 0) + plan,
+        need: (prev?.need ?? 0) + shipQty,
         label: name,
       });
     }
@@ -325,10 +375,24 @@ const PackingPage = () => {
       toast.error("Недостаточно товара на остатке", { description: shortages.join("\n") });
       return;
     }
+    const totalShipQty = startedAssignment.shipments.reduce((s, sh) => {
+      const plan = Number(sh.plannedUnits) || 0;
+      const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+      return s + Math.min(packed, plan);
+    }, 0);
+    if (totalShipQty <= 0) {
+      toast.error("Нет количества для завершения", { description: "Отсканируйте товар по заданию." });
+      return;
+    }
     const firstSh = startedAssignment.shipments[0];
     const assignmentNo = firstSh?.assignmentNo?.trim() || firstSh?.assignmentId?.trim() || firstSh?.id || "—";
     const leName = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
     const ts = new Date().toISOString();
+    const hasDiscrepancy = startedAssignment.shipments.some((sh) => {
+      const p = Number(sh.plannedUnits) || 0;
+      const f = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+      return p !== f;
+    });
     try {
       const moves: InventoryMovement[] = startedAssignment.shipments
         .map((sh) => {
@@ -340,7 +404,9 @@ const PackingPage = () => {
           const size = (sh.importSize || product?.size || "").trim() || "—";
           const wh = (sh.sourceWarehouse || "").trim() || "—";
           const plan = Number(sh.plannedUnits) || 0;
-          if (plan <= 0) return null;
+          const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+          const shipQty = Math.min(packed, plan);
+          if (shipQty <= 0) return null;
           return {
             id: `im-out-${sh.id}`,
             type: "OUTBOUND" as const,
@@ -357,7 +423,7 @@ const PackingPage = () => {
             marketplace: sh.marketplace.toUpperCase(),
             color,
             size,
-            qty: -plan,
+            qty: -shipQty,
             createdAt: ts,
             source: "packing" as const,
           };
@@ -368,23 +434,46 @@ const PackingPage = () => {
       }
       for (const sh of startedAssignment.shipments) {
         const plan = Number(sh.plannedUnits) || 0;
+        const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+        const shipQty = Math.min(packed, plan);
         await updateOutboundDraft({
           id: sh.id,
-          patch: { packedUnits: plan, shippedUnits: plan, workflowStatus: "completed" },
+          patch: {
+            packedUnits: shipQty,
+            shippedUnits: shipQty,
+            workflowStatus: "completed",
+            completedWithDiscrepancies: plan !== packed,
+          },
         });
-        await setOutboundStatus({ id: sh.id, status: "отгружено", shippedUnits: plan });
+        await setOutboundStatus({ id: sh.id, status: "отгружено", shippedUnits: shipQty });
       }
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
+      if (hasDiscrepancy) {
+        appendOperationLog({
+          type: "ERROR_DETECTED",
+          legalEntityId: startedAssignment.legalEntityId,
+          legalEntityName: leName,
+          taskId,
+          taskNumber: assignmentNo,
+          description: `Обнаружено расхождение в задании №${assignmentNo}`,
+        });
+      }
       appendOperationLog({
         type: "PACKING_COMPLETED",
         legalEntityId: startedAssignment.legalEntityId,
         legalEntityName: leName,
         taskId,
         taskNumber: assignmentNo,
-        description: `Задание №${assignmentNo} завершено`,
+        description: hasDiscrepancy
+          ? `Задание №${assignmentNo} завершено с расхождениями`
+          : `Задание №${assignmentNo} завершено`,
       });
-      toast.success("Задание завершено и убрано из активных.");
+      if (hasDiscrepancy) {
+        toast.warning("Задание завершено с расхождениями", { description: "Проверьте план и факт по строкам." });
+      } else {
+        toast.success("Задание завершено и убрано из активных.");
+      }
       setStartedAssignmentId(null);
     } catch {
       toast.error("Не удалось завершить задание. Повторите попытку.");
@@ -517,6 +606,11 @@ const PackingPage = () => {
                   const totalPlan = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.plannedUnits) || 0), 0);
                   const totalFact = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0), 0);
                   const wf = normalizeWorkflowStatus(assignment.workflowStatus);
+                  const overrun = Math.max(0, totalFact - totalPlan);
+                  const requiresReview = totalPlan > 0 && totalPlan !== totalFact;
+                  const mismatch =
+                    wf === "completed" &&
+                    (totalPlan !== totalFact || assignment.shipments.some((s) => Boolean(s.completedWithDiscrepancies)));
                   return {
                     id: assignment.id,
                     createdAtLabel: dateLabel,
@@ -528,7 +622,9 @@ const PackingPage = () => {
                     plan: totalPlan,
                     fact: totalFact,
                     isNew: wf === "pending",
-                    mismatch: wf === "completed" && totalPlan !== totalFact,
+                    requiresReview,
+                    mismatch,
+                    overrun,
                   };
                 })}
                 onOpen={(id) => {
@@ -560,7 +656,9 @@ const PackingPage = () => {
               <div><span className="text-slate-500">Склад:</span><div className="font-medium text-slate-900">{startedWarehouse}</div></div>
               <div>
                 <span className="text-slate-500">Статус:</span>
-                <div className="mt-0.5"><StatusBadge status={startedStatus} /></div>
+                <div className="mt-0.5">
+                  <StatusBadge status={startedStatus} requiresReview={taskNeedsReview} />
+                </div>
               </div>
               <div><span className="text-slate-500">Дата создания:</span><div className="font-medium text-slate-900">{startedCreatedLabel}</div></div>
             </div>
@@ -590,9 +688,10 @@ const PackingPage = () => {
               </Button>
             </div>
             <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="font-medium text-slate-900">
                   План {progress.totalPlan} · Факт {progress.totalFact} · Осталось {progress.remaining}
+                  {progress.overrun > 0 ? ` · Перерасход ${progress.overrun}` : null}
                 </span>
                 <span className="text-slate-600">{progress.percent}%</span>
               </div>
@@ -605,51 +704,47 @@ const PackingPage = () => {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Название</th>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Артикул</th>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Баркод</th>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Маркетплейс</th>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Цвет</th>
-                    <th className="border-b border-r px-3 py-2 text-left font-medium">Размер</th>
-                    <th className="border-b border-r px-3 py-2 text-right font-medium">План</th>
-                    <th className="border-b border-r px-3 py-2 text-right font-medium">Факт</th>
-                    <th className="border-b border-r px-3 py-2 text-right font-medium">Осталось</th>
-                    <th className="border-b px-3 py-2 text-left font-medium">Статус строки</th>
+                    <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
+                    <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Артикул</th>
+                    <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
+                    <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">МП</th>
+                    <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Цвет</th>
+                    <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Размер</th>
+                    <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
+                    <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Факт</th>
+                    <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Осталось</th>
+                    <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Перерасход</th>
+                    <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Расхождение</th>
+                    <th className="border-b px-2 py-1.5 text-left text-xs font-medium">Статус</th>
                   </tr>
                 </thead>
                 <tbody>
                   {scanLines.map((line) => {
-                    const remaining = line.plan - line.fact;
-                    const isError = line.fact > line.plan;
-                    const rowStatus = isError
-                      ? "Ошибка"
-                      : line.fact === 0
-                        ? "Не начато"
-                        : line.fact < line.plan
-                          ? "В процессе"
-                          : "Готово";
-                    const rowStatusClass = isError
-                      ? "bg-red-100 text-red-700 ring-red-200"
-                      : line.fact === 0
-                        ? "bg-slate-100 text-slate-700 ring-slate-200"
-                        : line.fact < line.plan
-                          ? "bg-violet-100 text-violet-700 ring-violet-200"
-                          : "bg-emerald-100 text-emerald-700 ring-emerald-200";
+                    const rem = planFactRemaining(line.plan, line.fact);
+                    const over = planFactOverrun(line.plan, line.fact);
+                    const disc = planFactDiscrepancyText(line.plan, line.fact);
+                    const rowBg = planFactRowBgClass(line.plan, line.fact);
                     return (
-                    <tr key={line.key} className={`odd:bg-white even:bg-slate-50/50 ${isError ? "bg-red-50/80" : ""}`}>
-                      <td className="border-b border-r px-3 py-2">{line.name || "—"}</td>
-                      <td className="border-b border-r px-3 py-2">{line.article || "—"}</td>
-                      <td className="border-b border-r px-3 py-2 font-mono text-xs">{line.barcode || "—"}</td>
-                      <td className="border-b border-r px-3 py-2">{line.marketplace.toUpperCase()}</td>
-                      <td className="border-b border-r px-3 py-2">{line.color || "—"}</td>
-                      <td className="border-b border-r px-3 py-2">{line.size || "—"}</td>
-                      <td className="border-b border-r px-3 py-2 text-right tabular-nums">{line.plan}</td>
-                      <td className="border-b border-r px-3 py-2 text-right tabular-nums">{line.fact}</td>
-                      <td className={`border-b border-r px-3 py-2 text-right tabular-nums ${remaining !== 0 ? "font-medium text-red-700" : ""}`}>
-                        {Math.max(0, remaining)}
+                    <tr key={line.key} className={`odd:bg-white even:bg-slate-50/50 ${rowBg}`}>
+                      <td className="border-b border-r px-2 py-1.5 text-xs">{line.name || "—"}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-xs">{line.article || "—"}</td>
+                      <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{line.barcode || "—"}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-xs">{line.marketplace.toUpperCase()}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-xs">{line.color || "—"}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-xs">{line.size || "—"}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{line.plan}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{line.fact}</td>
+                      <td className={`border-b border-r px-2 py-1.5 text-right tabular-nums text-xs ${rem > 0 ? "font-medium text-amber-800" : ""}`}>
+                        {rem}
                       </td>
-                      <td className="border-b px-3 py-2">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${rowStatusClass}`}>{rowStatus}</span>
+                      <td className={`border-b border-r px-2 py-1.5 text-right tabular-nums text-xs ${over > 0 ? "font-medium text-red-700" : ""}`}>
+                        {over}
+                      </td>
+                      <td className="border-b border-r px-2 py-1.5 text-xs text-slate-700">{disc ?? "—"}</td>
+                      <td className="border-b px-2 py-1.5">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${planFactLineBadgeClass(line.plan, line.fact)}`}>
+                          {planFactLineStatusLabel(line.plan, line.fact)}
+                        </span>
                       </td>
                     </tr>
                   )})}
@@ -663,14 +758,16 @@ const PackingPage = () => {
                 variant="ghost"
                 className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
                 onClick={() => void finalizeAssignment()}
-                disabled={isUpdatingOutboundDraft || isUpdatingOutbound || progress.totalPlan === 0 || progress.totalPlan !== progress.totalFact}
+                disabled={isUpdatingOutboundDraft || isUpdatingOutbound || progress.totalPlan === 0}
               >
                 Завершить задание
               </Button>
-              {progress.totalPlan !== progress.totalFact ? (
-                <p className="text-sm font-medium text-red-600">
-                  Не все товары обработаны. Осталось: {progress.remaining}
+              {taskNeedsReview ? (
+                <p className="text-xs font-medium text-amber-800">
+                  Есть расхождения план/факт. Завершение доступно с предупреждением; со склада спишется min(план, факт) по строке.
                 </p>
+              ) : progress.totalFact < progress.totalPlan ? (
+                <p className="text-xs text-slate-600">Осталось отсканировать: {progress.remaining} шт.</p>
               ) : null}
             </div>
             <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>
