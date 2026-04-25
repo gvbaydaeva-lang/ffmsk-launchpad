@@ -110,6 +110,8 @@ export type InboundSupply = {
   status: "ожидается" | "на приёмке" | "принято";
   workflowStatus?: TaskWorkflowStatus;
   eta: string;
+  /** Закрыто при план ≠ факт (для метки «Требует проверки») */
+  completedWithDiscrepancies?: boolean;
 };
 
 export type InboundLineItem = {
@@ -236,6 +238,8 @@ export type OutboundShipment = {
   shippedUnits: number | null;
   status: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено";
   workflowStatus?: TaskWorkflowStatus;
+  /** Завершено при план ≠ факт по строке */
+  completedWithDiscrepancies?: boolean;
   boxes?: Array<{
     id: string;
     clientBoxBarcode: string;

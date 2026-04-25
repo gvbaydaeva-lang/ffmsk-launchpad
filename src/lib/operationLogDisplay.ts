@@ -8,6 +8,8 @@ const shortStatusByType: Record<string, string> = {
   PACKING_COMPLETED: "Завершено",
   INVENTORY_CHANGED: "Остатки",
   ITEM_SCANNED: "Сканирование",
+  ERROR_DETECTED: "Ошибка",
+  SCAN_ERROR: "Скан",
 };
 
 export function formatOperationLogShortStatus(type: string): string {
@@ -33,6 +35,10 @@ export function operationLogTypeBadgeClass(type: string): string {
       return `${badgeBase} border-amber-200 bg-amber-50 text-amber-900`;
     case "ITEM_SCANNED":
       return `${badgeBase} border-slate-200 bg-slate-100 text-slate-700`;
+    case "ERROR_DETECTED":
+      return `${badgeBase} border-red-200 bg-red-50 text-red-800`;
+    case "SCAN_ERROR":
+      return `${badgeBase} border-slate-300 bg-slate-100 text-slate-800`;
     default:
       return `${badgeBase} border-slate-200 bg-white text-slate-600`;
   }

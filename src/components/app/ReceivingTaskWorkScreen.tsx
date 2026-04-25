@@ -8,6 +8,13 @@ import { Input } from "@/components/ui/input";
 import StatusBadge from "@/components/app/StatusBadge";
 import type { InboundLineItem, InboundSupply } from "@/types/domain";
 import { workflowFromInbound } from "@/lib/taskWorkflowUi";
+import {
+  planFactDiscrepancyText,
+  planFactLineStatus,
+  planFactOverrun,
+  planFactRemaining,
+  planFactRowBgClass,
+} from "@/lib/planFactDiscrepancy";
 
 type Props = {
   supply: InboundSupply;
@@ -17,8 +24,25 @@ type Props = {
   onBack: () => void;
   onStartReceiving: () => Promise<void>;
   onSaveItems: (items: InboundLineItem[]) => Promise<void>;
-  onComplete: (factTotal: number) => Promise<void>;
+  onComplete: () => Promise<void>;
+  onScanError?: (code: string, kind: "unknown" | "over") => void;
 };
+
+function lineStatusLabel(plan: number, fact: number): string {
+  const st = planFactLineStatus(plan, fact);
+  if (st === "ok") return "Ок";
+  if (st === "short") return "Не хватает";
+  if (st === "surplus") return "Лишнее";
+  return "Ошибка";
+}
+
+function lineStatusBadgeClass(plan: number, fact: number): string {
+  const st = planFactLineStatus(plan, fact);
+  if (st === "ok") return "bg-emerald-100 text-emerald-800 ring-emerald-200";
+  if (st === "short") return "bg-amber-100 text-amber-900 ring-amber-200";
+  if (st === "surplus") return "bg-red-100 text-red-800 ring-red-200";
+  return "bg-slate-200 text-slate-800 ring-slate-300";
+}
 
 export default function ReceivingTaskWorkScreen({
   supply,
@@ -29,6 +53,7 @@ export default function ReceivingTaskWorkScreen({
   onStartReceiving,
   onSaveItems,
   onComplete,
+  onScanError,
 }: Props) {
   const [scanValue, setScanValue] = React.useState("");
   const [isSubmittingScan, setIsSubmittingScan] = React.useState(false);
@@ -56,9 +81,21 @@ export default function ReceivingTaskWorkScreen({
     const plan = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
     const fact = supply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
     const remaining = Math.max(0, plan - fact);
+    const overrun = Math.max(0, fact - plan);
     const percent = plan > 0 ? Math.min(100, Math.round((fact / plan) * 100)) : 0;
-    return { plan, fact, remaining, percent };
+    return { plan, fact, remaining, overrun, percent };
   }, [supply.items]);
+
+  const taskNeedsReview = React.useMemo(
+    () =>
+      progress.plan > 0 &&
+      supply.items.some((it) => {
+        const p = Number(it.plannedQuantity) || 0;
+        const f = Number(it.factualQuantity) || 0;
+        return p > 0 && p !== f;
+      }),
+    [supply.items, progress.plan],
+  );
 
   const applyScan = async () => {
     const code = scanValue.trim();
@@ -66,6 +103,7 @@ export default function ReceivingTaskWorkScreen({
     const idx = supply.items.findIndex((x) => (x.barcode || "").trim() === code);
     if (idx < 0) {
       triggerFlash("error");
+      onScanError?.(code, "unknown");
       toast.error("Товар не найден в задании");
       focusScanInput();
       return;
@@ -73,6 +111,7 @@ export default function ReceivingTaskWorkScreen({
     const item = supply.items[idx];
     if ((Number(item.factualQuantity) || 0) >= (Number(item.plannedQuantity) || 0)) {
       triggerFlash("error");
+      onScanError?.(code, "over");
       toast.error("Количество уже принято");
       focusScanInput();
       return;
@@ -92,8 +131,7 @@ export default function ReceivingTaskWorkScreen({
     }
   };
 
-  const canComplete =
-    progress.plan > 0 && supply.items.every((item) => (Number(item.factualQuantity) || 0) === (Number(item.plannedQuantity) || 0));
+  const canSubmitComplete = workflow === "processing" && progress.plan > 0;
 
   return (
     <Card
@@ -107,10 +145,24 @@ export default function ReceivingTaskWorkScreen({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm md:grid-cols-5">
-          <div><span className="text-slate-500">№ задания:</span><div className="font-medium text-slate-900">{supply.documentNo || "—"}</div></div>
-          <div><span className="text-slate-500">Юрлицо:</span><div className="font-medium text-slate-900">{legalEntityName}</div></div>
-          <div><span className="text-slate-500">Склад:</span><div className="font-medium text-slate-900">{supply.destinationWarehouse || "—"}</div></div>
-          <div><span className="text-slate-500">Статус:</span><div className="mt-0.5"><StatusBadge status={workflow} /></div></div>
+          <div>
+            <span className="text-slate-500">№ задания:</span>
+            <div className="font-medium text-slate-900">{supply.documentNo || "—"}</div>
+          </div>
+          <div>
+            <span className="text-slate-500">Юрлицо:</span>
+            <div className="font-medium text-slate-900">{legalEntityName}</div>
+          </div>
+          <div>
+            <span className="text-slate-500">Склад:</span>
+            <div className="font-medium text-slate-900">{supply.destinationWarehouse || "—"}</div>
+          </div>
+          <div>
+            <span className="text-slate-500">Статус:</span>
+            <div className="mt-0.5">
+              <StatusBadge status={workflow} requiresReview={taskNeedsReview} />
+            </div>
+          </div>
           <div>
             <span className="text-slate-500">Дата:</span>
             <div className="font-medium text-slate-900">
@@ -146,9 +198,10 @@ export default function ReceivingTaskWorkScreen({
         </div>
 
         <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span className="font-medium text-slate-900">
               План {progress.plan} · Факт {progress.fact} · Осталось {progress.remaining}
+              {progress.overrun > 0 ? ` · Перерасход ${progress.overrun}` : null}
             </span>
             <span className="text-slate-600">{progress.percent}%</span>
           </div>
@@ -161,47 +214,58 @@ export default function ReceivingTaskWorkScreen({
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
-                <th className="border-b border-r px-3 py-2 text-left font-medium">Название</th>
-                <th className="border-b border-r px-3 py-2 text-left font-medium">Артикул</th>
-                <th className="border-b border-r px-3 py-2 text-left font-medium">Баркод</th>
-                <th className="border-b border-r px-3 py-2 text-left font-medium">Маркетплейс</th>
-                <th className="border-b border-r px-3 py-2 text-left font-medium">Цвет</th>
-                <th className="border-b border-r px-3 py-2 text-left font-medium">Размер</th>
-                <th className="border-b border-r px-3 py-2 text-right font-medium">План</th>
-                <th className="border-b border-r px-3 py-2 text-right font-medium">Факт</th>
-                <th className="border-b border-r px-3 py-2 text-right font-medium">Осталось</th>
-                <th className="border-b px-3 py-2 text-left font-medium">Статус строки</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Артикул</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">МП</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Цвет</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Размер</th>
+                <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
+                <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Факт</th>
+                <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Осталось</th>
+                <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Перерасход</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Расхождение</th>
+                <th className="border-b px-2 py-1.5 text-left text-xs font-medium">Статус</th>
               </tr>
             </thead>
             <tbody>
               {supply.items.map((item, index) => {
                 const plan = Number(item.plannedQuantity) || 0;
                 const fact = Number(item.factualQuantity) || 0;
-                const remaining = plan - fact;
-                const rowStatus = fact > plan ? "Ошибка" : fact === 0 ? "Не принято" : fact < plan ? "В процессе" : "Принято";
-                const rowStatusClass =
-                  fact > plan
-                    ? "bg-red-100 text-red-700 ring-red-200"
-                    : fact === 0
-                      ? "bg-slate-100 text-slate-700 ring-slate-200"
-                      : fact < plan
-                        ? "bg-violet-100 text-violet-700 ring-violet-200"
-                        : "bg-emerald-100 text-emerald-700 ring-emerald-200";
+                const rem = planFactRemaining(plan, fact);
+                const over = planFactOverrun(plan, fact);
+                const disc = planFactDiscrepancyText(plan, fact);
+                const rowBg = planFactRowBgClass(plan, fact);
                 return (
-                  <tr key={`${supply.id}-${item.barcode}-${index}`} className={`odd:bg-white even:bg-slate-50/50 ${fact > plan ? "bg-red-50/80" : ""}`}>
-                    <td className="border-b border-r px-3 py-2">{item.name || "—"}</td>
-                    <td className="border-b border-r px-3 py-2">{item.supplierArticle || "—"}</td>
-                    <td className="border-b border-r px-3 py-2 font-mono text-xs">{item.barcode || "—"}</td>
-                    <td className="border-b border-r px-3 py-2">{supply.marketplace.toUpperCase()}</td>
-                    <td className="border-b border-r px-3 py-2">{item.color || "—"}</td>
-                    <td className="border-b border-r px-3 py-2">{item.size || "—"}</td>
-                    <td className="border-b border-r px-3 py-2 text-right tabular-nums">{plan}</td>
-                    <td className="border-b border-r px-3 py-2 text-right tabular-nums">{fact}</td>
-                    <td className={`border-b border-r px-3 py-2 text-right tabular-nums ${remaining !== 0 ? "font-medium text-red-700" : ""}`}>
-                      {Math.max(0, remaining)}
+                  <tr
+                    key={`${supply.id}-${item.barcode}-${index}`}
+                    className={`odd:bg-white even:bg-slate-50/50 ${rowBg}`}
+                  >
+                    <td className="border-b border-r px-2 py-1.5 text-xs">{item.name || "—"}</td>
+                    <td className="border-b border-r px-2 py-1.5 text-xs">{item.supplierArticle || "—"}</td>
+                    <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{item.barcode || "—"}</td>
+                    <td className="border-b border-r px-2 py-1.5 text-xs">{supply.marketplace.toUpperCase()}</td>
+                    <td className="border-b border-r px-2 py-1.5 text-xs">{item.color || "—"}</td>
+                    <td className="border-b border-r px-2 py-1.5 text-xs">{item.size || "—"}</td>
+                    <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{plan}</td>
+                    <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{fact}</td>
+                    <td
+                      className={`border-b border-r px-2 py-1.5 text-right tabular-nums text-xs ${
+                        rem > 0 ? "font-medium text-amber-800" : ""
+                      }`}
+                    >
+                      {rem}
                     </td>
-                    <td className="border-b px-3 py-2">
-                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${rowStatusClass}`}>{rowStatus}</span>
+                    <td className={`border-b border-r px-2 py-1.5 text-right tabular-nums text-xs ${over > 0 ? "font-medium text-red-700" : ""}`}>
+                      {over}
+                    </td>
+                    <td className="border-b border-r px-2 py-1.5 text-xs text-slate-700">{disc ?? "—"}</td>
+                    <td className="border-b px-2 py-1.5">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineStatusBadgeClass(plan, fact)}`}
+                      >
+                        {lineStatusLabel(plan, fact)}
+                      </span>
                     </td>
                   </tr>
                 );
@@ -227,13 +291,16 @@ export default function ReceivingTaskWorkScreen({
             type="button"
             variant="ghost"
             className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
-            onClick={() => void onComplete(progress.fact)}
-            disabled={!canComplete || isUpdatingInbound}
+            onClick={() => void onComplete()}
+            disabled={!canSubmitComplete || isUpdatingInbound}
           >
             Завершить
           </Button>
-          {!canComplete ? (
-            <p className="text-sm font-medium text-red-600">Не все товары приняты. Осталось: {progress.remaining}</p>
+          {workflow === "processing" && taskNeedsReview ? (
+            <p className="text-xs font-medium text-amber-800">Есть расхождения план/факт. Завершение доступно с предупреждением.</p>
+          ) : null}
+          {workflow === "processing" && !taskNeedsReview && progress.plan > 0 && progress.fact < progress.plan ? (
+            <p className="text-xs text-slate-600">Осталось принять: {progress.remaining} шт.</p>
           ) : null}
         </div>
 
