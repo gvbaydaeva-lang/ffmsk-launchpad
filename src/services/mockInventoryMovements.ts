@@ -79,9 +79,9 @@ export function getInventoryBalance(movements: InventoryMovement[]): InventoryBa
       balanceQty: sum,
     });
   }
-  return rows
-    .filter((r) => r.balanceQty !== 0)
-    .sort((a, b) => a.legalEntityName.localeCompare(b.legalEntityName, "ru") || a.name.localeCompare(b.name, "ru"));
+  return rows.sort(
+    (a, b) => a.legalEntityName.localeCompare(b.legalEntityName, "ru") || a.name.localeCompare(b.name, "ru"),
+  );
 }
 
 export function getMovementsByBalanceKey(

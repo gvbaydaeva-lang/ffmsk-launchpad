@@ -3,6 +3,7 @@ import {
   Box,
   Building2,
   History,
+  Layers,
   LayoutDashboard,
   Package,
   PackageOpen,
@@ -38,6 +39,7 @@ import { cn } from "@/lib/utils";
 const nav = [
   { to: "/dashboard", label: "Дашборд", icon: LayoutDashboard, end: true },
   { to: "/warehouse", label: "Складской учёт", icon: Package },
+  { to: "/inventory", label: "Остатки", icon: Layers },
   { to: "/receiving", label: "Приёмка", icon: PackageOpen },
   { to: "/shipping", label: "Отгрузки", icon: Truck },
   { to: "/packing", label: "Упаковщик", icon: ScanBarcode },
