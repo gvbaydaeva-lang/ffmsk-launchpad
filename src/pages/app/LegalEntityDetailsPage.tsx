@@ -2431,15 +2431,17 @@ const LegalEntityDetailsPage = () => {
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ документа</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
-                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад / МП</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
                       <TableHead className="h-9 w-[100px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {inboundDocuments.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="px-3 py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={8} className="px-3 py-6 text-center text-sm text-slate-500">
                           Документов приёмки пока нет
                         </TableCell>
                       </TableRow>
@@ -2447,6 +2449,7 @@ const LegalEntityDetailsPage = () => {
                       inboundDocuments.map((doc) => {
                         const wf = workflowFromInbound(doc);
                         const planSum = doc.items.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0);
+                        const factSum = doc.items.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0);
                         const open = selectedInboundDocId === doc.id;
                         return (
                           <TableRow
@@ -2465,10 +2468,10 @@ const LegalEntityDetailsPage = () => {
                                 {workflowStatusLabel(wf)}
                               </span>
                             </TableCell>
-                            <TableCell className="max-w-[200px] truncate px-3 py-2 text-slate-700">
-                              {doc.destinationWarehouse} / {mpLabelShort(doc.marketplace)}
-                            </TableCell>
+                            <TableCell className="max-w-[180px] truncate px-3 py-2 text-slate-700">{doc.destinationWarehouse}</TableCell>
+                            <TableCell className="px-3 py-2">{mpLabelShort(doc.marketplace)}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{planSum}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{factSum}</TableCell>
                             <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 type="button"
@@ -2528,6 +2531,7 @@ const LegalEntityDetailsPage = () => {
               </CardContent>
             </Card>
           ) : null}
+          <div className="hidden" aria-hidden>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <Button variant={showOnlyDiff ? "default" : "outline"} size="sm" onClick={() => setShowOnlyDiff((v) => !v)}>
               {showOnlyDiff ? "Показать все" : "Только расхождения"}
@@ -2827,6 +2831,7 @@ const LegalEntityDetailsPage = () => {
               </div>
             </CardContent>
           </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="shipping">
@@ -2939,6 +2944,7 @@ const LegalEntityDetailsPage = () => {
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
                       <TableHead className="h-9 w-[100px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
@@ -2947,7 +2953,7 @@ const LegalEntityDetailsPage = () => {
                   <TableBody>
                     {outboundDocuments.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={8} className="px-3 py-6 text-center text-sm text-slate-500">
                           Заданий на отгрузку пока нет
                         </TableCell>
                       </TableRow>
@@ -2972,6 +2978,7 @@ const LegalEntityDetailsPage = () => {
                               </span>
                             </TableCell>
                             <TableCell className="max-w-[220px] truncate px-3 py-2 text-slate-700">{doc.sourceWarehouse}</TableCell>
+                            <TableCell className="px-3 py-2">{mpLabelShort(doc.marketplace)}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{doc.totalPlan}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{doc.totalFact}</TableCell>
                             <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
@@ -3013,22 +3020,36 @@ const LegalEntityDetailsPage = () => {
                         <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
                         <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
                         <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+                        <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {selectedOutboundDoc.shipments.map((sh) => {
                         const line = resolveOutboundLineProduct(sh, rows, catalog);
+                        const linePlan = effOutboundPlanned(sh);
+                        const lineFact = effOutboundFact(sh);
+                        const mismatch = linePlan !== lineFact;
+                        const wf = (sh.workflowStatus ?? "pending") as TaskWorkflowStatus;
                         return (
-                          <TableRow key={sh.id} className="text-sm">
+                          <TableRow key={sh.id} className={`text-sm ${mismatch ? "bg-red-50/50" : ""}`}>
                             <TableCell className="max-w-[200px] truncate px-3 py-2">{line.name}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">{line.article}</TableCell>
                             <TableCell className="font-mono text-xs px-3 py-2">{line.barcode}</TableCell>
                             <TableCell className="px-3 py-2">{mpLabelShort(sh.marketplace)}</TableCell>
                             <TableCell className="px-3 py-2">{line.color}</TableCell>
                             <TableCell className="px-3 py-2">{line.size}</TableCell>
-                            <TableCell className="px-3 py-2 text-right tabular-nums">{effOutboundPlanned(sh)}</TableCell>
-                            <TableCell className="px-3 py-2 text-right tabular-nums">{effOutboundFact(sh)}</TableCell>
+                            <TableCell className="px-3 py-2 text-right tabular-nums">{linePlan}</TableCell>
+                            <TableCell className="px-3 py-2 text-right tabular-nums">{lineFact}</TableCell>
                             <TableCell className="max-w-[160px] truncate px-3 py-2 text-slate-700">{sh.sourceWarehouse}</TableCell>
+                            <TableCell className="px-3 py-2">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  mismatch ? "bg-red-100 text-red-700 ring-1 ring-red-200" : outboundRegistryBadgeClass(wf)
+                                }`}
+                              >
+                                {mismatch ? "Требует проверки" : workflowStatusLabel(wf)}
+                              </span>
+                            </TableCell>
                           </TableRow>
                         );
                       })}

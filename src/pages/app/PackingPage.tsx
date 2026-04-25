@@ -5,17 +5,15 @@ import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
+import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import type { OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import {
-  compareWorkflowPriority,
   normalizeWorkflowStatus,
-  taskWorkflowActionButtonClass,
-  taskWorkflowActionLabel,
-  taskWorkflowCardClass,
 } from "@/lib/taskWorkflowUi";
 import { toast } from "sonner";
 
@@ -41,6 +39,12 @@ const PackingPage = () => {
   const { legalEntityId } = useAppFilters();
   const queryClient = useQueryClient();
   const [startedAssignmentId, setStartedAssignmentId] = React.useState<string | null>(null);
+  const [search, setSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
+  const [warehouseFilter, setWarehouseFilter] = React.useState("all");
+  const [mpFilter, setMpFilter] = React.useState<"all" | "wb" | "ozon" | "yandex">("all");
+  const [dateFrom, setDateFrom] = React.useState("");
+  const [dateTo, setDateTo] = React.useState("");
   const [scanValue, setScanValue] = React.useState("");
   const [isSubmittingScan, setIsSubmittingScan] = React.useState(false);
   const [flashState, setFlashState] = React.useState<"ok" | "error" | null>(null);
@@ -77,17 +81,44 @@ const PackingPage = () => {
         }
       }
     }
-    return Array.from(groups.values())
+    const all = Array.from(groups.values())
       .map((group) => {
         const allCompleted = group.shipments.every((sh) => (sh.workflowStatus ?? "pending") === "completed");
         return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus };
+      });
+    const q = search.trim().toLowerCase();
+    return all
+      .filter((group) => {
+        const first = group.shipments[0];
+        if (!first) return false;
+        if (statusFilter !== "all" && normalizeWorkflowStatus(group.workflowStatus) !== statusFilter) return false;
+        if (warehouseFilter !== "all" && first.sourceWarehouse !== warehouseFilter) return false;
+        if (mpFilter !== "all" && first.marketplace !== mpFilter) return false;
+        const created = Date.parse(first.createdAt || "");
+        if (dateFrom) {
+          const from = Date.parse(`${dateFrom}T00:00:00`);
+          if (Number.isFinite(from) && created < from) return false;
+        }
+        if (dateTo) {
+          const to = Date.parse(`${dateTo}T23:59:59`);
+          if (Number.isFinite(to) && created > to) return false;
+        }
+        if (!q) return true;
+        const entity = legal?.find((x) => x.id === group.legalEntityId)?.shortName ?? group.legalEntityId;
+        const lineText = group.shipments.map((s) => `${s.importArticle ?? ""} ${s.importBarcode ?? ""}`).join(" ").toLowerCase();
+        const no = first.assignmentNo?.trim() || first.assignmentId?.trim() || first.id;
+        return `${no} ${entity} ${lineText}`.toLowerCase().includes(q);
       })
       .sort((a, b) => {
-        const w = compareWorkflowPriority(a.workflowStatus, b.workflowStatus);
-        if (w !== 0) return w;
-        return a.display.localeCompare(b.display, "ru");
+        const da = Date.parse(a.shipments[0]?.createdAt || "") || 0;
+        const db = Date.parse(b.shipments[0]?.createdAt || "") || 0;
+        return db - da;
       });
-  }, [allShipments, legal]);
+  }, [allShipments, legal, search, statusFilter, warehouseFilter, mpFilter, dateFrom, dateTo]);
+  const warehouses = React.useMemo(
+    () => Array.from(new Set(assignments.map((a) => a.shipments[0]?.sourceWarehouse || ""))).filter(Boolean),
+    [assignments],
+  );
 
   const startedAssignment = assignments.find((x) => x.id === startedAssignmentId) ?? null;
 
@@ -267,6 +298,38 @@ const PackingPage = () => {
         <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Рабочее место упаковщика</h2>
         <p className="mt-1 text-sm text-slate-600">Изолированный модуль физической упаковки и сканирования отгрузок.</p>
       </div>
+      {!startedAssignment ? (
+        <div className="flex flex-wrap gap-2">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: №, юрлицо, артикул, баркод" className="w-[300px]" />
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | TaskWorkflowStatus)}>
+            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все статусы</SelectItem>
+              <SelectItem value="pending">Новое</SelectItem>
+              <SelectItem value="processing">В работе</SelectItem>
+              <SelectItem value="completed">Завершено</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
+            <SelectTrigger className="w-[190px]"><SelectValue placeholder="Склад" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все склады</SelectItem>
+              {warehouses.map((wh) => <SelectItem key={wh} value={wh}>{wh}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={mpFilter} onValueChange={(v) => setMpFilter(v as typeof mpFilter)}>
+            <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все МП</SelectItem>
+              <SelectItem value="wb">WB</SelectItem>
+              <SelectItem value="ozon">Ozon</SelectItem>
+              <SelectItem value="yandex">Яндекс</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[150px]" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" />
+        </div>
+      ) : null}
 
       <GlobalFiltersBar />
 
@@ -287,42 +350,40 @@ const PackingPage = () => {
             ) : assignments.length === 0 ? (
               <p className="text-sm text-slate-600">Активных заданий нет.</p>
             ) : (
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {assignments.map((assignment) => {
+              <TaskRegistryTable
+                rows={assignments.map((assignment) => {
                   const first = assignment.shipments[0];
                   const assignmentNo = first?.assignmentNo?.trim() || first?.assignmentId?.trim() || first?.id || "—";
                   const legalName = legal?.find((x) => x.id === assignment.legalEntityId)?.shortName ?? assignment.legalEntityId;
-                  const dateLabel = first?.createdAt ? format(parseISO(first.createdAt), "dd.MM.yyyy", { locale: ru }) : "без даты";
+                  const dateLabel = first?.createdAt ? format(parseISO(first.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—";
                   const totalPlan = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.plannedUnits) || 0), 0);
+                  const totalFact = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0), 0);
                   const wf = normalizeWorkflowStatus(assignment.workflowStatus);
-                  return (
-                    <Card key={assignment.id} className={taskWorkflowCardClass(wf)}>
-                      <CardHeader className="space-y-2 pb-2">
-                        <CardTitle className="text-base">№ {assignmentNo}</CardTitle>
-                        <CardDescription>{legalName}</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="text-sm text-slate-600">
-                          <p>Дата: {dateLabel}</p>
-                          <p>Товаров по плану: {totalPlan}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className={taskWorkflowActionButtonClass(wf)}
-                          disabled={wf === "completed"}
-                          onClick={() => {
-                            if (wf === "completed") return;
-                            void startAssignment(assignment);
-                          }}
-                        >
-                          {taskWorkflowActionLabel(wf)}
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  );
+                  return {
+                    id: assignment.id,
+                    createdAtLabel: dateLabel,
+                    taskNo: assignmentNo,
+                    legalEntityLabel: legalName,
+                    status: wf,
+                    warehouseLabel: first?.sourceWarehouse ?? "—",
+                    marketplaceLabel: first?.marketplace?.toUpperCase() ?? "—",
+                    plan: totalPlan,
+                    fact: totalFact,
+                    isNew: wf === "pending",
+                    mismatch: wf === "completed" && totalPlan !== totalFact,
+                  };
                 })}
-              </div>
+                onOpen={(id) => {
+                  const assignment = assignments.find((x) => x.id === id);
+                  if (!assignment) return;
+                  void startAssignment(assignment);
+                }}
+                onAction={(id) => {
+                  const assignment = assignments.find((x) => x.id === id);
+                  if (!assignment) return;
+                  void startAssignment(assignment);
+                }}
+              />
             )}
           </CardContent>
         </Card>
@@ -382,7 +443,7 @@ const PackingPage = () => {
                 </thead>
                 <tbody>
                   {scanLines.map((line) => (
-                    <tr key={line.key} className="odd:bg-white even:bg-slate-50/50">
+                    <tr key={line.key} className={`odd:bg-white even:bg-slate-50/50 ${line.plan !== line.fact ? "bg-red-50/60" : ""}`}>
                       <td className="border-b border-r px-3 py-2">{line.article || "—"}</td>
                       <td className="border-b border-r px-3 py-2">{line.color || "—"}</td>
                       <td className="border-b border-r px-3 py-2">{line.size || "—"}</td>
@@ -394,17 +455,20 @@ const PackingPage = () => {
               </table>
             </div>
 
-            {progress.totalPlan > 0 && progress.totalPlan === progress.totalFact ? (
+            <div className="space-y-2">
               <Button
                 type="button"
                 variant="ghost"
                 className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
                 onClick={() => void finalizeAssignment()}
-                disabled={isUpdatingOutboundDraft || isUpdatingOutbound}
+                disabled={isUpdatingOutboundDraft || isUpdatingOutbound || progress.totalPlan === 0 || progress.totalPlan !== progress.totalFact}
               >
                 Завершить отгрузку
               </Button>
-            ) : null}
+              {progress.totalPlan !== progress.totalFact ? (
+                <p className="text-sm font-medium text-red-600">Не все товары обработаны</p>
+              ) : null}
+            </div>
             <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>
               Вернуться к списку заданий
             </Button>

@@ -2,24 +2,20 @@ import * as React from "react";
 import { Link } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
+import TaskRegistryTable from "@/components/app/TaskRegistryTable";
+import TaskItemsTable from "@/components/app/TaskItemsTable";
+import { Button } from "@/components/ui/button";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
 import { useLegalEntities, useOutboundShipments } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
-import {
-  compareWorkflowPriority,
-  taskWorkflowActionButtonClass,
-  taskWorkflowActionLabel,
-  taskWorkflowCardClass,
-  workflowFromOutboundGroup,
-} from "@/lib/taskWorkflowUi";
+import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 
 type ShipmentDoc = {
   id: string;
@@ -41,6 +37,11 @@ const ShippingPage = () => {
   useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
+  const [warehouseFilter, setWarehouseFilter] = React.useState("all");
+  const [dateFrom, setDateFrom] = React.useState("");
+  const [dateTo, setDateTo] = React.useState("");
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   const filtered = React.useMemo(() => {
     const base = filterOutboundByMarketplace(data ?? [], mp);
@@ -77,18 +78,35 @@ const ShippingPage = () => {
       });
     }
     const q = search.trim().toLowerCase();
-    const filteredDocs = !q
+    const searched = !q
       ? docs
       : docs.filter((d) => {
           const entity = entities?.find((e) => e.id === d.legalEntityId)?.shortName ?? d.legalEntityId;
-          return `${entity} ${d.assignmentNo}`.toLowerCase().includes(q);
+          const lines = d.shipments
+            .map((s) => `${s.importArticle ?? ""} ${s.importBarcode ?? ""} ${s.importName ?? ""}`)
+            .join(" ")
+            .toLowerCase();
+          return `${entity} ${d.assignmentNo} ${lines}`.toLowerCase().includes(q);
         });
-    return filteredDocs.sort((a, b) => {
-      const w = compareWorkflowPriority(a.workflowStatus, b.workflowStatus);
-      if (w !== 0) return w;
-      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    const withFilters = searched.filter((d) => {
+      if (statusFilter !== "all" && d.workflowStatus !== statusFilter) return false;
+      if (warehouseFilter !== "all" && d.sourceWarehouse !== warehouseFilter) return false;
+      const created = Date.parse(d.createdAt || "");
+      if (dateFrom) {
+        const from = Date.parse(`${dateFrom}T00:00:00`);
+        if (Number.isFinite(from) && created < from) return false;
+      }
+      if (dateTo) {
+        const to = Date.parse(`${dateTo}T23:59:59`);
+        if (Number.isFinite(to) && created > to) return false;
+      }
+      return true;
     });
-  }, [filtered, search, entities]);
+    return withFilters.sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
+  }, [filtered, search, entities, statusFilter, warehouseFilter, dateFrom, dateTo]);
+
+  const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
+  const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 
   return (
     <div className="space-y-4">
@@ -98,7 +116,7 @@ const ShippingPage = () => {
           <p className="mt-1 text-sm text-slate-600">Задания на выдачу со склада FF и контроль остатков.</p>
         </div>
         <div className="flex gap-2">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: юрлицо, номер" className="w-[250px]" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: №, юрлицо, артикул, баркод" className="w-[280px]" />
           <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
             <SelectTrigger className="w-[190px]">
               <SelectValue />
@@ -110,6 +128,24 @@ const ShippingPage = () => {
               <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | TaskWorkflowStatus)}>
+            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все статусы</SelectItem>
+              <SelectItem value="pending">Новое</SelectItem>
+              <SelectItem value="processing">В работе</SelectItem>
+              <SelectItem value="completed">Завершено</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
+            <SelectTrigger className="w-[180px]"><SelectValue placeholder="Склад" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все склады</SelectItem>
+              {warehouses.map((wh) => <SelectItem key={wh} value={wh}>{wh}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[150px]" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" />
         </div>
       </div>
 
@@ -117,15 +153,11 @@ const ShippingPage = () => {
 
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader>
-          <CardTitle className="font-display text-lg text-slate-900">Задания на отгрузку</CardTitle>
-          <CardDescription className="text-slate-500">
-            Карточки документов. Для работы со сканированием откройте раздел «Упаковщик».
-          </CardDescription>
+          <CardTitle className="font-display text-lg text-slate-900">Реестр заданий на отгрузку</CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              <Skeleton className="h-36 w-full" />
+            <div className="grid gap-3">
               <Skeleton className="h-36 w-full" />
             </div>
           ) : error ? (
@@ -133,47 +165,59 @@ const ShippingPage = () => {
           ) : documents.length === 0 ? (
             <p className="text-sm text-slate-600">Нет заданий для отображения.</p>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {documents.map((doc) => {
-                const entity = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
-                const wf = doc.workflowStatus;
-                const dateLabel = doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy", { locale: ru }) : "—";
-                return (
-                  <Card key={doc.id} className={taskWorkflowCardClass(wf)}>
-                    <CardHeader className="space-y-2 pb-2">
-                      <CardTitle className="text-base">№ {doc.assignmentNo}</CardTitle>
-                      <CardDescription>{entity}</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="text-sm text-slate-600">
-                        <p>Дата: {dateLabel}</p>
-                        <p>
-                          {doc.sourceWarehouse} / {doc.marketplace.toUpperCase()}
-                        </p>
-                        <p>
-                          План {doc.planned} · Факт {doc.fact}
-                        </p>
-                      </div>
-                      {wf === "completed" ? (
-                        <Button type="button" variant="ghost" className={taskWorkflowActionButtonClass("completed")} disabled>
-                          {taskWorkflowActionLabel("completed")}
-                        </Button>
-                      ) : (
-                        <Button type="button" variant="ghost" className={taskWorkflowActionButtonClass(wf)} asChild>
-                          <Link to="/packing">{taskWorkflowActionLabel(wf)}</Link>
-                        </Button>
-                      )}
-                      <Button variant="outline" className="h-9 w-full border-slate-200 text-slate-700 shadow-none" asChild>
-                        <Link to={`/legal-entities/${doc.legalEntityId}?tab=shipping`}>Карточка юрлица</Link>
-                      </Button>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
+            <TaskRegistryTable
+              rows={documents.map((doc) => ({
+                id: doc.id,
+                createdAtLabel: doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—",
+                taskNo: doc.assignmentNo,
+                legalEntityLabel: entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId,
+                status: doc.workflowStatus,
+                warehouseLabel: doc.sourceWarehouse,
+                marketplaceLabel: doc.marketplace.toUpperCase(),
+                plan: doc.planned,
+                fact: doc.fact,
+                isNew: doc.workflowStatus === "pending",
+                mismatch: doc.planned !== doc.fact && doc.workflowStatus === "completed",
+              }))}
+              selectedId={selectedId}
+              onOpen={(id) => setSelectedId((prev) => (prev === id ? null : id))}
+              onAction={(id) => {
+                const doc = documents.find((x) => x.id === id);
+                if (!doc || doc.workflowStatus === "completed") return;
+                setSelectedId(id);
+              }}
+            />
           )}
         </CardContent>
       </Card>
+
+      {selectedDoc ? (
+        <Card className="border-slate-200 bg-slate-50/40 shadow-sm">
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle className="text-sm">Состав задания {selectedDoc.assignmentNo}</CardTitle>
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/legal-entities/${selectedDoc.legalEntityId}?tab=shipping`}>Открыть в карточке юрлица</Link>
+            </Button>
+          </CardHeader>
+          <CardContent className="p-0">
+            <TaskItemsTable
+              rows={selectedDoc.shipments.map((sh) => ({
+                id: sh.id,
+                name: sh.importName || "—",
+                article: sh.importArticle || "—",
+                barcode: sh.importBarcode || "—",
+                marketplace: sh.marketplace.toUpperCase(),
+                color: sh.importColor || "—",
+                size: sh.importSize || "—",
+                plan: Number(sh.plannedUnits) || 0,
+                fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
+                warehouse: sh.sourceWarehouse || "—",
+                status: sh.workflowStatus ?? "pending",
+              }))}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 };

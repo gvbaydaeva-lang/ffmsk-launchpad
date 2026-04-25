@@ -8,15 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
+import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useInboundSupplies, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
-import type { InboundSupply, Marketplace } from "@/types/domain";
+import type { InboundSupply, Marketplace, TaskWorkflowStatus } from "@/types/domain";
 import {
-  compareWorkflowPriority,
   taskWorkflowActionButtonClass,
   taskWorkflowActionLabel,
-  taskWorkflowCardClass,
   workflowFromInbound,
 } from "@/lib/taskWorkflowUi";
 import { toast } from "sonner";
@@ -28,6 +27,10 @@ const ReceivingPage = () => {
   const { legalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
+  const [warehouseFilter, setWarehouseFilter] = React.useState("all");
+  const [dateFrom, setDateFrom] = React.useState("");
+  const [dateTo, setDateTo] = React.useState("");
   const [startedSupplyId, setStartedSupplyId] = React.useState<string | null>(null);
 
   const entityName = React.useCallback(
@@ -39,18 +42,31 @@ const ReceivingPage = () => {
     const base = filterInboundByMarketplace(data ?? [], mp);
     const byEntity = legalEntityId === "all" ? base : base.filter((r) => r.legalEntityId === legalEntityId);
     const q = search.trim().toLowerCase();
-    const filtered = !q
+    const searched = !q
       ? byEntity
       : byEntity.filter((r) => {
-          const label = `${r.documentNo} ${entityName(r.legalEntityId)} ${r.supplier}`.toLowerCase();
+          const lineText = r.items.map((it) => `${it.supplierArticle} ${it.barcode}`).join(" ").toLowerCase();
+          const label = `${r.documentNo} ${entityName(r.legalEntityId)} ${r.supplier} ${lineText}`.toLowerCase();
           return label.includes(q);
         });
-    return [...filtered].sort((a, b) => {
-      const w = compareWorkflowPriority(workflowFromInbound(a), workflowFromInbound(b));
-      if (w !== 0) return w;
-      return (a.documentNo || "").localeCompare(b.documentNo || "", "ru");
+    const filtered = searched.filter((r) => {
+      const wf = workflowFromInbound(r);
+      if (statusFilter !== "all" && wf !== statusFilter) return false;
+      if (warehouseFilter !== "all" && r.destinationWarehouse !== warehouseFilter) return false;
+      const dt = Date.parse(r.eta || "");
+      if (dateFrom) {
+        const from = Date.parse(`${dateFrom}T00:00:00`);
+        if (Number.isFinite(from) && dt < from) return false;
+      }
+      if (dateTo) {
+        const to = Date.parse(`${dateTo}T23:59:59`);
+        if (Number.isFinite(to) && dt > to) return false;
+      }
+      return true;
     });
-  }, [data, mp, legalEntityId, search, entityName]);
+    return [...filtered].sort((a, b) => (Date.parse(b.eta || "") || 0) - (Date.parse(a.eta || "") || 0));
+  }, [data, mp, legalEntityId, search, entityName, statusFilter, warehouseFilter, dateFrom, dateTo]);
+  const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
   const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
   const receivingStarted = startedSupply ? workflowFromInbound(startedSupply) === "processing" : false;
 
@@ -141,6 +157,24 @@ const ReceivingPage = () => {
               <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | TaskWorkflowStatus)}>
+            <SelectTrigger className="w-full border-slate-200 bg-white sm:w-[170px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все статусы</SelectItem>
+              <SelectItem value="pending">Новое</SelectItem>
+              <SelectItem value="processing">В работе</SelectItem>
+              <SelectItem value="completed">Завершено</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
+            <SelectTrigger className="w-full border-slate-200 bg-white sm:w-[190px]"><SelectValue placeholder="Склад" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все склады</SelectItem>
+              {warehouses.map((wh) => <SelectItem key={wh} value={wh}>{wh}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-[150px]" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-[150px]" />
         </div>
       </div>
 
@@ -163,36 +197,36 @@ const ReceivingPage = () => {
             ) : rows.length === 0 ? (
               <p className="text-sm text-slate-600">Нет документов приёмки.</p>
             ) : (
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {rows.map((supply) => {
-                  const planUnits = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
-                  const dateLabel = supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy", { locale: ru }) : "без даты";
+              <TaskRegistryTable
+                rows={rows.map((supply) => {
+                  const plan = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+                  const fact = supply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
                   const wf = workflowFromInbound(supply);
-                  return (
-                    <Card key={supply.id} className={taskWorkflowCardClass(wf)}>
-                      <CardHeader className="space-y-2 pb-2">
-                        <CardTitle className="text-base">№ {supply.documentNo}</CardTitle>
-                        <CardDescription>{entityName(supply.legalEntityId)}</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="text-sm text-slate-600">
-                          <p>Дата: {dateLabel}</p>
-                          <p>Товаров по плану: {planUnits}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className={taskWorkflowActionButtonClass(wf)}
-                          disabled={wf === "completed"}
-                          onClick={() => void startReceiving(supply)}
-                        >
-                          {taskWorkflowActionLabel(wf)}
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  );
+                  return {
+                    id: supply.id,
+                    createdAtLabel: supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy HH:mm", { locale: ru }) : "—",
+                    taskNo: supply.documentNo,
+                    legalEntityLabel: entityName(supply.legalEntityId),
+                    status: wf,
+                    warehouseLabel: supply.destinationWarehouse,
+                    marketplaceLabel: supply.marketplace.toUpperCase(),
+                    plan,
+                    fact,
+                    isNew: wf === "pending",
+                    mismatch: wf === "completed" && plan !== fact,
+                  };
                 })}
-              </div>
+                onOpen={(id) => {
+                  const supply = rows.find((x) => x.id === id);
+                  if (!supply) return;
+                  void startReceiving(supply);
+                }}
+                onAction={(id) => {
+                  const supply = rows.find((x) => x.id === id);
+                  if (!supply) return;
+                  void startReceiving(supply);
+                }}
+              />
             )}
           </CardContent>
         </Card>
