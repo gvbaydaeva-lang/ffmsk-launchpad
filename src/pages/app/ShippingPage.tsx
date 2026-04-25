@@ -111,18 +111,7 @@ const ShippingPage = () => {
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
 
-  React.useEffect(() => {
-    if (selectedId && !documents.some((d) => d.id === selectedId)) {
-      setSelectedId(null);
-    }
-  }, [documents, selectedId]);
-
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
-
-  const handleShippingOpenClick = (taskId: string) => {
-    console.log("shipping open clicked", taskId);
-    setSelectedId((prev) => (prev === taskId ? null : taskId));
-  };
 
   return (
     <div className="space-y-4">
@@ -187,11 +176,11 @@ const ShippingPage = () => {
 
       <GlobalFiltersBar />
 
-      <Card className="border-slate-200 bg-white shadow-sm">
+      <Card className="min-w-0 border-slate-200 bg-white shadow-sm">
         <CardHeader>
           <CardTitle className="font-display text-lg text-slate-900">Реестр заданий на отгрузку</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="min-w-0 space-y-4">
           {isLoading ? (
             <div className="grid gap-3">
               <Skeleton className="h-36 w-full" />
@@ -204,7 +193,7 @@ const ShippingPage = () => {
             </p>
           ) : (
             <>
-              <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
+              <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-slate-200">
                 <Table className="min-w-[1200px] table-auto">
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
@@ -229,7 +218,8 @@ const ShippingPage = () => {
                       return (
                         <TableRow
                           key={doc.id}
-                          className={`border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
+                          className={`cursor-pointer border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
+                          onClick={() => setSelectedId(doc.id)}
                         >
                           <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
                             {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
@@ -255,16 +245,14 @@ const ShippingPage = () => {
                           <TableCell className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${over > 0 ? "font-medium text-red-700" : ""}`}>
                             {over}
                           </TableCell>
-                          <TableCell className="px-3 py-2 text-right">
-                            <Button
+                          <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                            <button
                               type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8 border-slate-200 text-xs"
-                              onClick={() => handleShippingOpenClick(doc.id)}
+                              className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 hover:bg-slate-50"
+                              onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
                             >
                               Открыть
-                            </Button>
+                            </button>
                           </TableCell>
                         </TableRow>
                       );

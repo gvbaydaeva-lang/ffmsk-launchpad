@@ -70,7 +70,8 @@ const ReceivingPage = () => {
     return [...filtered].sort((a, b) => (Date.parse(b.eta || "") || 0) - (Date.parse(a.eta || "") || 0));
   }, [data, mp, legalEntityId, search, entityName, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
   const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
-  const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
+  const startedSupply =
+    startedSupplyId == null ? null : ((data ?? []).find((d) => d.id === startedSupplyId) ?? null);
 
   const mutateItemFact = async (supply: InboundSupply, index: number, value: number) => {
     const nextValue = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -217,12 +218,6 @@ const ReceivingPage = () => {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [queryClient]);
-
-  React.useEffect(() => {
-    if (startedSupplyId && !rows.some((r) => r.id === startedSupplyId)) {
-      setStartedSupplyId(null);
-    }
-  }, [rows, startedSupplyId]);
 
   const handleBackToList = () => {
     setStartedSupplyId(null);
