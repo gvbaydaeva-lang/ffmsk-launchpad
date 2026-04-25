@@ -14,8 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useInventoryMovements, useLegalEntities } from "@/hooks/useWmsMock";
+import { useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { getMovementsByBalanceKey } from "@/services/mockInventoryMovements";
+import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import type { InventoryBalanceRow, InventoryMovement, Marketplace } from "@/types/domain";
 
 const sourceLabel: Record<InventoryMovement["source"], string> = {
@@ -45,6 +46,8 @@ function mpDisplay(mp: string): string {
 const InventoryPage = () => {
   const { data: entities } = useLegalEntities();
   const { balanceRows, data: movementData, isLoading, error } = useInventoryMovements();
+  const { data: outboundRows, isLoading: outboundLoading } = useOutboundShipments();
+  const { data: catalogRows, isLoading: catalogLoading } = useProductCatalog();
   const [search, setSearch] = React.useState("");
   const [entityId, setEntityId] = React.useState<"all" | string>("all");
   const [warehouse, setWarehouse] = React.useState("all");
@@ -79,7 +82,25 @@ const InventoryPage = () => {
   );
   const historyRow = historyKey ? balanceRows.find((r) => r.key === historyKey) : null;
 
+  const reservedByKey = React.useMemo(
+    () => reservedQtyByBalanceKey(outboundRows, catalogRows),
+    [outboundRows, catalogRows],
+  );
+
+  const tableLoading = isLoading || outboundLoading || catalogLoading;
+
   const balanceClass = (qty: number) => {
+    if (qty < 0) return "text-right tabular-nums font-semibold text-red-600";
+    if (qty === 0) return "text-right tabular-nums text-slate-400";
+    return "text-right tabular-nums font-medium text-slate-900";
+  };
+
+  const inWorkClass = (qty: number) => {
+    if (qty <= 0) return "text-right tabular-nums text-slate-400";
+    return "text-right tabular-nums font-medium text-slate-900";
+  };
+
+  const availableClass = (qty: number) => {
     if (qty < 0) return "text-right tabular-nums font-semibold text-red-600";
     if (qty === 0) return "text-right tabular-nums text-slate-400";
     return "text-right tabular-nums font-medium text-slate-900";
@@ -148,7 +169,7 @@ const InventoryPage = () => {
             </div>
           </div>
 
-          {isLoading ? (
+          {tableLoading ? (
             <Skeleton className="h-40 w-full" />
           ) : error ? (
             <p className="text-sm text-destructive">Не удалось загрузить движения.</p>
@@ -165,7 +186,9 @@ const InventoryPage = () => {
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">МП</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Цвет</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Размер</TableHead>
-                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Остаток</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Остаток всего</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">В работе</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
                     <TableHead className="w-[88px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">
                       Действие
                     </TableHead>
@@ -174,12 +197,15 @@ const InventoryPage = () => {
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="py-6 text-center text-xs text-slate-500">
+                      <TableCell colSpan={12} className="py-6 text-center text-xs text-slate-500">
                         Нет строк по фильтру. Завершите приёмку — товар появится здесь с положительным остатком.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map((row: InventoryBalanceRow) => (
+                    filtered.map((row: InventoryBalanceRow) => {
+                      const inWork = reservedByKey.get(row.key) ?? 0;
+                      const available = row.balanceQty - inWork;
+                      return (
                       <TableRow key={row.key} className="h-8 text-xs">
                         <TableCell className="max-w-[120px] truncate px-2 py-1">{row.legalEntityName}</TableCell>
                         <TableCell className="max-w-[100px] truncate px-2 py-1">{row.warehouseName}</TableCell>
@@ -191,6 +217,23 @@ const InventoryPage = () => {
                         <TableCell className="px-2 py-1">{row.size}</TableCell>
                         <TableCell className={`px-2 py-1 ${balanceClass(row.balanceQty)}`}>
                           {row.balanceQty.toLocaleString("ru-RU")}
+                        </TableCell>
+                        <TableCell className={`px-2 py-1 ${inWorkClass(inWork)}`}>
+                          {inWork > 0 ? (
+                            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200/80">
+                              {inWork.toLocaleString("ru-RU")}
+                            </span>
+                          ) : (
+                            <span>{inWork.toLocaleString("ru-RU")}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className={`px-2 py-1 align-top ${availableClass(available)}`}>
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span>{available.toLocaleString("ru-RU")}</span>
+                            {available < 0 ? (
+                              <span className="text-[10px] font-semibold text-red-600">Недостаточно</span>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell className="px-2 py-1 text-right">
                           <Button
@@ -204,7 +247,8 @@ const InventoryPage = () => {
                           </Button>
                         </TableCell>
                       </TableRow>
-                    ))
+                    );
+                    })
                   )}
                 </TableBody>
               </Table>
