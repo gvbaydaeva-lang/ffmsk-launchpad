@@ -38,6 +38,7 @@ const ShippingPage = () => {
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
+  const [viewMode, setViewMode] = React.useState<"active" | "archive">("active");
   const [warehouseFilter, setWarehouseFilter] = React.useState("all");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
@@ -89,6 +90,8 @@ const ShippingPage = () => {
           return `${entity} ${d.assignmentNo} ${lines}`.toLowerCase().includes(q);
         });
     const withFilters = searched.filter((d) => {
+      if (viewMode === "active" && d.workflowStatus === "completed") return false;
+      if (viewMode === "archive" && d.workflowStatus !== "completed") return false;
       if (statusFilter !== "all" && d.workflowStatus !== statusFilter) return false;
       if (warehouseFilter !== "all" && d.sourceWarehouse !== warehouseFilter) return false;
       const created = Date.parse(d.createdAt || "");
@@ -103,7 +106,7 @@ const ShippingPage = () => {
       return true;
     });
     return withFilters.sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
-  }, [filtered, search, entities, statusFilter, warehouseFilter, dateFrom, dateTo]);
+  }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
@@ -116,6 +119,26 @@ const ShippingPage = () => {
           <p className="mt-1 text-sm text-slate-600">Задания на выдачу со склада FF и контроль остатков.</p>
         </div>
         <div className="flex gap-2">
+          <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
+            <Button
+              type="button"
+              variant={viewMode === "active" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode("active")}
+            >
+              Активные
+            </Button>
+            <Button
+              type="button"
+              variant={viewMode === "archive" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode("archive")}
+            >
+              Архив
+            </Button>
+          </div>
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: №, юрлицо, артикул, баркод" className="w-[280px]" />
           <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
             <SelectTrigger className="w-[190px]">
@@ -163,7 +186,9 @@ const ShippingPage = () => {
           ) : error ? (
             <p className="text-sm text-destructive">Не удалось загрузить отгрузки.</p>
           ) : documents.length === 0 ? (
-            <p className="text-sm text-slate-600">Нет заданий для отображения.</p>
+            <p className="text-sm text-slate-600">
+              {viewMode === "active" ? "Нет активных заданий для отображения." : "Архив отгрузок пуст."}
+            </p>
           ) : (
             <TaskRegistryTable
               rows={documents.map((doc) => ({

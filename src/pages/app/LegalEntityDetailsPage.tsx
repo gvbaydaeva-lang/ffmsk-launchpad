@@ -460,6 +460,8 @@ const LegalEntityDetailsPage = () => {
   const [outboundPersistStatus, setOutboundPersistStatus] = React.useState<"durable" | "durable_warn" | "fail" | null>(null);
   const [selectedInboundDocId, setSelectedInboundDocId] = React.useState<string | null>(null);
   const [selectedOutboundDocId, setSelectedOutboundDocId] = React.useState<string | null>(null);
+  const [inboundViewMode, setInboundViewMode] = React.useState<"active" | "archive">("active");
+  const [outboundViewMode, setOutboundViewMode] = React.useState<"active" | "archive">("active");
   const inboundDraftsRef = React.useRef<Record<string, InboundRowDraft>>({});
   const [form, setForm] = React.useState({
     category: "",
@@ -568,8 +570,23 @@ const LegalEntityDetailsPage = () => {
       })
       .sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
   }, [outboundRows, outboundRowDrafts]);
-  const selectedInboundDoc = inboundDocuments.find((x) => x.id === selectedInboundDocId) ?? null;
-  const selectedOutboundDoc = outboundDocuments.find((x) => x.id === selectedOutboundDocId) ?? null;
+  const inboundDocumentsFiltered = React.useMemo(
+    () =>
+      inboundDocuments.filter((doc) => {
+        const wf = workflowFromInbound(doc);
+        return inboundViewMode === "active" ? wf !== "completed" : wf === "completed";
+      }),
+    [inboundDocuments, inboundViewMode],
+  );
+  const outboundDocumentsFiltered = React.useMemo(
+    () =>
+      outboundDocuments.filter((doc) =>
+        outboundViewMode === "active" ? doc.workflowStatus !== "completed" : doc.workflowStatus === "completed",
+      ),
+    [outboundDocuments, outboundViewMode],
+  );
+  const selectedInboundDoc = inboundDocumentsFiltered.find((x) => x.id === selectedInboundDocId) ?? null;
+  const selectedOutboundDoc = outboundDocumentsFiltered.find((x) => x.id === selectedOutboundDocId) ?? null;
   const filteredProducts = React.useMemo(() => {
     const s = productSearch.trim().toLowerCase();
     if (!s) return rows;
@@ -639,16 +656,16 @@ const LegalEntityDetailsPage = () => {
   }, [outboundRowsForUi, rows, catalog]);
 
   React.useEffect(() => {
-    if (selectedInboundDocId && !inboundDocuments.some((doc) => doc.id === selectedInboundDocId)) {
+    if (selectedInboundDocId && !inboundDocumentsFiltered.some((doc) => doc.id === selectedInboundDocId)) {
       setSelectedInboundDocId(null);
     }
-  }, [inboundDocuments, selectedInboundDocId]);
+  }, [inboundDocumentsFiltered, selectedInboundDocId]);
 
   React.useEffect(() => {
-    if (selectedOutboundDocId && !outboundDocuments.some((doc) => doc.id === selectedOutboundDocId)) {
+    if (selectedOutboundDocId && !outboundDocumentsFiltered.some((doc) => doc.id === selectedOutboundDocId)) {
       setSelectedOutboundDocId(null);
     }
-  }, [outboundDocuments, selectedOutboundDocId]);
+  }, [outboundDocumentsFiltered, selectedOutboundDocId]);
 
   React.useEffect(() => {
     console.log("[wms:outbound] загрузка на страницу юрлица", {
@@ -2324,6 +2341,26 @@ const LegalEntityDetailsPage = () => {
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-600">Задания на приёмку по клиенту</p>
             <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
+                <Button
+                  type="button"
+                  variant={inboundViewMode === "active" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => setInboundViewMode("active")}
+                >
+                  Активные
+                </Button>
+                <Button
+                  type="button"
+                  variant={inboundViewMode === "archive" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => setInboundViewMode("archive")}
+                >
+                  Архив
+                </Button>
+              </div>
               <Button variant="outline" className="gap-2" onClick={downloadInboundTaskTemplate}>
                 <Download className="h-4 w-4" />
                 Скачать шаблон
@@ -2448,14 +2485,14 @@ const LegalEntityDetailsPage = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {inboundDocuments.length === 0 ? (
+                    {inboundDocumentsFiltered.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={9} className="px-3 py-6 text-center text-sm text-slate-500">
-                          Документов приёмки пока нет
+                          {inboundViewMode === "active" ? "Активных документов приёмки нет" : "Архив приёмки пуст"}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      inboundDocuments.map((doc) => {
+                      inboundDocumentsFiltered.map((doc) => {
                         const wf = workflowFromInbound(doc);
                         const planSum = doc.items.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0);
                         const factSum = doc.items.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0);
@@ -2853,6 +2890,26 @@ const LegalEntityDetailsPage = () => {
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-600">Задания на отгрузку по клиенту</p>
             <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
+                <Button
+                  type="button"
+                  variant={outboundViewMode === "active" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => setOutboundViewMode("active")}
+                >
+                  Активные
+                </Button>
+                <Button
+                  type="button"
+                  variant={outboundViewMode === "archive" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => setOutboundViewMode("archive")}
+                >
+                  Архив
+                </Button>
+              </div>
               {outboundPersistStatus === "durable" && (
                 <span className="text-xs font-medium text-emerald-600">✓ Сохранено (локальная БД + IndexedDB)</span>
               )}
@@ -2960,14 +3017,14 @@ const LegalEntityDetailsPage = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {outboundDocuments.length === 0 ? (
+                    {outboundDocumentsFiltered.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="px-3 py-6 text-center text-sm text-slate-500">
-                          Заданий на отгрузку пока нет
+                          {outboundViewMode === "active" ? "Активных заданий на отгрузку нет" : "Архив отгрузок пуст"}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      outboundDocuments.map((doc) => {
+                      outboundDocumentsFiltered.map((doc) => {
                         const open = selectedOutboundDocId === doc.id;
                         return (
                           <TableRow

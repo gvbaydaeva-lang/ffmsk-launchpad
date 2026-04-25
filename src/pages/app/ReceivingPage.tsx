@@ -28,6 +28,7 @@ const ReceivingPage = () => {
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
+  const [viewMode, setViewMode] = React.useState<"active" | "archive">("active");
   const [warehouseFilter, setWarehouseFilter] = React.useState("all");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
@@ -51,6 +52,8 @@ const ReceivingPage = () => {
         });
     const filtered = searched.filter((r) => {
       const wf = workflowFromInbound(r);
+      if (viewMode === "active" && wf === "completed") return false;
+      if (viewMode === "archive" && wf !== "completed") return false;
       if (statusFilter !== "all" && wf !== statusFilter) return false;
       if (warehouseFilter !== "all" && r.destinationWarehouse !== warehouseFilter) return false;
       const dt = Date.parse(r.eta || "");
@@ -65,7 +68,7 @@ const ReceivingPage = () => {
       return true;
     });
     return [...filtered].sort((a, b) => (Date.parse(b.eta || "") || 0) - (Date.parse(a.eta || "") || 0));
-  }, [data, mp, legalEntityId, search, entityName, statusFilter, warehouseFilter, dateFrom, dateTo]);
+  }, [data, mp, legalEntityId, search, entityName, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
   const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
   const startedSupply = rows.find((r) => r.id === startedSupplyId) ?? null;
 
@@ -230,6 +233,26 @@ const ReceivingPage = () => {
           <p className="mt-1 text-sm text-slate-600">Входящие поставки по маркетплейсам и юрлицам.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
+            <Button
+              type="button"
+              variant={viewMode === "active" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode("active")}
+            >
+              Активные
+            </Button>
+            <Button
+              type="button"
+              variant={viewMode === "archive" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode("archive")}
+            >
+              Архив
+            </Button>
+          </div>
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -285,7 +308,9 @@ const ReceivingPage = () => {
             ) : error ? (
               <p className="p-2 text-sm text-destructive">Не удалось загрузить список.</p>
             ) : rows.length === 0 ? (
-              <p className="text-sm text-slate-600">Нет документов приёмки.</p>
+              <p className="text-sm text-slate-600">
+                {viewMode === "active" ? "Нет активных документов приёмки." : "Архив приёмки пуст."}
+              </p>
             ) : (
               <TaskRegistryTable
                 rows={rows.map((supply) => {

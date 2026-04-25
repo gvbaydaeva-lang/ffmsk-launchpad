@@ -64,6 +64,7 @@ const PackingPage = () => {
   const [startedAssignmentId, setStartedAssignmentId] = React.useState<string | null>(null);
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
+  const [viewMode, setViewMode] = React.useState<"active" | "archive">("active");
   const [warehouseFilter, setWarehouseFilter] = React.useState("all");
   const [mpFilter, setMpFilter] = React.useState<"all" | "wb" | "ozon" | "yandex">("all");
   const [dateFrom, setDateFrom] = React.useState("");
@@ -114,6 +115,9 @@ const PackingPage = () => {
       .filter((group) => {
         const first = group.shipments[0];
         if (!first) return false;
+        const wfNorm = normalizeWorkflowStatus(group.workflowStatus);
+        if (viewMode === "active" && wfNorm === "completed") return false;
+        if (viewMode === "archive" && wfNorm !== "completed") return false;
         if (statusFilter !== "all" && normalizeWorkflowStatus(group.workflowStatus) !== statusFilter) return false;
         if (warehouseFilter !== "all" && first.sourceWarehouse !== warehouseFilter) return false;
         if (mpFilter !== "all" && first.marketplace !== mpFilter) return false;
@@ -137,7 +141,7 @@ const PackingPage = () => {
         const db = Date.parse(b.shipments[0]?.createdAt || "") || 0;
         return db - da;
       });
-  }, [allShipments, legal, search, statusFilter, warehouseFilter, mpFilter, dateFrom, dateTo]);
+  }, [allShipments, legal, search, viewMode, statusFilter, warehouseFilter, mpFilter, dateFrom, dateTo]);
   const warehouses = React.useMemo(
     () => Array.from(new Set(assignments.map((a) => a.shipments[0]?.sourceWarehouse || ""))).filter(Boolean),
     [assignments],
@@ -578,6 +582,26 @@ const PackingPage = () => {
       </div>
       {!startedAssignment ? (
         <div className="flex flex-wrap gap-2">
+          <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
+            <Button
+              type="button"
+              variant={viewMode === "active" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode("active")}
+            >
+              Активные
+            </Button>
+            <Button
+              type="button"
+              variant={viewMode === "archive" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode("archive")}
+            >
+              Архив
+            </Button>
+          </div>
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: №, юрлицо, артикул, баркод" className="w-[300px]" />
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | TaskWorkflowStatus)}>
             <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
@@ -626,7 +650,9 @@ const PackingPage = () => {
             ) : error ? (
               <p className="text-sm text-destructive">Не удалось загрузить список отгрузок.</p>
             ) : assignments.length === 0 ? (
-              <p className="text-sm text-slate-600">Активных заданий нет.</p>
+              <p className="text-sm text-slate-600">
+                {viewMode === "active" ? "Активных заданий нет." : "Архив упаковки пуст."}
+              </p>
             ) : (
               <TaskRegistryTable
                 rows={assignments.map((assignment) => {
