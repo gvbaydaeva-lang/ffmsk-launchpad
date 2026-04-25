@@ -15,7 +15,7 @@ function PrimaryBadge({ status }: { status: TaskWorkflowStatus }) {
     return (
       <span
         className={cn(
-          "inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
+          "inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
           "bg-violet-100 text-violet-800 ring-violet-200",
         )}
       >
@@ -27,7 +27,7 @@ function PrimaryBadge({ status }: { status: TaskWorkflowStatus }) {
     return (
       <span
         className={cn(
-          "inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
+          "inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
           "bg-emerald-100 text-emerald-800 ring-emerald-200",
         )}
       >
@@ -38,7 +38,7 @@ function PrimaryBadge({ status }: { status: TaskWorkflowStatus }) {
   return (
     <span
       className={cn(
-        "inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
+        "inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
         "bg-blue-100 text-blue-800 ring-blue-200",
       )}
     >

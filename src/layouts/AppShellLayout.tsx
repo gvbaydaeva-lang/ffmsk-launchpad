@@ -137,7 +137,7 @@ const AppShellLayout = () => {
         </SidebarContent>
       </Sidebar>
       <SidebarRail />
-      <SidebarInset className="bg-slate-50">
+      <SidebarInset className="min-w-0 overflow-x-hidden bg-slate-50">
         <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 bg-white/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-white/80 md:px-4">
           <SidebarTrigger className="-ml-0.5 text-slate-700" />
           <Separator orientation="vertical" className="mr-1 h-6 bg-slate-200" />
@@ -169,7 +169,7 @@ const AppShellLayout = () => {
             </kbd>
           </Button>
         </header>
-        <div className={cn("flex flex-1 flex-col gap-6 p-4 pb-10 md:p-6")}>
+        <div className={cn("flex min-w-0 flex-1 flex-col gap-6 overflow-x-hidden p-4 pb-10 md:p-6")}>
           <Outlet />
         </div>
       </SidebarInset>

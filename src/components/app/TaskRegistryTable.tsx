@@ -50,17 +50,18 @@ export default function TaskRegistryTable({
   };
 
   return (
-    <Table>
+    <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
+    <Table className="min-w-[1100px] table-fixed">
       <TableHeader>
         <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
-          <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
-          <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
+          <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+          <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
           {showLegalEntity ? (
-            <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
+            <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
           ) : null}
-          <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
-          <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
-          <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
+          <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
+          <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+          <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
           <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
           <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
           <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
@@ -85,7 +86,7 @@ export default function TaskRegistryTable({
                 onClick={() => onOpen?.(row.id)}
               >
                 <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">{row.createdAtLabel || "—"}</TableCell>
-                <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{row.taskNo || "—"}</TableCell>
+                <TableCell className="max-w-[180px] truncate whitespace-nowrap px-3 py-2 font-medium">{row.taskNo || "—"}</TableCell>
                 {showLegalEntity ? <TableCell className="max-w-[210px] truncate px-3 py-2">{row.legalEntityLabel || "—"}</TableCell> : null}
                 <TableCell className="px-3 py-2">
                   <StatusBadge status={row.status} mismatch={row.mismatch} requiresReview={row.requiresReview} />
@@ -126,5 +127,6 @@ export default function TaskRegistryTable({
         )}
       </TableBody>
     </Table>
+    </div>
   );
 }

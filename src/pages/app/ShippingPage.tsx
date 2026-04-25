@@ -110,6 +110,9 @@ const ShippingPage = () => {
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
+  const toggleSelectedDoc = React.useCallback((id: string) => {
+    setSelectedId((prev) => (prev === id ? null : id));
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -118,7 +121,7 @@ const ShippingPage = () => {
           <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Отгрузка</h2>
           <p className="mt-1 text-sm text-slate-600">Задания на выдачу со склада FF и контроль остатков.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
             <Button
               type="button"
@@ -207,12 +210,8 @@ const ShippingPage = () => {
               selectedId={selectedId}
               actionLabel="Открыть"
               disableActionForCompleted={false}
-              onOpen={(id) => setSelectedId((prev) => (prev === id ? null : id))}
-              onAction={(id) => {
-                const doc = documents.find((x) => x.id === id);
-                if (!doc) return;
-                setSelectedId((prev) => (prev === id ? null : id));
-              }}
+              onOpen={toggleSelectedDoc}
+              onAction={toggleSelectedDoc}
             />
           )}
         </CardContent>
