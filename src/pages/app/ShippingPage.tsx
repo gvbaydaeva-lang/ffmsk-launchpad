@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
-import TaskItemsTable from "@/components/app/TaskItemsTable";
+import ShippingTaskWorkScreen from "@/components/app/ShippingTaskWorkScreen";
 import { Button } from "@/components/ui/button";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
@@ -43,7 +43,6 @@ const ShippingPage = () => {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
-  const detailsRef = React.useRef<HTMLDivElement | null>(null);
 
   const filtered = React.useMemo(() => {
     const base = filterOutboundByMarketplace(data ?? [], mp);
@@ -112,22 +111,12 @@ const ShippingPage = () => {
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
   const toggleSelectedDoc = React.useCallback((id: string) => {
-    console.log("OPEN SHIPPING TASK", id);
-    setSelectedId((prev) => {
-      const next = prev === id ? null : id;
-      return next;
-    });
+    setSelectedId((prev) => (prev === id ? null : id));
   }, []);
-
-  React.useEffect(() => {
-    if (!selectedDoc) return;
-    requestAnimationFrame(() => {
-      detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }, [selectedDoc]);
 
   return (
     <div className="space-y-4">
+      {!selectedDoc ? (
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Отгрузка</h2>
@@ -186,9 +175,16 @@ const ShippingPage = () => {
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" />
         </div>
       </div>
+      ) : (
+        <div>
+          <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Отгрузка</h2>
+          <p className="mt-1 text-sm text-slate-600">Просмотр выбранного задания.</p>
+        </div>
+      )}
 
       <GlobalFiltersBar />
 
+      {!selectedDoc ? (
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader>
           <CardTitle className="font-display text-lg text-slate-900">Реестр заданий на отгрузку</CardTitle>
@@ -228,33 +224,39 @@ const ShippingPage = () => {
           )}
         </CardContent>
       </Card>
+      ) : null}
 
       {selectedDoc ? (
-        <Card ref={detailsRef} className="border-slate-200 bg-slate-50/40 shadow-sm">
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="text-sm">Состав задания {selectedDoc.assignmentNo}</CardTitle>
+        <div className="space-y-3">
+          <div className="flex justify-end">
             <Button variant="outline" size="sm" asChild>
               <Link to={`/legal-entities/${selectedDoc.legalEntityId}?tab=shipping`}>Открыть в карточке юрлица</Link>
             </Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            <TaskItemsTable
-              rows={selectedDoc.shipments.map((sh) => ({
-                id: sh.id,
-                name: sh.importName || "—",
-                article: sh.importArticle || "—",
-                barcode: sh.importBarcode || "—",
-                marketplace: sh.marketplace.toUpperCase(),
-                color: sh.importColor || "—",
-                size: sh.importSize || "—",
-                plan: Number(sh.plannedUnits) || 0,
-                fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
-                warehouse: sh.sourceWarehouse || "—",
-                status: sh.workflowStatus ?? "pending",
-              }))}
-            />
-          </CardContent>
-        </Card>
+          </div>
+          <ShippingTaskWorkScreen
+            assignmentNo={selectedDoc.assignmentNo}
+            legalEntityName={entities?.find((e) => e.id === selectedDoc.legalEntityId)?.shortName ?? selectedDoc.legalEntityId}
+            warehouseName={selectedDoc.sourceWarehouse}
+            createdAt={selectedDoc.createdAt}
+            status={selectedDoc.workflowStatus}
+            plan={selectedDoc.planned}
+            fact={selectedDoc.fact}
+            rows={selectedDoc.shipments.map((sh) => ({
+              id: sh.id,
+              name: sh.importName || "—",
+              article: sh.importArticle || "—",
+              barcode: sh.importBarcode || "—",
+              marketplace: sh.marketplace.toUpperCase(),
+              color: sh.importColor || "—",
+              size: sh.importSize || "—",
+              plan: Number(sh.plannedUnits) || 0,
+              fact: Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0,
+              warehouse: sh.sourceWarehouse || "—",
+              status: sh.workflowStatus ?? "pending",
+            }))}
+            onBack={() => setSelectedId(null)}
+          />
+        </div>
       ) : null}
     </div>
   );

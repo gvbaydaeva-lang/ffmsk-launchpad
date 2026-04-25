@@ -225,9 +225,8 @@ const ReceivingPage = () => {
   }, [rows, startedSupplyId]);
 
   const backToReceivingList = React.useCallback(() => {
-    console.log("BACK TO RECEIVING LIST", startedSupplyId);
     setStartedSupplyId(null);
-  }, [startedSupplyId]);
+  }, []);
 
 
   return (
