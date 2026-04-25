@@ -805,6 +805,30 @@ const LegalEntityDetailsPage = () => {
     });
   };
 
+  const autoSaveInboundQty = (ref: { rowId: string; inboundId: string; rowIndex: number }, field: "plan" | "fact", raw: string) => {
+    const value = String(Math.max(0, Number(raw) || 0));
+    if (field === "plan") setInboundDraftPlanned(ref.rowId, value);
+    else setInboundDraftFactual(ref.rowId, value);
+
+    const source = inboundRows.find((x) => x.id === ref.inboundId);
+    if (!source) return;
+    const rowKey = ref.rowId;
+    const draft = inboundRowDrafts[rowKey];
+    const nextPlan = field === "plan" ? Number(value) || 0 : Number(draft?.plannedQuantity ?? source.items[ref.rowIndex]?.plannedQuantity ?? 0) || 0;
+    const nextFact = field === "fact" ? Number(value) || 0 : Number(draft?.factualQuantity ?? source.items[ref.rowIndex]?.factualQuantity ?? 0) || 0;
+
+    const nextItems = source.items.map((it, idx) =>
+      idx === ref.rowIndex
+        ? {
+            ...it,
+            plannedQuantity: nextPlan,
+            factualQuantity: nextFact,
+          }
+        : it,
+    );
+    void updateInboundDraft({ id: ref.inboundId, items: nextItems, marketplace: draft?.marketplace ?? source.marketplace });
+  };
+
   const effInboundPlanned = (inboundId: string, rowIndex: number) => {
     const key = `${inboundId}-${rowIndex}`;
     const src = inboundRows.find((x) => x.id === inboundId)?.items[rowIndex];
@@ -894,6 +918,28 @@ const LegalEntityDetailsPage = () => {
   const effOutboundFact = (sh: OutboundShipment) =>
     Number(outboundRowDrafts[sh.id]?.factualUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
 
+  const autoSaveOutboundQty = (shipmentId: string, field: "plan" | "fact", raw: string) => {
+    const value = String(Math.max(0, Number(raw) || 0));
+    setOutboundRowDrafts((s) => {
+      const cur = s[shipmentId];
+      if (!cur) return s;
+      return {
+        ...s,
+        [shipmentId]: {
+          ...cur,
+          plannedUnits: field === "plan" ? value : cur.plannedUnits,
+          factualUnits: field === "fact" ? value : cur.factualUnits,
+        },
+      };
+    });
+    if (field === "plan") {
+      void updateOutboundDraft({ id: shipmentId, patch: { plannedUnits: Number(value) || 0 } });
+      return;
+    }
+    const fact = Number(value) || 0;
+    void updateOutboundDraft({ id: shipmentId, patch: { packedUnits: fact, shippedUnits: fact } });
+  };
+
   const beepError = () => {
     if (typeof window === "undefined") return;
     const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -968,7 +1014,7 @@ const LegalEntityDetailsPage = () => {
     for (const sh of outboundRowsForUi) {
       warehousesSet.add(sh.sourceWarehouse || "—");
       const product = productByEntity.get(sh.productId) ?? productByGlobal.get(sh.productId) ?? null;
-      const key = matrixLineKey(sh, product);
+      const key = sh.id;
       const name = (product?.name || "").trim() || (sh.importName || "").trim() || "";
       const article = (product?.supplierArticle || "").trim() || (sh.importArticle || "").trim() || "";
       const barcode = (product?.barcode || "").trim() || (sh.importBarcode || "").trim() || "";
@@ -976,29 +1022,20 @@ const LegalEntityDetailsPage = () => {
       const size = (sh.importSize || "").trim() || (product?.size || "").trim() || "";
       const wh = sh.sourceWarehouse || "—";
 
-      let line = lines.get(key);
-      if (!line) {
-        line = {
-          key,
-          leaderShipmentId: sh.id,
-          name,
-          article,
-          barcode,
-          color,
-          size,
-          marketplace: sh.marketplace,
-          byWarehouse: new Map(),
-          totalPlan: 0,
-          totalFact: 0,
-        };
-        lines.set(key, line);
-      } else {
-        line.name = (line.name || "").trim() || (name || "").trim() || line.name;
-        line.article = (line.article || "").trim() || (article || "").trim() || line.article;
-        line.barcode = (line.barcode || "").trim() || (barcode || "").trim() || line.barcode;
-        line.color = (line.color || "").trim() || (color || "").trim() || line.color;
-        line.size = (line.size || "").trim() || (size || "").trim() || line.size;
-      }
+      const line: OutboundMatrixLine = {
+        key,
+        leaderShipmentId: sh.id,
+        name,
+        article,
+        barcode,
+        color,
+        size,
+        marketplace: sh.marketplace,
+        byWarehouse: new Map(),
+        totalPlan: 0,
+        totalFact: 0,
+      };
+      lines.set(key, line);
       const cell = line.byWarehouse.get(wh) ?? { shipments: [], planned: 0, fact: 0 };
       cell.shipments.push(sh);
       cell.planned += sh.plannedUnits;
@@ -1089,47 +1126,27 @@ const LegalEntityDetailsPage = () => {
 
     for (const x of flat) {
       warehousesSet.add(x.warehouse);
-      const key = inboundMatrixLineKey(x.item);
-      let line = lines.get(key);
-      if (!line) {
-        line = {
-          key,
-          leaderRowId: x.rowId,
-          name: x.item.name,
-          supplierArticle: x.item.supplierArticle,
-          barcode: x.item.barcode,
-          color: x.item.color,
-          size: x.item.size,
-          marketplace: x.marketplace,
-          byWarehouse: new Map(),
-          totalPlan: 0,
-          totalFact: 0,
-        };
-        lines.set(key, line);
-      } else {
-        const nm = (x.item.name || "").trim();
-        if (!(line.name || "").trim() && nm) line.name = nm;
-        if (!(line.supplierArticle || "").trim() && (x.item.supplierArticle || "").trim()) line.supplierArticle = x.item.supplierArticle;
-        if (!(line.barcode || "").trim() && (x.item.barcode || "").trim()) line.barcode = x.item.barcode;
-        if (!(line.color || "").trim() && (x.item.color || "").trim()) line.color = x.item.color;
-        if (!(line.size || "").trim() && (x.item.size || "").trim()) line.size = x.item.size;
-      }
+      const key = x.rowId;
+      const line: InboundMatrixLine = {
+        key,
+        leaderRowId: x.rowId,
+        name: x.item.name,
+        supplierArticle: x.item.supplierArticle,
+        barcode: x.item.barcode,
+        color: x.item.color,
+        size: x.item.size,
+        marketplace: x.marketplace,
+        byWarehouse: new Map(),
+        totalPlan: draftP(x.inboundId, x.rowIndex),
+        totalFact: draftF(x.inboundId, x.rowIndex),
+      };
+      lines.set(key, line);
       const cell = line.byWarehouse.get(x.warehouse) ?? { rowRefs: [] };
       cell.rowRefs.push({ rowId: x.rowId, inboundId: x.inboundId, rowIndex: x.rowIndex });
       line.byWarehouse.set(x.warehouse, cell);
     }
 
-    let matrixLines: InboundMatrixLine[] = Array.from(lines.values()).map((line) => {
-      let tp = 0;
-      let tf = 0;
-      line.byWarehouse.forEach((c) => {
-        c.rowRefs.forEach((r) => {
-          tp += draftP(r.inboundId, r.rowIndex);
-          tf += draftF(r.inboundId, r.rowIndex);
-        });
-      });
-      return { ...line, totalPlan: tp, totalFact: tf };
-    });
+    let matrixLines: InboundMatrixLine[] = Array.from(lines.values());
 
     if (showOnlyDiff) {
       matrixLines = matrixLines.filter((l) => l.totalPlan !== l.totalFact);
@@ -2680,30 +2697,28 @@ const LegalEntityDetailsPage = () => {
                               )}
                             </td>
                             <td className={`${cellBase} text-center tabular-nums font-medium`}>
-                              {inboundMatrixEdit && soleRef ? (
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
-                                  value={String(effInboundPlanned(soleRef.inboundId, soleRef.rowIndex))}
-                                  onChange={(e) => setInboundDraftPlanned(soleRef.rowId, e.target.value)}
-                                />
-                              ) : (
-                                line.totalPlan
-                              )}
+                              <Input
+                                type="number"
+                                min={0}
+                                className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                value={String(effInboundPlanned(soleRef?.inboundId ?? "", soleRef?.rowIndex ?? 0))}
+                                onChange={(e) => {
+                                  if (!soleRef) return;
+                                  autoSaveInboundQty(soleRef, "plan", e.target.value);
+                                }}
+                              />
                             </td>
                             <td className={`${cellBase} text-center tabular-nums`}>
-                              {inboundMatrixEdit && soleRef ? (
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
-                                  value={String(effInboundFactual(soleRef.inboundId, soleRef.rowIndex))}
-                                  onChange={(e) => setInboundDraftFactual(soleRef.rowId, e.target.value)}
-                                />
-                              ) : (
-                                line.totalFact
-                              )}
+                              <Input
+                                type="number"
+                                min={0}
+                                className="mx-auto h-7 w-[72px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                value={String(effInboundFactual(soleRef?.inboundId ?? "", soleRef?.rowIndex ?? 0))}
+                                onChange={(e) => {
+                                  if (!soleRef) return;
+                                  autoSaveInboundQty(soleRef, "fact", e.target.value);
+                                }}
+                              />
                             </td>
                             <td className={`${cellBase} text-center font-medium ${statusCell}`}>{statusText}</td>
                           </tr>
@@ -3126,8 +3141,24 @@ const LegalEntityDetailsPage = () => {
                                   mpLabel
                                 )}
                               </td>
-                              <td className={`${cellBase} text-center tabular-nums font-medium ${diffPlanFact}`}>{totalPlanDraft}</td>
-                              <td className={`${cellBase} text-center tabular-nums ${diffPlanFact}`}>{totalFactDraft}</td>
+                              <td className={`${cellBase} text-center tabular-nums font-medium ${diffPlanFact}`}>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="mx-auto h-7 w-[80px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                  value={String(totalPlanDraft)}
+                                  onChange={(e) => autoSaveOutboundQty(line.leaderShipmentId, "plan", e.target.value)}
+                                />
+                              </td>
+                              <td className={`${cellBase} text-center tabular-nums ${diffPlanFact}`}>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="mx-auto h-7 w-[80px] border-slate-300 bg-white px-1 text-center text-[11px] tabular-nums"
+                                  value={String(totalFactDraft)}
+                                  onChange={(e) => autoSaveOutboundQty(line.leaderShipmentId, "fact", e.target.value)}
+                                />
+                              </td>
                               {shippingMatrix.warehouses.map((wh) => {
                                 const cell = line.byWarehouse.get(wh);
                                 const whCell = `${cellBase} text-center tabular-nums`;
