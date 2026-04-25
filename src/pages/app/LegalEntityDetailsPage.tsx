@@ -36,7 +36,11 @@ import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
 import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
-import { formatOperationLogType, operationLogTypeClass } from "@/lib/operationLogDisplay";
+import {
+  formatOperationLogDescription,
+  formatOperationLogShortStatus,
+  operationLogTypeBadgeClass,
+} from "@/lib/operationLogDisplay";
 import {
   EXCEL_STICKY_NAME_TD,
   EXCEL_STICKY_NAME_TH,
@@ -3445,7 +3449,7 @@ const LegalEntityDetailsPage = () => {
                         <th className={`${STATIC_HEADER_BASE} min-w-[132px] whitespace-nowrap`}>Дата</th>
                         <th className={`${STATIC_HEADER_BASE} min-w-[220px]`}>Описание</th>
                         <th className={`${STATIC_HEADER_BASE} min-w-[100px] whitespace-nowrap`}>№ задания</th>
-                        <th className={`${STATIC_HEADER_BASE} min-w-[160px] whitespace-nowrap`}>Тип операции</th>
+                        <th className={`${STATIC_HEADER_BASE} min-w-[108px] whitespace-nowrap`}>Тип операции</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3457,10 +3461,12 @@ const LegalEntityDetailsPage = () => {
                             <td className={`${cell} whitespace-nowrap tabular-nums`}>
                               {format(parseISO(ev.createdAt), "d MMM yyyy HH:mm", { locale: ru })}
                             </td>
-                            <td className={`${cell} max-w-[360px]`}>{ev.description}</td>
+                            <td className={`${cell} max-w-[360px]`}>{formatOperationLogDescription(ev.description)}</td>
                             <td className={`${cell} whitespace-nowrap font-mono`}>{ev.taskNumber ?? ev.taskId ?? "—"}</td>
-                            <td className={`${cell} font-medium ${operationLogTypeClass(ev.type)}`}>
-                              {formatOperationLogType(ev.type)}
+                            <td className={`${cell}`}>
+                              <span className={operationLogTypeBadgeClass(ev.type)}>
+                                {formatOperationLogShortStatus(ev.type)}
+                              </span>
                             </td>
                           </tr>
                         );

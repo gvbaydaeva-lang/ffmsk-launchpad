@@ -61,7 +61,7 @@ export function useInventoryMovements() {
           taskNumber: first.taskNumber,
           legalEntityId: first.legalEntityId,
           legalEntityName: first.legalEntityName,
-          description: `Изменение остатков по заданию №${first.taskNumber || first.taskId}`,
+          description: `Остатки обновлены по заданию №${first.taskNumber || first.taskId}`,
         });
         qc.setQueryData<OperationLog[]>(["wms", "operation-logs"], (prev) => [row, ...(prev ?? [])]);
       }
