@@ -396,6 +396,69 @@ const PackingPage = () => {
       focusScanInput();
       return;
     }
+    const invSnapshotForScan =
+      (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
+    const balanceMapForScan = getBalanceByKeyMap(invSnapshotForScan);
+    const byProductForScan = new Map((catalog ?? []).map((p) => [p.id, p]));
+    const simulatePackedAfterThisScan = (sh: OutboundShipment) => {
+      const cur = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+      return sh.id === shipment.id ? cur + 1 : cur;
+    };
+    const needByKeyAfterScan = new Map<string, number>();
+    for (const sh of startedAssignment.shipments) {
+      const product = byProductForScan.get(sh.productId) ?? null;
+      const plan = Number(sh.plannedUnits) || 0;
+      const packed = simulatePackedAfterThisScan(sh);
+      const shipQty = Math.min(packed, plan);
+      if (shipQty <= 0) continue;
+      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+      const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
+      const color = (sh.importColor || product?.color || "").trim() || "—";
+      const size = (sh.importSize || product?.size || "").trim() || "—";
+      const wh = (sh.sourceWarehouse || "").trim() || "—";
+      const balKey = makeInventoryBalanceKey({
+        legalEntityId: sh.legalEntityId,
+        warehouseName: wh,
+        barcode,
+        article,
+        color,
+        size,
+      });
+      needByKeyAfterScan.set(balKey, (needByKeyAfterScan.get(balKey) ?? 0) + shipQty);
+    }
+    let packingScanStockInsufficient = false;
+    for (const [balKey, need] of needByKeyAfterScan) {
+      const have = balanceMapForScan.get(balKey) ?? 0;
+      if (have < need) {
+        packingScanStockInsufficient = true;
+        break;
+      }
+    }
+    if (packingScanStockInsufficient) {
+      playScanErrorSound();
+      triggerFlash("error");
+      setHighlightedLineKey(lineByBarcode.key);
+      setLineHighlightTone("error");
+      clearLineHighlightLater();
+      setLastScanResult({ status: "error", message: "Недостаточно товара на остатке" });
+      const leNameStock = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const noStock =
+        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
+        startedAssignment.shipments[0]?.assignmentId?.trim() ||
+        startedAssignment.shipments[0]?.id ||
+        "—";
+      appendOperationLog({
+        type: "STOCK_ERROR",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: leNameStock,
+        taskId: startedAssignment.id,
+        taskNumber: noStock,
+        description: `Ошибка: недостаточно товара на остатке при сканировании (штрихкод: ${code})`,
+      });
+      toast.error("Недостаточно товара на остатке");
+      focusScanInput();
+      return;
+    }
     setIsSubmittingScan(true);
     try {
       const nextFact = (shipment.packedUnits ?? shipment.shippedUnits ?? 0) + 1;
