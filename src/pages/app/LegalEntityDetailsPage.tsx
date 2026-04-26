@@ -47,7 +47,6 @@ import type {
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
 import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
-import { wmsStockBreakdownForCatalogProduct } from "@/lib/inventoryAvailableForOutbound";
 import {
   mergePriorityFromShipments,
   outboundPriorityBadgeClass,
@@ -591,34 +590,48 @@ const LegalEntityDetailsPage = () => {
     [outbound, outboundDebugAll, outboundRows],
   );
 
+  /** WMS по строкам каталога для выбранного в форме склада (остаток по движениям, резерв, доступно). */
+  const createOutboundProductWmsBreakdowns = React.useMemo(() => {
+    const map = new Map<string, { balanceQty: number; reserveQty: number; availableQty: number }>();
+    if (!entityIdNorm) return map;
+    const wh = (outboundDraft.warehouse || "").trim() || "Склад Коледино";
+    const balanceByKey = getBalanceByKeyMap(inventoryMovements);
+    const reserveByKey = reservedQtyByBalanceKey(outbound ?? [], rows);
+    for (const p of rows) {
+      const balKey = makeInventoryBalanceKey({
+        legalEntityId: entityIdNorm,
+        warehouseName: wh || "—",
+        barcode: (p.barcode || "").trim() || "—",
+        article: (p.supplierArticle || "").trim() || "—",
+        color: (p.color || "").trim() || "—",
+        size: (p.size || "").trim() || "—",
+      });
+      const balanceQty = balanceByKey.get(balKey) ?? 0;
+      const reserveQty = reserveByKey.get(balKey) ?? 0;
+      map.set(p.id, { balanceQty, reserveQty, availableQty: balanceQty - reserveQty });
+    }
+    return map;
+  }, [entityIdNorm, outboundDraft.warehouse, inventoryMovements, outbound, rows]);
+
   const manualOutboundCreateStockPreview = React.useMemo(() => {
     const plan = Number(outboundDraft.quantity) || 0;
     if (!entity || !selectedOutboundProductId) {
-      return { breakdown: null as ReturnType<typeof wmsStockBreakdownForCatalogProduct>, plan, shortage: 0, hasShortage: false };
+      return {
+        breakdown: null as { balanceQty: number; reserveQty: number; availableQty: number } | null,
+        plan,
+        shortage: 0,
+        hasShortage: false,
+        shortageKind: null as "reserve" | "empty" | null,
+      };
     }
-    const warehouseName = outboundDraft.warehouse.trim() || "Склад Коледино";
-    const breakdown = wmsStockBreakdownForCatalogProduct({
-      movements: inventoryMovements,
-      outbound: outbound ?? [],
-      catalog: rows,
-      legalEntityId: entity.id.trim(),
-      warehouseName,
-      productId: selectedOutboundProductId,
-    });
+    const breakdown = createOutboundProductWmsBreakdowns.get(selectedOutboundProductId) ?? null;
     if (!breakdown) {
-      return { breakdown: null, plan, shortage: 0, hasShortage: false };
+      return { breakdown: null, plan, shortage: 0, hasShortage: false, shortageKind: null };
     }
     const shortage = plan > breakdown.availableQty ? plan - breakdown.availableQty : 0;
-    return { breakdown, plan, shortage, hasShortage: shortage > 0 };
-  }, [
-    entity,
-    outboundDraft.quantity,
-    outboundDraft.warehouse,
-    selectedOutboundProductId,
-    inventoryMovements,
-    outbound,
-    rows,
-  ]);
+    const shortageKind = shortage > 0 ? (breakdown.balanceQty <= 0 ? "empty" : "reserve") : null;
+    return { breakdown, plan, shortage, hasShortage: shortage > 0, shortageKind };
+  }, [entity, selectedOutboundProductId, outboundDraft.quantity, createOutboundProductWmsBreakdowns]);
 
   const outboundExcelImportStockPreview = React.useMemo(() => {
     if (!entityIdNorm || outboundExcelRows.length === 0) {
@@ -3156,67 +3169,83 @@ const LegalEntityDetailsPage = () => {
                       Создать задание на отгрузку
                     </Button>
                   </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
-                    <div className="grid gap-3 py-2">
-                      {manualOutboundCreateStockPreview.hasShortage && (
-                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                          В отгрузке есть товары с недостаточным остатком
+                  <DialogContent className="flex max-h-[min(90vh,760px)] w-full max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+                    <DialogHeader className="shrink-0 space-y-1.5 border-b px-6 pb-3 pt-6 pr-14 text-left">
+                      <DialogTitle>Новое задание на отгрузку</DialogTitle>
+                    </DialogHeader>
+                    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+                      <div className="grid gap-3">
+                        {manualOutboundCreateStockPreview.hasShortage && (
+                          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                            В отгрузке есть товары с недостаточным остатком. Создание задания всё равно доступно.
+                          </div>
+                        )}
+                        <div className="grid gap-1.5">
+                          <Label>Поиск товара (название/баркод)</Label>
+                          <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
                         </div>
-                      )}
-                      <div className="grid gap-1.5">
-                        <Label>Поиск товара (название/баркод)</Label>
-                        <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label>Товар</Label>
-                        <Select value={selectedOutboundProductId} onValueChange={setSelectedOutboundProductId}>
-                          <SelectTrigger><SelectValue placeholder="Выберите товар из остатков" /></SelectTrigger>
-                          <SelectContent>
-                            {filteredProducts.filter((p) => p.stockOnHand > 0).map((p) => (
-                              <SelectItem key={p.id} value={p.id}>{p.name} · {p.barcode} · остаток {p.stockOnHand}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={outboundDraft.quantity} onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
-                      <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
-                      <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
-                      {selectedOutboundProductId && manualOutboundCreateStockPreview.breakdown ? (
-                        <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-800">
-                          <div className="tabular-nums">План: {manualOutboundCreateStockPreview.plan.toLocaleString("ru-RU")}</div>
-                          <div className="tabular-nums">Доступно: {manualOutboundCreateStockPreview.breakdown.availableQty.toLocaleString("ru-RU")}</div>
-                          <p className="mt-0.5 text-xs text-slate-500">
-                            Остаток по движениям {manualOutboundCreateStockPreview.breakdown.balanceQty.toLocaleString("ru-RU")}, резерв{" "}
-                            {manualOutboundCreateStockPreview.breakdown.reserveQty.toLocaleString("ru-RU")}
-                          </p>
-                          {manualOutboundCreateStockPreview.shortage > 0 ? (
-                            <div className="mt-1 font-medium text-red-600 tabular-nums">
-                              Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт
-                            </div>
-                          ) : null}
+                        <div className="grid gap-1.5">
+                          <Label>Товар</Label>
+                          <Select value={selectedOutboundProductId} onValueChange={setSelectedOutboundProductId}>
+                            <SelectTrigger><SelectValue placeholder="Выберите товар" /></SelectTrigger>
+                            <SelectContent className="max-h-[min(50vh,320px)]">
+                              {filteredProducts.map((p) => {
+                                const b = createOutboundProductWmsBreakdowns.get(p.id);
+                                const o = b?.balanceQty ?? 0;
+                                const r = b?.reserveQty ?? 0;
+                                const d = b?.availableQty ?? 0;
+                                return (
+                                  <SelectItem key={p.id} value={p.id} className="whitespace-normal py-2 text-left text-xs">
+                                    {p.name} · {p.barcode} · остаток {o.toLocaleString("ru-RU")} · резерв {r.toLocaleString("ru-RU")} · доступно{" "}
+                                    {d.toLocaleString("ru-RU")}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
                         </div>
-                      ) : null}
-                      <div className="grid gap-1.5"><Label>Способ отгрузки</Label><Select value={outboundDraft.shippingMethod} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, shippingMethod: v as "fbo" | "fbs" | "self" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fbo">FBO</SelectItem><SelectItem value="fbs">FBS</SelectItem><SelectItem value="self">Самовывоз</SelectItem></SelectContent></Select></div>
-                      <div className="grid gap-1.5">
-                        <Label>Приоритет задания</Label>
-                        <Select
-                          value={outboundDraft.priority}
-                          onValueChange={(v) => setOutboundDraft((s) => ({ ...s, priority: v as OutboundTaskPriority }))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="high">Высокий</SelectItem>
-                            <SelectItem value="normal">Обычный</SelectItem>
-                            <SelectItem value="low">Низкий</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-slate-500">Внутренний приоритет для очереди упаковки на складе.</p>
+                        <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={outboundDraft.quantity} onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
+                        <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
+                        <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
+                        {selectedOutboundProductId && manualOutboundCreateStockPreview.breakdown ? (
+                          <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-800">
+                            <div className="tabular-nums">План: {manualOutboundCreateStockPreview.plan.toLocaleString("ru-RU")}</div>
+                            <div className="tabular-nums">Остаток всего: {manualOutboundCreateStockPreview.breakdown.balanceQty.toLocaleString("ru-RU")}</div>
+                            <div className="tabular-nums">Резерв: {manualOutboundCreateStockPreview.breakdown.reserveQty.toLocaleString("ru-RU")}</div>
+                            <div className="tabular-nums">Доступно: {manualOutboundCreateStockPreview.breakdown.availableQty.toLocaleString("ru-RU")}</div>
+                            {manualOutboundCreateStockPreview.shortage > 0 && manualOutboundCreateStockPreview.shortageKind === "reserve" ? (
+                              <p className="mt-2 font-medium text-red-600">
+                                Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт. Остаток есть, но он уже в резерве.
+                              </p>
+                            ) : null}
+                            {manualOutboundCreateStockPreview.shortage > 0 && manualOutboundCreateStockPreview.shortageKind === "empty" ? (
+                              <p className="mt-2 font-medium text-red-600">
+                                Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт. Товара нет на остатке.
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <div className="grid gap-1.5"><Label>Способ отгрузки</Label><Select value={outboundDraft.shippingMethod} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, shippingMethod: v as "fbo" | "fbs" | "self" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fbo">FBO</SelectItem><SelectItem value="fbs">FBS</SelectItem><SelectItem value="self">Самовывоз</SelectItem></SelectContent></Select></div>
+                        <div className="grid gap-1.5">
+                          <Label>Приоритет задания</Label>
+                          <Select
+                            value={outboundDraft.priority}
+                            onValueChange={(v) => setOutboundDraft((s) => ({ ...s, priority: v as OutboundTaskPriority }))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="high">Высокий</SelectItem>
+                              <SelectItem value="normal">Обычный</SelectItem>
+                              <SelectItem value="low">Низкий</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-slate-500">Внутренний приоритет для очереди упаковки на складе.</p>
+                        </div>
                       </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="shrink-0 gap-2 border-t bg-background px-6 py-4 sm:justify-end">
                       <Button variant="outline" onClick={() => setCreateOutboundOpen(false)}>Отмена</Button>
                       <Button onClick={() => void onCreateOutbound()} disabled={isCreatingOutbound}>{isCreatingOutbound ? "Сохранение..." : "Сохранить"}</Button>
                     </DialogFooter>
