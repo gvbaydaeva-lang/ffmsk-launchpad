@@ -343,15 +343,15 @@ const ShippingPage = () => {
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
                             <TableCell className="px-3 py-2">
-                              <div className="flex flex-wrap items-center gap-1.5">
+                              <div className="inline-flex flex-wrap items-center gap-1">
                                 <StatusBadge status={doc.workflowStatus} />
                                 {doc.workflowStatus !== "completed" && shippingDocHasStockShortage.get(doc.id) ? (
                                   <span
-                                    className="inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-950 ring-1 ring-amber-300/80"
-                                    title="План по строке больше доступного остатка (остаток по движениям минус резерв)"
+                                    className="select-none text-[13px] leading-none text-amber-600"
+                                    title="Недостаточно доступного товара по плану (остаток по движениям минус резерв)"
+                                    aria-label="Внимание: недостаточно доступного товара"
                                   >
-                                    <span aria-hidden>⚠️</span>
-                                    Не хватает
+                                    ⚠️
                                   </span>
                                 ) : null}
                               </div>
@@ -399,12 +399,15 @@ const ShippingPage = () => {
                                     </div>
                                     <div>
                                       <span className="text-slate-500">Статус</span>
-                                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                      <div className="mt-0.5 inline-flex flex-wrap items-center gap-1">
                                         <StatusBadge status={doc.workflowStatus} />
                                         {doc.workflowStatus !== "completed" && shippingDocHasStockShortage.get(doc.id) ? (
-                                          <span className="inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-950 ring-1 ring-amber-300/80">
-                                            <span aria-hidden>⚠️</span>
-                                            Не хватает
+                                          <span
+                                            className="select-none text-[13px] leading-none text-amber-600"
+                                            title="Недостаточно доступного товара по плану (остаток по движениям минус резерв)"
+                                            aria-label="Внимание: недостаточно доступного товара"
+                                          >
+                                            ⚠️
                                           </span>
                                         ) : null}
                                       </div>
