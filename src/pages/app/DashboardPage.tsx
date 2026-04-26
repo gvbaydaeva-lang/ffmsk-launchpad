@@ -27,6 +27,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useDashboardBundleQuery } from "@/hooks/useDashboardAnalytics";
 import { useInboundSupplies, useInventoryMovements, useOperationLogs, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import { mergePriorityFromShipments } from "@/lib/outboundTaskPriority";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
@@ -78,6 +79,91 @@ const DashboardPage = () => {
     assignmentGroups.set(key, prev);
   }
   const assignments = Array.from(assignmentGroups.values());
+
+  const startWithTopTasks: Array<{
+    groupKey: string;
+    label: string;
+    line: "shortage" | "high" | "processing";
+    shortageUnits?: number;
+  }> = (() => {
+    const out: Array<{
+      groupKey: string;
+      label: string;
+      line: "shortage" | "high" | "processing";
+      shortageUnits?: number;
+    }> = [];
+    if (!Array.isArray(assignments) || assignments.length === 0) {
+      return out;
+    }
+    const byProduct = new Map(catalog.map((p) => [p.id, p]));
+    const balanceByKey = getBalanceByKeyMap(movements);
+    const resByKey = reservedQtyByBalanceKey(shipping, catalog);
+    const hasMovements = movements.length > 0;
+    const used = new Set<string>();
+
+    const groupKey = (rows: (typeof shipping)[number][]) => {
+      if (!Array.isArray(rows) || !rows[0]) return "";
+      const r = rows[0];
+      return `${r.legalEntityId}::${r.assignmentId ?? r.assignmentNo ?? r.id}`;
+    };
+    const label = (rows: (typeof shipping)[number][]) => {
+      if (!Array.isArray(rows) || !rows[0]) return "";
+      const r = rows[0];
+      return String(r.assignmentNo?.trim() || r.assignmentId?.trim() || r.id);
+    };
+    const shortageTotalForGroup = (rows: (typeof shipping)[number][]) => {
+      if (!hasMovements) return 0;
+      if (!Array.isArray(rows) || rows.length === 0) return 0;
+      let total = 0;
+      for (const sh of rows) {
+        const plan = Number(sh.plannedUnits) || 0;
+        const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+        if (plan <= 0 || fact >= plan) continue;
+        const key = balanceKeyFromOutboundShipment(sh, byProduct.get(sh.productId) ?? null);
+        const bal = balanceByKey.get(key) ?? 0;
+        const res = resByKey.get(key) ?? 0;
+        const available = Math.max(0, bal - res);
+        if (plan > available) {
+          total += Math.max(0, plan - available);
+        }
+      }
+      return total;
+    };
+
+    for (const rows of assignments) {
+      if (out.length >= 3) break;
+      if (!Array.isArray(rows) || !rows[0]) continue;
+      const k = groupKey(rows);
+      if (!k || used.has(k)) continue;
+      const st = shortageTotalForGroup(rows);
+      if (st > 0) {
+        used.add(k);
+        out.push({ groupKey: k, label: label(rows), line: "shortage", shortageUnits: st });
+      }
+    }
+    for (const rows of assignments) {
+      if (out.length >= 3) break;
+      if (!Array.isArray(rows) || !rows[0]) continue;
+      const k = groupKey(rows);
+      if (!k || used.has(k)) continue;
+      if (mergePriorityFromShipments(rows) === "high") {
+        used.add(k);
+        out.push({ groupKey: k, label: label(rows), line: "high" });
+      }
+    }
+    for (const rows of assignments) {
+      if (out.length >= 3) break;
+      if (!Array.isArray(rows) || !rows[0]) continue;
+      const k = groupKey(rows);
+      if (!k || used.has(k)) continue;
+      if (workflowFromOutboundGroup(rows) === "processing") {
+        used.add(k);
+        out.push({ groupKey: k, label: label(rows), line: "processing" });
+      }
+    }
+    return out;
+  })();
+
   const shippingTotal = assignments.length;
   const shippingProcessing = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "processing").length;
   const shippingPending = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "pending").length;
@@ -263,6 +349,52 @@ const DashboardPage = () => {
                 <span className="tabular-nums font-medium text-amber-800">{item.count}</span>
               </div>
             ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-base text-slate-900">С чего начать</CardTitle>
+          <CardDescription className="text-slate-500">До трёх заданий на отгрузку, на которые стоит обратить внимание</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {startWithTopTasks.length === 0 ? (
+            <p className="text-sm text-slate-600">Нет задач для отображения</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {startWithTopTasks.map((row) => (
+                <li key={row.groupKey}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => navigate("/shipping")}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") navigate("/shipping");
+                    }}
+                    className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-2.5 text-sm text-slate-800 transition-colors hover:bg-slate-50"
+                    aria-label={`Перейти к отгрузкам, задание ${row.label}`}
+                  >
+                    <span
+                      className="inline-flex w-5 shrink-0 justify-center text-center text-base leading-tight"
+                      aria-hidden
+                    >
+                      {row.line === "shortage" ? "⚠️" : row.line === "high" ? "🔴" : "\u2003"}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-slate-900 tabular-nums">{row.label}</p>
+                      <p className="mt-0.5 text-slate-600">
+                        {row.line === "shortage" && row.shortageUnits != null
+                          ? `не хватает ${row.shortageUnits} шт`
+                          : row.line === "high"
+                            ? "высокий приоритет"
+                            : "в работе"}
+                      </p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>
