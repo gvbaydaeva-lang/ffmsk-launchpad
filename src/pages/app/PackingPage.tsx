@@ -641,6 +641,7 @@ const PackingPage = () => {
       }
       if (nextAssignment) {
         await startAssignment(nextAssignment);
+        toast.message("Открыто следующее задание");
         focusScanInput();
       } else {
         setStartedAssignmentId(null);
