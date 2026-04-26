@@ -1,12 +1,29 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import StatusBadge from "@/components/app/StatusBadge";
 import {
-  planFactLineBadgeClass,
-  planFactLineStatusLabel,
   planFactRemaining,
   planFactRowBgClass,
 } from "@/lib/planFactDiscrepancy";
+import { getLineValidation, type LineValidationResult } from "@/utils/wmsValidation";
 import type { TaskWorkflowStatus } from "@/types/domain";
+
+function lineValidationBadgeClass(v: LineValidationResult): string {
+  switch (v.status) {
+    case "ok":
+      return "bg-emerald-100 text-emerald-800 ring-emerald-200";
+    case "warning":
+      return "bg-amber-100 text-amber-900 ring-amber-200";
+    case "error":
+      return "bg-red-100 text-red-800 ring-red-200";
+    default:
+      return "bg-slate-200 text-slate-800 ring-slate-300";
+  }
+}
+
+function lineValidationBadgeLabel(v: LineValidationResult): string {
+  if (v.status === "ok") return "Ок";
+  if (v.status === "warning") return `Не хватает ${v.remainingQty}`;
+  return `Ошибка +${v.overQty}`;
+}
 
 export type TaskItemRow = {
   id: string;
@@ -55,6 +72,7 @@ export default function TaskItemsTable({ rows, variant = "default" }: TaskItemsT
         {rows.map((row) => {
           const mismatch = row.plan !== row.fact;
           const remaining = planFactRemaining(row.plan, row.fact);
+          const validation = getLineValidation({ plannedQty: row.plan, factQty: row.fact });
           const rowBg = outbound ? planFactRowBgClass(row.plan, row.fact) : mismatch ? "bg-red-50/50" : "";
           return (
             <TableRow key={row.id} className={`text-sm ${rowBg}`}>
@@ -72,15 +90,11 @@ export default function TaskItemsTable({ rows, variant = "default" }: TaskItemsT
                 <TableCell className="px-3 py-2 text-right tabular-nums text-slate-800">{remaining}</TableCell>
               )}
               <TableCell className="px-3 py-2">
-                {outbound ? (
-                  <span
-                    className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${planFactLineBadgeClass(row.plan, row.fact)}`}
-                  >
-                    {planFactLineStatusLabel(row.plan, row.fact)}
-                  </span>
-                ) : (
-                  <StatusBadge status={row.status ?? "pending"} mismatch={mismatch} />
-                )}
+                <span
+                  className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineValidationBadgeClass(validation)}`}
+                >
+                  {lineValidationBadgeLabel(validation)}
+                </span>
               </TableCell>
             </TableRow>
           );
