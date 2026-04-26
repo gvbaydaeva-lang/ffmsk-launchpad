@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useDashboardBundleQuery } from "@/hooks/useDashboardAnalytics";
-import { useInboundSupplies, useInventoryMovements, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import { useInboundSupplies, useInventoryMovements, useOperationLogs, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
@@ -36,6 +36,19 @@ function safeArray<T>(value: T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+function isTodayIso(iso: string | undefined | null): boolean {
+  if (!iso) return false;
+  const ts = Date.parse(iso);
+  if (!Number.isFinite(ts)) return false;
+  const d = new Date(ts);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 const DashboardPage = () => {
   const navigate = useNavigate();
   const { data, isLoading, error } = useDashboardBundleQuery();
@@ -43,6 +56,7 @@ const DashboardPage = () => {
   const { data: outboundRaw } = useOutboundShipments();
   const { data: catalogRaw } = useProductCatalog();
   const { data: movementsRaw, balanceRows: balanceRowsRaw } = useInventoryMovements();
+  const { data: operationLogsRaw } = useOperationLogs();
 
   const storageTotal = data ? sumStorageDay(data.storageByClient) : 0;
   const receiving = safeArray(inboundRaw);
@@ -50,6 +64,7 @@ const DashboardPage = () => {
   const catalog = safeArray(catalogRaw);
   const movements = safeArray(movementsRaw);
   const inventory = safeArray(balanceRowsRaw);
+  const operationLogs = safeArray(operationLogsRaw);
 
   const receivingTotal = receiving.length;
   const receivingProcessing = receiving.filter((row) => workflowFromInbound(row) === "processing").length;
@@ -107,6 +122,31 @@ const DashboardPage = () => {
       ? { id: "active-work", text: "Есть активные задания в работе", path: "/packing", count: activeAssignmentsInWork }
       : null,
   ].filter((item): item is { id: string; text: string; path: string; count: number } => item !== null);
+
+  const acceptedUnitsToday = receiving
+    .filter((row) => workflowFromInbound(row) === "completed" && isTodayIso(row.completedAt ?? row.updatedAt ?? row.createdAt))
+    .reduce((sum, row) => sum + (Number(row.receivedUnits ?? row.expectedUnits) || 0), 0);
+
+  const shippedUnitsToday = shipping
+    .filter((row) => workflowFromOutboundGroup([row]) === "completed" && isTodayIso(row.completedAt ?? row.updatedAt ?? row.createdAt))
+    .reduce((sum, row) => sum + (Number(row.shippedUnits ?? row.packedUnits ?? 0) || 0), 0);
+
+  const inboundCompletedToday = receiving.filter(
+    (row) => workflowFromInbound(row) === "completed" && isTodayIso(row.completedAt ?? row.updatedAt ?? row.createdAt),
+  ).length;
+  const outboundCompletedToday = assignments.filter((rows) => {
+    if (workflowFromOutboundGroup(rows) !== "completed") return false;
+    const dateIso = rows
+      .map((row) => row.completedAt ?? row.updatedAt ?? row.createdAt)
+      .find((iso) => isTodayIso(iso));
+    return Boolean(dateIso);
+  }).length;
+  const completedTasksToday = inboundCompletedToday + outboundCompletedToday;
+
+  const scanErrorsToday = operationLogs.filter((row) => {
+    if (!isTodayIso(row.createdAt)) return false;
+    return row.type === "SCAN_ERROR";
+  }).length;
 
   return (
     <div className="space-y-6">
@@ -224,6 +264,31 @@ const DashboardPage = () => {
               </div>
             ))
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-base text-slate-900">Сегодня</CardTitle>
+          <CardDescription className="text-slate-500">Ключевые итоги за текущую дату</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 pt-0 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Принято товаров сегодня</p>
+            <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-slate-900">{acceptedUnitsToday || 0}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Отгружено товаров сегодня</p>
+            <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-slate-900">{shippedUnitsToday || 0}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Завершено заданий сегодня</p>
+            <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-slate-900">{completedTasksToday || 0}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ошибок сканирования сегодня</p>
+            <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-slate-900">{scanErrorsToday || 0}</p>
+          </div>
         </CardContent>
       </Card>
 
