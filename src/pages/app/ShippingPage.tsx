@@ -18,6 +18,12 @@ import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
+import {
+  mergePriorityFromShipments,
+  outboundPriorityBadgeClass,
+  outboundPriorityLabel,
+  type OutboundTaskPriority,
+} from "@/lib/outboundTaskPriority";
 
 type ShipmentDoc = {
   id: string;
@@ -31,6 +37,7 @@ type ShipmentDoc = {
   fact: number;
   shipments: OutboundShipment[];
   workflowStatus: TaskWorkflowStatus;
+  priority: OutboundTaskPriority;
 };
 
 function shippingDispatcherHint(status: TaskWorkflowStatus): string {
@@ -76,6 +83,7 @@ const ShippingPage = () => {
       const planned = shipments.reduce((s, sh) => s + (Number(sh.plannedUnits) || 0), 0);
       const fact = shipments.reduce((s, sh) => s + (Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0), 0);
       const workflowStatus = workflowFromOutboundGroup(shipments);
+      const priority = mergePriorityFromShipments(shipments);
       const groupId = `${first.legalEntityId}::${first.assignmentId ?? first.assignmentNo ?? first.id}`;
       docs.push({
         id: groupId,
@@ -89,6 +97,7 @@ const ShippingPage = () => {
         fact,
         shipments,
         workflowStatus,
+        priority,
       });
     }
     const q = search.trim().toLowerCase();
@@ -247,12 +256,13 @@ const ShippingPage = () => {
           ) : (
             <>
               <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-slate-200">
-                <Table className="min-w-[1200px] table-auto">
+                <Table className="min-w-[1280px] table-auto">
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
+                      <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Приоритет</TableHead>
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
                       <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
@@ -283,6 +293,13 @@ const ShippingPage = () => {
                               {formatTaskArchiveDateLabel(doc.completedAtIso)}
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{doc.assignmentNo}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${outboundPriorityBadgeClass(doc.priority)}`}
+                              >
+                                {outboundPriorityLabel(doc.priority)}
+                              </span>
+                            </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
                             <TableCell className="px-3 py-2">
                               <StatusBadge status={doc.workflowStatus} />
@@ -313,7 +330,7 @@ const ShippingPage = () => {
                           </TableRow>
                           {isSel ? (
                             <TableRow className="border-slate-100 bg-slate-50/90">
-                              <TableCell colSpan={12} className="align-top p-0">
+                              <TableCell colSpan={13} className="align-top p-0">
                                 <div className="space-y-4 border-t border-slate-200 p-4">
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
