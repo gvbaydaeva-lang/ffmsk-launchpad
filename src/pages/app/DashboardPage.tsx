@@ -386,9 +386,10 @@ const DashboardPage = () => {
                     role="button"
                     tabIndex={0}
                     title="Открыть отгрузки"
-                    onClick={() => navigate("/shipping")}
+                    onClick={() => navigate(`/shipping?openTask=${encodeURIComponent(row.groupKey)}`)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") navigate("/shipping");
+                      if (e.key === "Enter" || e.key === " ")
+                        navigate(`/shipping?openTask=${encodeURIComponent(row.groupKey)}`);
                     }}
                     className={cn(
                       "flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2.5 text-sm text-slate-800 transition-colors",

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -108,6 +108,7 @@ function ShippingStockWarnTrigger({
 
 const ShippingPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { data, isLoading, error } = useOutboundShipments();
   const { data: inventoryMovements = [] } = useInventoryMovements();
   const { data: catalog } = useProductCatalog();
@@ -122,6 +123,19 @@ const ShippingPage = () => {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const openTaskRowRef = React.useRef<HTMLTableRowElement | null>(null);
+  const urlOpenTaskApplied = React.useRef<string | null>(null);
+  const openTaskScrollDone = React.useRef<string | null>(null);
+
+  const openTaskParam = searchParams.get("openTask");
+  const openTaskDecoded = React.useMemo(() => {
+    if (!openTaskParam) return null;
+    try {
+      return decodeURIComponent(openTaskParam);
+    } catch {
+      return openTaskParam;
+    }
+  }, [openTaskParam]);
 
   const filtered = React.useMemo(() => {
     const base = filterOutboundByMarketplace(data ?? [], mp);
@@ -195,6 +209,36 @@ const ShippingPage = () => {
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
+
+  React.useEffect(() => {
+    if (isLoading || error) return;
+    if (!openTaskDecoded) {
+      urlOpenTaskApplied.current = null;
+      return;
+    }
+    if (urlOpenTaskApplied.current === openTaskDecoded) return;
+    const list = Array.isArray(documents) ? documents : [];
+    const found = list.find((d) => d && d.id === openTaskDecoded);
+    if (found) {
+      setSelectedId(openTaskDecoded);
+      urlOpenTaskApplied.current = openTaskDecoded;
+    }
+  }, [isLoading, error, openTaskDecoded, documents]);
+
+  React.useEffect(() => {
+    if (!openTaskDecoded) {
+      openTaskScrollDone.current = null;
+    }
+  }, [openTaskDecoded]);
+
+  React.useLayoutEffect(() => {
+    if (!openTaskDecoded || selectedId !== openTaskDecoded) return;
+    if (openTaskScrollDone.current === openTaskDecoded) return;
+    const el = openTaskRowRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    openTaskScrollDone.current = openTaskDecoded;
+  }, [openTaskDecoded, selectedId, documents.length]);
 
   /**
    * ⚠️ только при наличии строк, где: plan>0, fact<plan, plan>доступно, доступно=max(0, остаток−резерв).
@@ -406,6 +450,7 @@ const ShippingPage = () => {
                       return (
                         <React.Fragment key={doc.id}>
                           <TableRow
+                            ref={openTaskDecoded === doc.id ? openTaskRowRef : undefined}
                             className={`cursor-pointer border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
                             onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
                           >
