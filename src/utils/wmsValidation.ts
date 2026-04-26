@@ -84,3 +84,24 @@ export function getTaskValidation(items: PlanFactLineInput[]): TaskValidationRes
 
   return { hasWarnings, hasErrors, totalRemaining, totalOver, canCompleteExact };
 }
+
+/** Текст предупреждения рядом с кнопкой «Завершить» при расхождении План/Факт. */
+export function buildPlanFactCompleteWarning(validation: TaskValidationResult): string | null {
+  if (validation.totalRemaining <= 0 && validation.totalOver <= 0) return null;
+  if (validation.totalRemaining > 0 && validation.totalOver <= 0) {
+    return `Есть расхождения План/Факт. Не хватает ${validation.totalRemaining} шт.`;
+  }
+  if (validation.totalRemaining <= 0 && validation.totalOver > 0) {
+    return `Есть расхождения План/Факт. Перерасход ${validation.totalOver} шт.`;
+  }
+  return `Есть расхождения План/Факт. Не хватает ${validation.totalRemaining} шт, перерасход ${validation.totalOver} шт.`;
+}
+
+/** Описание для журнала операций (type: TASK_MISMATCH). */
+export function buildPlanFactMismatchLogDescription(taskNo: string, validation: TaskValidationResult): string | null {
+  if (validation.totalRemaining <= 0 && validation.totalOver <= 0) return null;
+  const parts: string[] = [];
+  if (validation.totalRemaining > 0) parts.push(`не хватает ${validation.totalRemaining} шт`);
+  if (validation.totalOver > 0) parts.push(`перерасход ${validation.totalOver} шт`);
+  return `Расхождение План/Факт в задании №${taskNo}: ${parts.join(", ")}`;
+}

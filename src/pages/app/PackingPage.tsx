@@ -35,6 +35,11 @@ import {
   planFactRowBgClass,
 } from "@/lib/planFactDiscrepancy";
 import { toast } from "sonner";
+import {
+  buildPlanFactCompleteWarning,
+  buildPlanFactMismatchLogDescription,
+  getTaskValidation,
+} from "@/utils/wmsValidation";
 
 type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
 
@@ -74,6 +79,7 @@ const PackingPage = () => {
   const [scanValue, setScanValue] = React.useState("");
   const [isSubmittingScan, setIsSubmittingScan] = React.useState(false);
   const [flashState, setFlashState] = React.useState<"ok" | "error" | null>(null);
+  const [finalizePlanFactWarning, setFinalizePlanFactWarning] = React.useState<string | null>(null);
   const scanInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const allShipments = React.useMemo(() => {
@@ -153,6 +159,19 @@ const PackingPage = () => {
 
   const startedAssignment =
     startedAssignmentId == null ? null : (allGroupedAssignments.find((x) => x.id === startedAssignmentId) ?? null);
+
+  React.useEffect(() => {
+    if (!startedAssignment?.shipments.length) {
+      setFinalizePlanFactWarning(null);
+      return;
+    }
+    const items = startedAssignment.shipments.map((sh) => ({
+      plannedQty: Number(sh.plannedUnits) || 0,
+      factQty: Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0,
+    }));
+    const v = getTaskValidation(items);
+    if (v.totalRemaining === 0 && v.totalOver === 0) setFinalizePlanFactWarning(null);
+  }, [startedAssignment]);
 
   const scanLines = React.useMemo<ScanLine[]>(() => {
     if (!startedAssignment) return [];
@@ -344,6 +363,33 @@ const PackingPage = () => {
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
       return;
     }
+    const planFactLineItems = startedAssignment.shipments.map((sh) => ({
+      plannedQty: Number(sh.plannedUnits) || 0,
+      factQty: Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0,
+    }));
+    const planFactValidation = getTaskValidation(planFactLineItems);
+    const firstShForLog = startedAssignment.shipments[0];
+    const taskNoForPlanFact =
+      firstShForLog?.assignmentNo?.trim() ||
+      firstShForLog?.assignmentId?.trim() ||
+      firstShForLog?.id ||
+      "—";
+    if (planFactValidation.totalRemaining > 0 || planFactValidation.totalOver > 0) {
+      const desc = buildPlanFactMismatchLogDescription(taskNoForPlanFact, planFactValidation);
+      if (desc) {
+        appendOperationLog({
+          type: "TASK_MISMATCH",
+          legalEntityId: startedAssignment.legalEntityId,
+          legalEntityName: legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId,
+          taskId,
+          taskNumber: taskNoForPlanFact,
+          description: desc,
+        });
+      }
+      setFinalizePlanFactWarning(buildPlanFactCompleteWarning(planFactValidation));
+    } else {
+      setFinalizePlanFactWarning(null);
+    }
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     const balanceMap = getBalanceByKeyMap(invSnapshot);
     const needByKey = new Map<string, { need: number; label: string }>();
@@ -483,14 +529,6 @@ const PackingPage = () => {
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       if (hasDiscrepancy) {
-        appendOperationLog({
-          type: "TASK_MISMATCH",
-          legalEntityId: startedAssignment.legalEntityId,
-          legalEntityName: leName,
-          taskId,
-          taskNumber: assignmentNo,
-          description: "Ошибка: попытка завершить задание с расхождением План/Факт",
-        });
         appendOperationLog({
           type: "TASK_COMPLETED_WITH_MISMATCH",
           legalEntityId: startedAssignment.legalEntityId,
@@ -843,20 +881,25 @@ const PackingPage = () => {
             </div>
 
             <div className="space-y-2">
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
-                onClick={() => void finalizeAssignment()}
-                disabled={isUpdatingOutboundDraft || isUpdatingOutbound || progress.totalPlan === 0}
-              >
-                Завершить задание
-              </Button>
-              {taskNeedsReview ? (
+              <div className="flex max-w-sm flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-11 w-full shrink-0 rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50 sm:w-auto sm:min-w-[200px]"
+                  onClick={() => void finalizeAssignment()}
+                  disabled={isUpdatingOutboundDraft || isUpdatingOutbound || progress.totalPlan === 0}
+                >
+                  Завершить задание
+                </Button>
+                {finalizePlanFactWarning ? (
+                  <p className="text-xs font-medium leading-snug text-amber-800 sm:pt-2">{finalizePlanFactWarning}</p>
+                ) : null}
+              </div>
+              {!finalizePlanFactWarning && taskNeedsReview ? (
                 <p className="text-xs font-medium text-amber-800">
                   Есть расхождения план/факт. Завершение доступно с предупреждением; со склада спишется min(план, факт) по строке.
                 </p>
-              ) : progress.totalFact < progress.totalPlan ? (
+              ) : !finalizePlanFactWarning && progress.totalFact < progress.totalPlan ? (
                 <p className="text-xs text-slate-600">Осталось отсканировать: {progress.remaining} шт.</p>
               ) : null}
             </div>

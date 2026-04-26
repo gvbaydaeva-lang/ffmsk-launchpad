@@ -171,14 +171,6 @@ const ReceivingPage = () => {
       await setInboundStatus({ id: latest.id, status: "принято", receivedUnits: fact });
       if (hasDiscrepancy) {
         appendOperationLog({
-          type: "TASK_MISMATCH",
-          legalEntityId: latest.legalEntityId,
-          legalEntityName: entityName(latest.legalEntityId),
-          taskId: latest.id,
-          taskNumber: latest.documentNo,
-          description: "Ошибка: попытка завершить задание с расхождением План/Факт",
-        });
-        appendOperationLog({
           type: "TASK_COMPLETED_WITH_MISMATCH",
           legalEntityId: latest.legalEntityId,
           legalEntityName: entityName(latest.legalEntityId),

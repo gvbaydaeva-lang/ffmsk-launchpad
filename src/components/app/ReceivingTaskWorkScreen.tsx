@@ -17,6 +17,12 @@ import {
   planFactRemaining,
   planFactRowBgClass,
 } from "@/lib/planFactDiscrepancy";
+import {
+  buildPlanFactCompleteWarning,
+  buildPlanFactMismatchLogDescription,
+  getTaskValidation,
+} from "@/utils/wmsValidation";
+import { useAppendOperationLog } from "@/hooks/useWmsMock";
 
 type Props = {
   supply: InboundSupply;
@@ -41,9 +47,11 @@ export default function ReceivingTaskWorkScreen({
   onComplete,
   onScanError,
 }: Props) {
+  const appendOperationLog = useAppendOperationLog();
   const [scanValue, setScanValue] = React.useState("");
   const [isSubmittingScan, setIsSubmittingScan] = React.useState(false);
   const [flashState, setFlashState] = React.useState<"ok" | "error" | null>(null);
+  const [completePlanFactWarning, setCompletePlanFactWarning] = React.useState<string | null>(null);
   const scanInputRef = React.useRef<HTMLInputElement | null>(null);
   const workflow = workflowFromInbound(supply);
 
@@ -84,6 +92,43 @@ export default function ReceivingTaskWorkScreen({
       }),
     [supply.items, progress.plan],
   );
+
+  const planFactLineItems = React.useMemo(
+    () =>
+      supply.items.map((it) => ({
+        plannedQty: Number(it.plannedQuantity) || 0,
+        factQty: Number(it.factualQuantity) || 0,
+      })),
+    [supply.items],
+  );
+
+  React.useEffect(() => {
+    const v = getTaskValidation(planFactLineItems);
+    if (v.totalRemaining === 0 && v.totalOver === 0) setCompletePlanFactWarning(null);
+  }, [planFactLineItems]);
+
+  const handleCompleteClick = async () => {
+    const validation = getTaskValidation(planFactLineItems);
+    const taskNo = (supply.documentNo || "").trim() || "—";
+    if (validation.totalRemaining > 0 || validation.totalOver > 0) {
+      const desc = buildPlanFactMismatchLogDescription(taskNo, validation);
+      if (desc) {
+        appendOperationLog({
+          type: "TASK_MISMATCH",
+          legalEntityId: supply.legalEntityId,
+          legalEntityName,
+          taskId: supply.id,
+          taskNumber: supply.documentNo,
+          description: desc,
+        });
+      }
+      const w = buildPlanFactCompleteWarning(validation);
+      if (w) setCompletePlanFactWarning(w);
+    } else {
+      setCompletePlanFactWarning(null);
+    }
+    await onComplete();
+  };
 
   const applyScan = async () => {
     const code = scanValue.trim();
@@ -274,19 +319,24 @@ export default function ReceivingTaskWorkScreen({
         ) : null}
 
         <div className="space-y-2">
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-11 w-full max-w-sm rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50"
-            onClick={() => void onComplete()}
-            disabled={!canSubmitComplete || isUpdatingInbound}
-          >
-            Завершить
-          </Button>
-          {workflow === "processing" && taskNeedsReview ? (
+          <div className="flex max-w-sm flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-11 w-full shrink-0 rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50 sm:w-auto sm:min-w-[200px]"
+              onClick={() => void handleCompleteClick()}
+              disabled={!canSubmitComplete || isUpdatingInbound}
+            >
+              Завершить
+            </Button>
+            {completePlanFactWarning ? (
+              <p className="text-xs font-medium leading-snug text-amber-800 sm:pt-2">{completePlanFactWarning}</p>
+            ) : null}
+          </div>
+          {!completePlanFactWarning && workflow === "processing" && taskNeedsReview ? (
             <p className="text-xs font-medium text-amber-800">Есть расхождения план/факт. Завершение доступно с предупреждением.</p>
           ) : null}
-          {workflow === "processing" && !taskNeedsReview && progress.plan > 0 && progress.fact < progress.plan ? (
+          {!completePlanFactWarning && workflow === "processing" && !taskNeedsReview && progress.plan > 0 && progress.fact < progress.plan ? (
             <p className="text-xs text-slate-600">Осталось принять: {progress.remaining} шт.</p>
           ) : null}
         </div>
