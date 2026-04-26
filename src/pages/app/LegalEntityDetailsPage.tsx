@@ -26,6 +26,7 @@ import {
 } from "@/contexts/UserRoleContext";
 import {
   useInboundSupplies,
+  useInventoryMovements,
   useLegalEntities,
   useOperationLogs,
   useOutboundShipments,
@@ -34,17 +35,19 @@ import {
 } from "@/hooks/useWmsMock";
 import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
+import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import type {
   InboundLineItem,
   InboundSupply,
-  InventoryMovement,
   Marketplace,
   OutboundShipment,
   ProductCatalogItem,
   TaskWorkflowStatus,
 } from "@/types/domain";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
-import { wmsAvailableForCatalogProduct } from "@/lib/inventoryAvailableForOutbound";
+import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
+import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
+import { wmsStockBreakdownForCatalogProduct } from "@/lib/inventoryAvailableForOutbound";
 import {
   mergePriorityFromShipments,
   outboundPriorityBadgeClass,
@@ -188,6 +191,15 @@ type OutboundImportPreviewRow = {
   marketplace: "wb" | "ozon" | "yandex";
 };
 
+type OutboundExcelImportStockLine = {
+  key: string;
+  title: string;
+  plan: number;
+  available: number | null;
+  shortage: number;
+  warehouse: string;
+};
+
 type OutboundMatrixCell = { shipments: OutboundShipment[]; planned: number; fact: number };
 type OutboundMatrixLine = {
   key: string;
@@ -254,6 +266,34 @@ function pickByAliases(row: Record<string, unknown>, aliases: string[]) {
 
 function normalizeCode(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function mergeOutboundImportPreviewRowsByBarcodeOrArticle(rows: OutboundImportPreviewRow[]): {
+  merged: OutboundImportPreviewRow[];
+  skippedInvalid: number;
+} {
+  let skippedInvalid = 0;
+  const deduped = new Map<string, OutboundImportPreviewRow>();
+  for (const row of rows) {
+    const key = normalizeCode(row.barcode) || `art:${normalizeCode(row.supplierArticle)}`;
+    if (!key || key === "art:") {
+      skippedInvalid += 1;
+      continue;
+    }
+    const prev = deduped.get(key);
+    if (!prev) {
+      deduped.set(key, { ...row });
+    } else {
+      deduped.set(key, {
+        ...prev,
+        plannedUnits: prev.plannedUnits + (Number(row.plannedUnits) || 0),
+        name: prev.name || row.name,
+        size: prev.size || row.size,
+        color: prev.color || row.color,
+      });
+    }
+  }
+  return { merged: Array.from(deduped.values()), skippedInvalid };
 }
 
 function digitsOnly(value: string) {
@@ -421,6 +461,7 @@ const LegalEntityDetailsPage = () => {
     isUpdatingOutboundDraft,
     updateOutboundDraft,
   } = useOutboundShipments();
+  const { data: inventoryMovements = [] } = useInventoryMovements();
   const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
   const queryClient = useQueryClient();
@@ -549,6 +590,88 @@ const LegalEntityDetailsPage = () => {
     () => (outboundDebugAll ? (outbound ?? []) : outboundRows) as OutboundShipment[],
     [outbound, outboundDebugAll, outboundRows],
   );
+
+  const manualOutboundCreateStockPreview = React.useMemo(() => {
+    const plan = Number(outboundDraft.quantity) || 0;
+    if (!entity || !selectedOutboundProductId) {
+      return { breakdown: null as ReturnType<typeof wmsStockBreakdownForCatalogProduct>, plan, shortage: 0, hasShortage: false };
+    }
+    const warehouseName = outboundDraft.warehouse.trim() || "Склад Коледино";
+    const breakdown = wmsStockBreakdownForCatalogProduct({
+      movements: inventoryMovements,
+      outbound: outbound ?? [],
+      catalog: rows,
+      legalEntityId: entity.id.trim(),
+      warehouseName,
+      productId: selectedOutboundProductId,
+    });
+    if (!breakdown) {
+      return { breakdown: null, plan, shortage: 0, hasShortage: false };
+    }
+    const shortage = plan > breakdown.availableQty ? plan - breakdown.availableQty : 0;
+    return { breakdown, plan, shortage, hasShortage: shortage > 0 };
+  }, [
+    entity,
+    outboundDraft.quantity,
+    outboundDraft.warehouse,
+    selectedOutboundProductId,
+    inventoryMovements,
+    outbound,
+    rows,
+  ]);
+
+  const outboundExcelImportStockPreview = React.useMemo(() => {
+    if (!entityIdNorm || outboundExcelRows.length === 0) {
+      return { lines: [] as OutboundExcelImportStockLine[], hasShortage: false };
+    }
+    const entityIdTrim = entityIdNorm;
+    const { merged } = mergeOutboundImportPreviewRowsByBarcodeOrArticle(outboundExcelRows);
+    const balanceByKey = getBalanceByKeyMap(inventoryMovements);
+    const reserveByKey = reservedQtyByBalanceKey(outbound ?? [], rows);
+    const lines: OutboundExcelImportStockLine[] = [];
+    let hasShortage = false;
+    for (const row of merged) {
+      const plan = Number(row.plannedUnits) || 0;
+      const product = findCatalogProductForOutbound(row, rows);
+      const title = product?.name || text(row.name) || text(row.barcode) || text(row.supplierArticle) || "—";
+      const warehouseName = (row.sourceWarehouse || "").trim() || "Склад Коледино";
+      if (!product) {
+        lines.push({
+          key: `orphan:${title}:${warehouseName}:${plan}`,
+          title,
+          plan,
+          available: null,
+          shortage: 0,
+          warehouse: warehouseName,
+        });
+        continue;
+      }
+      const wh = warehouseName || "—";
+      const balKey = makeInventoryBalanceKey({
+        legalEntityId: entityIdTrim,
+        warehouseName: wh,
+        barcode: (product.barcode || "").trim() || "—",
+        article: (product.supplierArticle || "").trim() || "—",
+        color: (product.color || "").trim() || "—",
+        size: (product.size || "").trim() || "—",
+      });
+      const balanceQty = balanceByKey.get(balKey) ?? 0;
+      const reserveQty = reserveByKey.get(balKey) ?? 0;
+      const available = balanceQty - reserveQty;
+      const shortage = plan > available ? plan - available : 0;
+      if (shortage > 0) hasShortage = true;
+      lines.push({
+        key: balKey,
+        title,
+        plan,
+        available,
+        shortage,
+        warehouse: warehouseName,
+      });
+    }
+    return { lines, hasShortage };
+  }, [entityIdNorm, outboundExcelRows, inventoryMovements, outbound, rows]);
+
   const inboundDocuments = React.useMemo(
     () =>
       [...inboundRows].sort((a, b) => {
@@ -1369,19 +1492,6 @@ const LegalEntityDetailsPage = () => {
     if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
     if (!product) return toast.error("Товар не найден");
     const warehouseName = outboundDraft.warehouse.trim() || "Склад Коледино";
-    const movements = queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? [];
-    const outboundSnap = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? [];
-    const wmsAv = wmsAvailableForCatalogProduct({
-      movements,
-      outbound: outboundSnap,
-      catalog: rows,
-      legalEntityId: entity.id.trim(),
-      warehouseName,
-      productId: selectedOutboundProductId,
-    });
-    if (wmsAv !== null && qty > wmsAv) {
-      toast.warning("Недостаточно доступного товара");
-    }
     const assignmentId = `ass-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const assignmentNo = `ОТГ-${Date.now().toString().slice(-8)}`;
     const legalId = entity.id.trim();
@@ -1630,30 +1740,11 @@ const LegalEntityDetailsPage = () => {
     let skipped = 0;
     const assignmentId = `ass-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const assignmentNo = `ОТГ-${Date.now().toString().slice(-8)}`;
-    const deduped = new Map<string, OutboundImportPreviewRow>();
-    for (const row of outboundExcelRows) {
-      const key = normalizeCode(row.barcode) || `art:${normalizeCode(row.supplierArticle)}`;
-      if (!key || key === "art:") {
-        skipped += 1;
-        continue;
-      }
-      const prev = deduped.get(key);
-      if (!prev) deduped.set(key, { ...row });
-      else
-        deduped.set(key, {
-          ...prev,
-          plannedUnits: prev.plannedUnits + (row.plannedUnits || 0),
-          name: prev.name || row.name,
-          size: prev.size || row.size,
-          color: prev.color || row.color,
-        });
-    }
+    const { merged: mergedImportRows, skippedInvalid } = mergeOutboundImportPreviewRowsByBarcodeOrArticle(outboundExcelRows);
+    skipped += skippedInvalid;
     const stockLeft = new Map<string, number>();
     for (const p of rows) stockLeft.set(p.id, p.stockOnHand);
     const entityIdTrim = entity.id.trim();
-    const movementSnap =
-      queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? [];
-    let outboundImportShortageWarned = false;
 
     const mergeOrCreateOrphan = async (row: OutboundImportPreviewRow, planned: number) => {
       const orphanPid = orphanProductIdForImport(entityIdTrim, row);
@@ -1712,7 +1803,7 @@ const LegalEntityDetailsPage = () => {
       created += 1;
     };
 
-    for (const row of deduped.values()) {
+    for (const row of mergedImportRows) {
       const wantQty = Number(row.plannedUnits) || 0;
       if (wantQty <= 0) {
         skipped += 1;
@@ -1722,19 +1813,6 @@ const LegalEntityDetailsPage = () => {
       if (!product) {
         await mergeOrCreateOrphan(row, wantQty);
         continue;
-      }
-      const outboundNow = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? [];
-      const wmsAvImport = wmsAvailableForCatalogProduct({
-        movements: movementSnap,
-        outbound: outboundNow,
-        catalog: rows,
-        legalEntityId: entityIdTrim,
-        warehouseName: row.sourceWarehouse,
-        productId: product.id,
-      });
-      if (wmsAvImport !== null && wantQty > wmsAvImport && !outboundImportShortageWarned) {
-        toast.warning("Недостаточно доступного товара");
-        outboundImportShortageWarned = true;
       }
       const available = stockLeft.get(product.id) ?? 0;
       const qty = Math.min(wantQty, available);
@@ -3020,6 +3098,49 @@ const LegalEntityDetailsPage = () => {
                       }}
                     />
                     <p className="text-xs text-slate-600">Строк к импорту: {outboundExcelRows.length}</p>
+                    {outboundExcelImportStockPreview.hasShortage && (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                        В отгрузке есть товары с недостаточным остатком
+                      </div>
+                    )}
+                    {outboundExcelImportStockPreview.lines.length > 0 && (
+                      <div className="max-h-52 overflow-auto rounded-md border border-slate-200">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
+                              <TableHead className="h-8 px-2 py-1.5 text-xs font-semibold text-slate-600">Товар</TableHead>
+                              <TableHead className="h-8 px-2 py-1.5 text-xs font-semibold text-slate-600">Склад</TableHead>
+                              <TableHead className="h-8 px-2 py-1.5 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                              <TableHead className="h-8 px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
+                              <TableHead className="h-8 px-2 py-1.5 text-xs font-semibold text-slate-600">Нехватка</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {outboundExcelImportStockPreview.lines.map((ln) => (
+                              <TableRow key={ln.key} className="border-slate-100 text-xs">
+                                <TableCell className="max-w-[200px] truncate px-2 py-1.5 text-slate-800">{ln.title}</TableCell>
+                                <TableCell className="whitespace-nowrap px-2 py-1.5 text-slate-700">{ln.warehouse}</TableCell>
+                                <TableCell className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-800">
+                                  {ln.plan.toLocaleString("ru-RU")}
+                                </TableCell>
+                                <TableCell className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-800">
+                                  {ln.available === null ? "—" : ln.available.toLocaleString("ru-RU")}
+                                </TableCell>
+                                <TableCell className="px-2 py-1.5">
+                                  {ln.available !== null && ln.shortage > 0 ? (
+                                    <span className="font-medium text-red-600 tabular-nums">
+                                      Не хватает {ln.shortage.toLocaleString("ru-RU")} шт
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-600">—</span>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setOutboundExcelOpen(false)}>Отмена</Button>
@@ -3038,6 +3159,11 @@ const LegalEntityDetailsPage = () => {
                   <DialogContent>
                     <DialogHeader><DialogTitle>Новое задание на отгрузку</DialogTitle></DialogHeader>
                     <div className="grid gap-3 py-2">
+                      {manualOutboundCreateStockPreview.hasShortage && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                          В отгрузке есть товары с недостаточным остатком
+                        </div>
+                      )}
                       <div className="grid gap-1.5">
                         <Label>Поиск товара (название/баркод)</Label>
                         <Input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Введите название или баркод" />
@@ -3056,6 +3182,21 @@ const LegalEntityDetailsPage = () => {
                       <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={outboundDraft.quantity} onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
                       <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
                       <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
+                      {selectedOutboundProductId && manualOutboundCreateStockPreview.breakdown ? (
+                        <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-800">
+                          <div className="tabular-nums">План: {manualOutboundCreateStockPreview.plan.toLocaleString("ru-RU")}</div>
+                          <div className="tabular-nums">Доступно: {manualOutboundCreateStockPreview.breakdown.availableQty.toLocaleString("ru-RU")}</div>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            Остаток по движениям {manualOutboundCreateStockPreview.breakdown.balanceQty.toLocaleString("ru-RU")}, резерв{" "}
+                            {manualOutboundCreateStockPreview.breakdown.reserveQty.toLocaleString("ru-RU")}
+                          </p>
+                          {manualOutboundCreateStockPreview.shortage > 0 ? (
+                            <div className="mt-1 font-medium text-red-600 tabular-nums">
+                              Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <div className="grid gap-1.5"><Label>Способ отгрузки</Label><Select value={outboundDraft.shippingMethod} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, shippingMethod: v as "fbo" | "fbs" | "self" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fbo">FBO</SelectItem><SelectItem value="fbs">FBS</SelectItem><SelectItem value="self">Самовывоз</SelectItem></SelectContent></Select></div>
                       <div className="grid gap-1.5">
                         <Label>Приоритет задания</Label>
