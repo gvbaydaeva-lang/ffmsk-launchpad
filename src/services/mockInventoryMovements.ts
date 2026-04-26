@@ -101,6 +101,11 @@ export function hasTaskMovements(
   return movements.some((m) => m.taskId === taskId && m.type === type);
 }
 
+/** Уже есть приёмочные INBOUND по этому заданию — повторно не создавать. */
+export function hasReceivingInboundMovements(taskId: string, movements: InventoryMovement[]): boolean {
+  return movements.some((m) => m.taskId === taskId && m.type === "INBOUND" && m.source === "receiving");
+}
+
 export function getBalanceByKeyMap(movements: InventoryMovement[]): Map<string, number> {
   const m = new Map<string, number>();
   for (const mov of movements) {

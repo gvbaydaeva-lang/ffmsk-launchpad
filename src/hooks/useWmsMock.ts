@@ -34,7 +34,13 @@ import {
   generateMockShipmentBoxes,
 } from "@/services/mockWms";
 import { fetchMockWarehouseInventory } from "@/services/mockWarehouseInventory";
-import { addInventoryMovements as pushInventoryMovements, getInventoryBalance, getInventoryMovements } from "@/services/mockInventoryMovements";
+import { buildInboundReceivingInventoryMovements } from "@/lib/inventoryMovementsFromInbound";
+import {
+  addInventoryMovements as pushInventoryMovements,
+  getInventoryBalance,
+  getInventoryMovements,
+  hasReceivingInboundMovements,
+} from "@/services/mockInventoryMovements";
 import { addOperationLog as persistOperationLog, fetchOperationLogs } from "@/services/mockOperationLogs";
 import { mergeLegalWarehouseCounts } from "@/services/scanWorkflow";
 
@@ -188,6 +194,27 @@ export function useInboundSupplies() {
           const stockOnHand = receiptHistory.reduce((s, h) => s + h.quantity, 0);
           return { ...p, receiptHistory, stockOnHand };
         });
+
+        const invExisting =
+          qc.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? (await getInventoryMovements());
+        if (!hasReceivingInboundMovements(row.id, invExisting)) {
+          const legalRows = qc.getQueryData<LegalEntity[]>(["wms", "legal"]) ?? (await fetchMockLegalEntities());
+          const leName = legalRows.find((e) => e.id === row.legalEntityId)?.shortName ?? row.legalEntityId;
+          const moves = buildInboundReceivingInventoryMovements(row, leName);
+          if (moves.length > 0) {
+            const nextInv = pushInventoryMovements(moves);
+            qc.setQueryData(["wms", "inventory-movements"], nextInv);
+            const opRow = persistOperationLog({
+              type: "INVENTORY_CHANGED",
+              taskId: moves[0].taskId,
+              taskNumber: moves[0].taskNumber,
+              legalEntityId: moves[0].legalEntityId,
+              legalEntityName: moves[0].legalEntityName,
+              description: `Остатки обновлены по заданию №${moves[0].taskNumber || moves[0].taskId}`,
+            });
+            qc.setQueryData<OperationLog[]>(["wms", "operation-logs"], (prev) => [opRow, ...(prev ?? [])]);
+          }
+        }
       }
       return { inbound: nextInbound, catalog: nextCatalog };
     },

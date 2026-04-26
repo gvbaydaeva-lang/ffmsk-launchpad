@@ -19,7 +19,8 @@ import {
   inboundSupplyCompletedAtIso,
   inboundSupplyCreatedAtIso,
 } from "@/lib/taskArchiveDates";
-import { hasTaskMovements } from "@/services/mockInventoryMovements";
+import { hasReceivingInboundMovements } from "@/services/mockInventoryMovements";
+import { buildInboundReceivingInventoryMovements } from "@/lib/inventoryMovementsFromInbound";
 import { toast } from "sonner";
 
 const ReceivingPage = () => {
@@ -142,36 +143,9 @@ const ReceivingPage = () => {
     });
     const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementRows) ?? [];
     try {
-      if (!hasTaskMovements(latest.id, "INBOUND", invSnapshot)) {
+      if (!hasReceivingInboundMovements(latest.id, invSnapshot)) {
         const leName = entityName(latest.legalEntityId);
-        const mp = latest.marketplace.toUpperCase();
-        const ts = new Date().toISOString();
-        const moves: InventoryMovement[] = latest.items
-          .map((it, i) => {
-            const q = Number(it.factualQuantity) || 0;
-            if (q <= 0) return null;
-            return {
-              id: `im-in-${latest.id}-${i}-${Date.now()}`,
-              type: "INBOUND" as const,
-              taskId: latest.id,
-              taskNumber: latest.documentNo,
-              legalEntityId: latest.legalEntityId,
-              legalEntityName: leName,
-              warehouseName: latest.destinationWarehouse,
-              itemId: it.productId ?? `line-${i}`,
-              name: (it.name || it.barcode || "—").trim() || "—",
-              sku: (it.supplierArticle || "").trim() || undefined,
-              article: (it.supplierArticle || "").trim() || "—",
-              barcode: (it.barcode || "").trim() || "—",
-              marketplace: mp,
-              color: (it.color || "").trim() || "—",
-              size: (it.size || "").trim() || "—",
-              qty: q,
-              createdAt: ts,
-              source: "receiving" as const,
-            };
-          })
-          .filter((x): x is InventoryMovement => x !== null);
+        const moves = buildInboundReceivingInventoryMovements(latest, leName);
         if (moves.length) {
           await addInventoryMovements(moves);
         }
