@@ -297,14 +297,13 @@ const ShippingPage = () => {
           ) : (
             <>
               <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-slate-200">
-                <Table className="min-w-[1380px] table-auto">
+                <Table className="min-w-[1280px] table-auto">
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
                       <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Приоритет</TableHead>
-                      <TableHead className="h-9 min-w-[150px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Проблема</TableHead>
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
                       <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
@@ -326,7 +325,7 @@ const ShippingPage = () => {
                         <React.Fragment key={doc.id}>
                           <TableRow
                             className={`cursor-pointer border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
-                            onClick={() => setSelectedId(doc.id)}
+                            onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
                           >
                             <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
                               {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
@@ -342,20 +341,20 @@ const ShippingPage = () => {
                                 {outboundPriorityLabel(doc.priority)}
                               </span>
                             </TableCell>
-                            <TableCell className="whitespace-nowrap px-3 py-2">
-                              {doc.workflowStatus === "completed" ? (
-                                <span className="text-slate-500">—</span>
-                              ) : shippingDocHasStockShortage.get(doc.id) ? (
-                                <span className="inline-flex whitespace-nowrap rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 ring-1 ring-red-200">
-                                  Не хватает товара
-                                </span>
-                              ) : (
-                                <span className="text-slate-500">—</span>
-                              )}
-                            </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
                             <TableCell className="px-3 py-2">
-                              <StatusBadge status={doc.workflowStatus} />
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <StatusBadge status={doc.workflowStatus} />
+                                {doc.workflowStatus !== "completed" && shippingDocHasStockShortage.get(doc.id) ? (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-950 ring-1 ring-amber-300/80"
+                                    title="План по строке больше доступного остатка (остаток по движениям минус резерв)"
+                                  >
+                                    <span aria-hidden>⚠️</span>
+                                    Не хватает
+                                  </span>
+                                ) : null}
+                              </div>
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">{doc.sourceWarehouse}</TableCell>
                             <TableCell className="px-3 py-2">{doc.marketplace.toUpperCase()}</TableCell>
@@ -377,13 +376,13 @@ const ShippingPage = () => {
                                 className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 hover:bg-slate-50"
                                 onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
                               >
-                                Открыть
+                                {isSel ? "Свернуть" : "Открыть"}
                               </button>
                             </TableCell>
                           </TableRow>
                           {isSel ? (
                             <TableRow className="border-slate-100 bg-slate-50/90">
-                              <TableCell colSpan={14} className="align-top p-0">
+                              <TableCell colSpan={13} className="align-top p-0">
                                 <div className="space-y-4 border-t border-slate-200 p-4">
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
@@ -400,8 +399,14 @@ const ShippingPage = () => {
                                     </div>
                                     <div>
                                       <span className="text-slate-500">Статус</span>
-                                      <div className="mt-0.5">
+                                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                                         <StatusBadge status={doc.workflowStatus} />
+                                        {doc.workflowStatus !== "completed" && shippingDocHasStockShortage.get(doc.id) ? (
+                                          <span className="inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-950 ring-1 ring-amber-300/80">
+                                            <span aria-hidden>⚠️</span>
+                                            Не хватает
+                                          </span>
+                                        ) : null}
                                       </div>
                                     </div>
                                     <div>
