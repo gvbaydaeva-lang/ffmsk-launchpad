@@ -19,6 +19,7 @@ import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
+import { cn } from "@/lib/utils";
 import {
   mergePriorityFromShipments,
   outboundPriorityBadgeClass,
@@ -126,6 +127,7 @@ const ShippingPage = () => {
   const openTaskRowRef = React.useRef<HTMLTableRowElement | null>(null);
   const urlOpenTaskApplied = React.useRef<string | null>(null);
   const openTaskScrollDone = React.useRef<string | null>(null);
+  const [openTaskHighlightId, setOpenTaskHighlightId] = React.useState<string | null>(null);
 
   const openTaskParam = searchParams.get("openTask");
   const openTaskDecoded = React.useMemo(() => {
@@ -231,13 +233,51 @@ const ShippingPage = () => {
     }
   }, [openTaskDecoded]);
 
-  React.useLayoutEffect(() => {
+  React.useEffect(() => {
+    if (!openTaskDecoded) {
+      setOpenTaskHighlightId(null);
+    }
+  }, [openTaskDecoded]);
+
+  React.useEffect(() => {
+    if (!openTaskHighlightId) return;
+    const t = window.setTimeout(() => setOpenTaskHighlightId(null), 1800);
+    return () => window.clearTimeout(t);
+  }, [openTaskHighlightId]);
+
+  /** После раскрытия состава: прокрутка к центру экрана и краткая подсветка (только openTask). */
+  React.useEffect(() => {
     if (!openTaskDecoded || selectedId !== openTaskDecoded) return;
     if (openTaskScrollDone.current === openTaskDecoded) return;
-    const el = openTaskRowRef.current;
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    openTaskScrollDone.current = openTaskDecoded;
+    let cancelled = false;
+
+    const tryScroll = (): boolean => {
+      const el = openTaskRowRef.current;
+      if (!el) return false;
+      if (cancelled) return false;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (cancelled) return false;
+      openTaskScrollDone.current = openTaskDecoded;
+      setOpenTaskHighlightId(openTaskDecoded);
+      return true;
+    };
+
+    let t2: ReturnType<typeof setTimeout> | null = null;
+    const t1 = window.setTimeout(() => {
+      if (cancelled) return;
+      if (tryScroll()) return;
+      t2 = window.setTimeout(() => {
+        if (cancelled) return;
+        if (openTaskScrollDone.current === openTaskDecoded) return;
+        tryScroll();
+      }, 280);
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t1);
+      if (t2) window.clearTimeout(t2);
+    };
   }, [openTaskDecoded, selectedId, documents.length]);
 
   /**
@@ -451,7 +491,13 @@ const ShippingPage = () => {
                         <React.Fragment key={doc.id}>
                           <TableRow
                             ref={openTaskDecoded === doc.id ? openTaskRowRef : undefined}
-                            className={`cursor-pointer border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""} ${doc.workflowStatus === "pending" ? "bg-blue-50/60" : ""}`}
+                            className={cn(
+                              "cursor-pointer border-slate-100 text-sm transition-[background-color,box-shadow] duration-300",
+                              isSel ? "bg-slate-50" : "",
+                              doc.workflowStatus === "pending" ? "bg-blue-50/60" : "",
+                              openTaskHighlightId === doc.id &&
+                                "z-[1] ring-2 ring-amber-400/50 ring-inset bg-amber-50/50",
+                            )}
                             onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
                           >
                             <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
