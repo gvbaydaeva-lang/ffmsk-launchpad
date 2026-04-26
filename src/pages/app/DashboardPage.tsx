@@ -95,6 +95,18 @@ const DashboardPage = () => {
     const available = row.balanceQty - reserve;
     return available <= 0;
   }).length;
+  const activeAssignmentsInWork = shippingProcessing;
+  const attentionItems = [
+    shippingProblematic > 0
+      ? { id: "shipping-problem", text: "Есть отгрузки с нехваткой товара", path: "/shipping", count: shippingProblematic }
+      : null,
+    inventoryUnavailable > 0
+      ? { id: "inventory-unavailable", text: "Есть товары без доступного остатка", path: "/inventory", count: inventoryUnavailable }
+      : null,
+    activeAssignmentsInWork > 0
+      ? { id: "active-work", text: "Есть активные задания в работе", path: "/packing", count: activeAssignmentsInWork }
+      : null,
+  ].filter((item): item is { id: string; text: string; path: string; count: number } => item !== null);
 
   return (
     <div className="space-y-6">
@@ -182,6 +194,36 @@ const DashboardPage = () => {
               <p className="flex items-center justify-between text-slate-700"><span>В резерве</span><span className="tabular-nums font-medium text-slate-900">{inventoryReserved || 0}</span></p>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-base text-slate-900">Требует внимания</CardTitle>
+          <CardDescription className="text-slate-500">Короткие сигналы по зонам риска</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 pt-0">
+          {attentionItems.length === 0 ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              Критичных задач нет
+            </div>
+          ) : (
+            attentionItems.map((item) => (
+              <div
+                key={item.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(item.path)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") navigate(item.path);
+                }}
+                className="flex cursor-pointer items-center justify-between rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-sm text-slate-800 transition-colors hover:bg-amber-100/60"
+              >
+                <span>{item.text}</span>
+                <span className="tabular-nums font-medium text-amber-800">{item.count}</span>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
 
