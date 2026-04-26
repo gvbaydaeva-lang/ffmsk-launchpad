@@ -25,9 +25,7 @@ import {
 import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
 import { getBalanceByKeyMap, hasTaskMovements } from "@/services/mockInventoryMovements";
 import type { InventoryMovement, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
-import {
-  normalizeWorkflowStatus,
-} from "@/lib/taskWorkflowUi";
+import { normalizeWorkflowStatus, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import {
   planFactDiscrepancyText,
   planFactLineBadgeClass,
@@ -146,18 +144,16 @@ const PackingPage = () => {
           legalEntityId: sh.legalEntityId,
           shipments: [sh],
           workflowStatus: (sh.workflowStatus ?? "pending") as TaskWorkflowStatus,
+          priority: mergePriorityFromShipments([sh]),
         });
       } else {
         existing.shipments.push(sh);
-        if ((sh.workflowStatus ?? "pending") === "processing") {
-          existing.workflowStatus = "processing";
-        }
       }
     }
     return Array.from(groups.values()).map((group) => {
-      const allCompleted = group.shipments.every((sh) => (sh.workflowStatus ?? "pending") === "completed");
       const priority = mergePriorityFromShipments(group.shipments);
-      return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus, priority };
+      const workflowStatus = workflowFromOutboundGroup(group.shipments);
+      return { ...group, workflowStatus, priority };
     });
   }, [allShipments, legal]);
 
@@ -168,8 +164,10 @@ const PackingPage = () => {
         const first = group.shipments[0];
         if (!first) return false;
         const wfNorm = normalizeWorkflowStatus(group.workflowStatus);
-        if (viewMode === "active" && wfNorm === "completed") return false;
-        if (viewMode === "archive" && wfNorm !== "completed") return false;
+        const packingDone =
+          wfNorm === "completed" || wfNorm === "assembled" || wfNorm === "shipped";
+        if (viewMode === "active" && packingDone) return false;
+        if (viewMode === "archive" && !packingDone) return false;
         if (statusFilter !== "all" && normalizeWorkflowStatus(group.workflowStatus) !== statusFilter) return false;
         if (warehouseFilter !== "all" && first.sourceWarehouse !== warehouseFilter) return false;
         if (mpFilter !== "all" && first.marketplace !== mpFilter) return false;
@@ -630,12 +628,11 @@ const PackingPage = () => {
     });
     const currentAssignmentId = startedAssignment.id;
     const nextAssignment =
-      assignments.find(
-        (a) =>
-          a.id !== currentAssignmentId &&
-          (normalizeWorkflowStatus(a.workflowStatus) === "pending" ||
-            normalizeWorkflowStatus(a.workflowStatus) === "processing"),
-      ) ?? null;
+      assignments.find((a) => {
+        if (a.id === currentAssignmentId) return false;
+        const w = normalizeWorkflowStatus(a.workflowStatus);
+        return w === "pending" || w === "processing" || w === "assembling";
+      }) ?? null;
     try {
       const moves: InventoryMovement[] = startedAssignment.shipments
         .map((sh) => {
@@ -684,7 +681,7 @@ const PackingPage = () => {
           patch: {
             packedUnits: shipQty,
             shippedUnits: shipQty,
-            workflowStatus: "completed",
+            workflowStatus: "assembled",
             completedWithDiscrepancies: plan !== packed,
           },
         });
@@ -754,7 +751,8 @@ const PackingPage = () => {
   }, [startedAssignmentId, focusScanInput]);
 
   const startAssignment = async (assignment: PackingAssignment) => {
-    if (normalizeWorkflowStatus(assignment.workflowStatus) === "completed") return;
+    const w = normalizeWorkflowStatus(assignment.workflowStatus);
+    if (w === "completed" || w === "assembled" || w === "shipped") return;
     if (assignment.workflowStatus === "pending") {
       for (const sh of assignment.shipments) {
         await updateOutboundDraft({ id: sh.id, patch: { workflowStatus: "processing", status: "к отгрузке" } });
@@ -854,7 +852,10 @@ const PackingPage = () => {
               <SelectItem value="all">Все статусы</SelectItem>
               <SelectItem value="pending">Новое</SelectItem>
               <SelectItem value="processing">В работе</SelectItem>
+              <SelectItem value="assembling">В сборке</SelectItem>
+              <SelectItem value="assembled">Собрано</SelectItem>
               <SelectItem value="completed">Завершено</SelectItem>
+              <SelectItem value="shipped">Отгружено</SelectItem>
             </SelectContent>
           </Select>
           <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
@@ -923,7 +924,7 @@ const PackingPage = () => {
                   const overrun = Math.max(0, totalFact - totalPlan);
                   const requiresReview = totalPlan > 0 && totalPlan !== totalFact;
                   const mismatch =
-                    wf === "completed" &&
+                    (wf === "completed" || wf === "assembled") &&
                     (totalPlan !== totalFact || assignment.shipments.some((s) => Boolean(s.completedWithDiscrepancies)));
                   return {
                     id: assignment.id,

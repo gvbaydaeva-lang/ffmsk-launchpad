@@ -100,12 +100,12 @@ export function workflowFromInbound(row: InboundSupply): TaskWorkflowStatus {
 /** Статус задания отгрузки по группе строк */
 export function workflowFromOutboundGroup(shipments: OutboundShipment[]): TaskWorkflowStatus {
   const perRow = shipments.map((s): TaskWorkflowStatus => {
-    if (s.workflowStatus === "completed" || s.status === "отгружено") return "completed";
-    if (s.workflowStatus === "processing") return "processing";
-    if (s.workflowStatus === "assembling") return "assembling";
-    if (s.workflowStatus === "assembled") return "assembled";
-    if (s.workflowStatus === "shipped") return "shipped";
-    return (s.workflowStatus ?? "pending") as TaskWorkflowStatus;
+    const wf = s.workflowStatus;
+    /** Явный workflow важнее legacy `status === "отгружено"` (например после упаковки — «Собрано»). */
+    if (wf === "assembled" || wf === "assembling" || wf === "shipped") return wf;
+    if (wf === "completed" || s.status === "отгружено") return "completed";
+    if (wf === "processing") return "processing";
+    return (wf ?? "pending") as TaskWorkflowStatus;
   });
   if (perRow.some((x) => x === "processing")) return "processing";
   if (perRow.some((x) => x === "assembling")) return "assembling";
