@@ -38,6 +38,8 @@ export type TaskItemRow = {
   fact: number;
   warehouse: string;
   status?: TaskWorkflowStatus;
+  /** Только экран «Отгрузки»: доступно по WMS (остаток − резерв) vs план строки */
+  shippingStock?: { state: "sufficient" } | { state: "short"; available: number; shortage: number };
 };
 
 type TaskItemsTableProps = {
@@ -56,9 +58,10 @@ export default function TaskItemsTable({
   rowHighlight = null,
 }: TaskItemsTableProps) {
   const outbound = variant === "outboundLines";
+  const showShippingStock = outbound && rows.some((r) => r.shippingStock !== undefined);
   return (
     <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
-    <Table className="min-w-[1100px] table-auto">
+    <Table className={cn("table-auto", showShippingStock ? "min-w-[1280px]" : "min-w-[1100px]")}>
       <TableHeader>
         <TableRow className="border-slate-200 bg-white">
           <TableHead className="h-9 min-w-[220px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Название</TableHead>
@@ -74,6 +77,9 @@ export default function TaskItemsTable({
           ) : (
             <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
           )}
+          {showShippingStock ? (
+            <TableHead className="h-9 min-w-[200px] px-3 py-2 text-xs font-semibold text-slate-600">Доступно</TableHead>
+          ) : null}
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
         </TableRow>
       </TableHeader>
@@ -105,6 +111,22 @@ export default function TaskItemsTable({
               ) : (
                 <TableCell className="px-3 py-2 text-right tabular-nums text-slate-800">{remaining}</TableCell>
               )}
+              {showShippingStock ? (
+                <TableCell className="px-3 py-2 align-top text-xs text-slate-800">
+                  {row.shippingStock?.state === "short" ? (
+                    <div className="space-y-1">
+                      <div className="tabular-nums">Доступно: {row.shippingStock.available.toLocaleString("ru-RU")}</div>
+                      <div className="font-medium text-red-600 tabular-nums">
+                        Не хватает {row.shippingStock.shortage.toLocaleString("ru-RU")} шт
+                      </div>
+                    </div>
+                  ) : row.shippingStock?.state === "sufficient" ? (
+                    <span className="text-emerald-800">Доступно достаточно</span>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+              ) : null}
               <TableCell className="px-3 py-2">
                 <span
                   className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineValidationBadgeClass(validation)}`}

@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
-import { useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import { useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
@@ -24,6 +24,8 @@ import {
   outboundPriorityLabel,
   type OutboundTaskPriority,
 } from "@/lib/outboundTaskPriority";
+import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
+import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 
 type ShipmentDoc = {
   id: string;
@@ -49,6 +51,7 @@ function shippingDispatcherHint(status: TaskWorkflowStatus): string {
 const ShippingPage = () => {
   const navigate = useNavigate();
   const { data, isLoading, error } = useOutboundShipments();
+  const { data: inventoryMovements = [] } = useInventoryMovements();
   const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
   const { legalEntityId } = useAppFilters();
@@ -135,12 +138,42 @@ const ShippingPage = () => {
     });
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
+  /** Активные задания: план строки > доступно (остаток по движениям − резерв). Архив не помечаем. */
+  const shippingDocHasStockShortage = React.useMemo(() => {
+    const map = new Map<string, boolean>();
+    const balanceByKey = getBalanceByKeyMap(inventoryMovements);
+    const reserveByKey = reservedQtyByBalanceKey(data ?? [], catalog ?? []);
+    const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+    for (const doc of documents) {
+      if (doc.workflowStatus === "completed") {
+        map.set(doc.id, false);
+        continue;
+      }
+      let bad = false;
+      for (const sh of doc.shipments) {
+        const product = byProduct.get(sh.productId) ?? null;
+        const key = balanceKeyFromOutboundShipment(sh, product);
+        const available = (balanceByKey.get(key) ?? 0) - (reserveByKey.get(key) ?? 0);
+        const plan = Number(sh.plannedUnits) || 0;
+        if (plan > available) {
+          bad = true;
+          break;
+        }
+      }
+      map.set(doc.id, bad);
+    }
+    return map;
+  }, [documents, inventoryMovements, data, catalog]);
+
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
 
   /** Строки отгрузки из хранилища часто без import* — подставляем поля из каталога по productId (как в упаковщике). */
   const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
     if (!selectedDoc?.shipments?.length) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+    const showStock = selectedDoc.workflowStatus !== "completed";
+    const balanceByKey = showStock ? getBalanceByKeyMap(inventoryMovements) : null;
+    const reserveByKey = showStock ? reservedQtyByBalanceKey(data ?? [], catalog ?? []) : null;
     return selectedDoc.shipments.map((sh) => {
       const product = byProduct.get(sh.productId) ?? null;
       const name = (sh.importName || product?.name || "").trim() || "—";
@@ -150,6 +183,13 @@ const ShippingPage = () => {
       const size = (sh.importSize || product?.size || "").trim() || "—";
       const plan = Number(sh.plannedUnits) || 0;
       const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      let shippingStock: TaskItemRow["shippingStock"] = undefined;
+      if (showStock && balanceByKey && reserveByKey) {
+        const key = balanceKeyFromOutboundShipment(sh, product);
+        const available = (balanceByKey.get(key) ?? 0) - (reserveByKey.get(key) ?? 0);
+        shippingStock =
+          plan > available ? { state: "short", available, shortage: plan - available } : { state: "sufficient" };
+      }
       return {
         id: sh.id,
         name,
@@ -162,9 +202,10 @@ const ShippingPage = () => {
         fact,
         warehouse: sh.sourceWarehouse || "—",
         status: sh.workflowStatus ?? "pending",
+        shippingStock,
       };
     });
-  }, [selectedDoc, catalog]);
+  }, [selectedDoc, catalog, inventoryMovements, data]);
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 
@@ -256,13 +297,14 @@ const ShippingPage = () => {
           ) : (
             <>
               <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-slate-200">
-                <Table className="min-w-[1280px] table-auto">
+                <Table className="min-w-[1380px] table-auto">
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
                       <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Приоритет</TableHead>
+                      <TableHead className="h-9 min-w-[150px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Проблема</TableHead>
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
                       <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
@@ -300,6 +342,17 @@ const ShippingPage = () => {
                                 {outboundPriorityLabel(doc.priority)}
                               </span>
                             </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">
+                              {doc.workflowStatus === "completed" ? (
+                                <span className="text-slate-500">—</span>
+                              ) : shippingDocHasStockShortage.get(doc.id) ? (
+                                <span className="inline-flex whitespace-nowrap rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 ring-1 ring-red-200">
+                                  Не хватает товара
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
+                            </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
                             <TableCell className="px-3 py-2">
                               <StatusBadge status={doc.workflowStatus} />
@@ -330,7 +383,7 @@ const ShippingPage = () => {
                           </TableRow>
                           {isSel ? (
                             <TableRow className="border-slate-100 bg-slate-50/90">
-                              <TableCell colSpan={13} className="align-top p-0">
+                              <TableCell colSpan={14} className="align-top p-0">
                                 <div className="space-y-4 border-t border-slate-200 p-4">
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
