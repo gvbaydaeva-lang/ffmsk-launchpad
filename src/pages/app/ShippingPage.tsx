@@ -51,9 +51,18 @@ function shippingDispatcherHint(status: TaskWorkflowStatus): string {
 
 type ShippingStockWarnLine = { barcode: string; plan: number; available: number; shortage: number };
 
+function shippingAvailableFromBalanceReserve(balance: number, reserve: number): number {
+  return Math.max(0, balance - reserve);
+}
+
+function shippingShortage(plan: number, available: number): number {
+  return Math.max(0, plan - available);
+}
+
 function formatShippingStockTooltip(lines: ShippingStockWarnLine[]): string {
   if (!lines.length) return "";
-  const head = "Недостаточно доступного товара (план > доступно, доступно = остаток по движениям − резерв).";
+  const head =
+    "Недостаточно доступного товара (план > доступно). Доступно = max(0, остаток по движениям − резерв), не хватает = max(0, план − доступно).";
   if (lines.length === 1) {
     const L = lines[0];
     return `${head}\n\nПлан: ${L.plan.toLocaleString("ru-RU")}, доступно: ${L.available.toLocaleString("ru-RU")}, не хватает: ${L.shortage.toLocaleString("ru-RU")}.\nБаркод: ${L.barcode}.`;
@@ -187,7 +196,7 @@ const ShippingPage = () => {
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
   /**
-   * ⚠️ только при строках с plan > 0, fact < plan, plan > (остаток по движениям − резерв) — как в форме создания отгрузки.
+   * ⚠️ только при строках: plan > 0, fact < plan, plan > доступно, где доступно = max(0, остаток − резерв).
    * Без движений WMS не считаем (пустой снимок дал бы ложные срабатывания).
    */
   const shippingDocStockWarning = React.useMemo(() => {
@@ -213,10 +222,12 @@ const ShippingPage = () => {
         if (fact >= plan) continue;
         const product = byProduct.get(sh.productId) ?? null;
         const key = balanceKeyFromOutboundShipment(sh, product);
-        const available = (balanceByKey.get(key) ?? 0) - (reserveByKey.get(key) ?? 0);
+        const balanceQty = balanceByKey.get(key) ?? 0;
+        const reserveQty = reserveByKey.get(key) ?? 0;
+        const available = shippingAvailableFromBalanceReserve(balanceQty, reserveQty);
         if (plan > available) {
           const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
-          lines.push({ barcode, plan, available, shortage: plan - available });
+          lines.push({ barcode, plan, available, shortage: shippingShortage(plan, available) });
         }
       }
       map.set(doc.id, { lines });
@@ -246,11 +257,13 @@ const ShippingPage = () => {
       let shippingStock: TaskItemRow["shippingStock"] = undefined;
       if (showStock && balanceByKey && reserveByKey) {
         const key = balanceKeyFromOutboundShipment(sh, product);
-        const available = (balanceByKey.get(key) ?? 0) - (reserveByKey.get(key) ?? 0);
+        const balanceQty = balanceByKey.get(key) ?? 0;
+        const reserveQty = reserveByKey.get(key) ?? 0;
+        const available = shippingAvailableFromBalanceReserve(balanceQty, reserveQty);
         if (fact >= plan) {
           shippingStock = { state: "sufficient" };
         } else if (plan > available) {
-          shippingStock = { state: "short", available, shortage: plan - available };
+          shippingStock = { state: "short", available, shortage: shippingShortage(plan, available) };
         } else {
           shippingStock = { state: "sufficient" };
         }
