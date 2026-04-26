@@ -23,6 +23,7 @@ import {
   getTaskValidation,
 } from "@/utils/wmsValidation";
 import { useAppendOperationLog } from "@/hooks/useWmsMock";
+import { playScanErrorSound, playScanSuccessSound } from "@/utils/scanFeedbackSound";
 
 type Props = {
   supply: InboundSupply;
@@ -135,6 +136,7 @@ export default function ReceivingTaskWorkScreen({
     if (!code) return;
     const idx = supply.items.findIndex((x) => (x.barcode || "").trim() === code);
     if (idx < 0) {
+      playScanErrorSound();
       triggerFlash("error");
       onScanError?.(code, "unknown");
       toast.error("Товар не найден в задании");
@@ -143,6 +145,7 @@ export default function ReceivingTaskWorkScreen({
     }
     const item = supply.items[idx];
     if ((Number(item.factualQuantity) || 0) >= (Number(item.plannedQuantity) || 0)) {
+      playScanErrorSound();
       triggerFlash("error");
       onScanError?.(code, "over");
       toast.error("Количество уже принято");
@@ -156,9 +159,12 @@ export default function ReceivingTaskWorkScreen({
       );
       await onSaveItems(nextItems);
       setScanValue("");
+      playScanSuccessSound();
       triggerFlash("ok");
       toast.success(`Принято: ${item.name || item.supplierArticle || item.barcode}`);
       focusScanInput();
+    } catch {
+      playScanErrorSound();
     } finally {
       setIsSubmittingScan(false);
     }

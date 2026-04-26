@@ -40,6 +40,7 @@ import {
   buildPlanFactMismatchLogDescription,
   getTaskValidation,
 } from "@/utils/wmsValidation";
+import { playScanErrorSound, playScanSuccessSound } from "@/utils/scanFeedbackSound";
 
 type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
 
@@ -235,28 +236,6 @@ const PackingPage = () => {
     window.setTimeout(() => setFlashState(null), 500);
   }, []);
 
-  const playErrorSignal = React.useCallback(() => {
-    try {
-      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "square";
-      oscillator.frequency.value = 220;
-      gain.gain.value = 0.1;
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      window.setTimeout(() => {
-        oscillator.stop();
-        void ctx.close();
-      }, 120);
-    } catch {
-      // ignore audio errors in restricted browser environments
-    }
-  }, []);
-
   const focusScanInput = React.useCallback(() => {
     window.setTimeout(() => {
       scanInputRef.current?.focus();
@@ -269,8 +248,8 @@ const PackingPage = () => {
     if (!code || !startedAssignment) return;
     const lineByBarcode = scanLines.find((x) => x.barcode && x.barcode === code);
     if (!lineByBarcode) {
+      playScanErrorSound();
       triggerFlash("error");
-      playErrorSignal();
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
       const noErr =
         startedAssignment.shipments[0]?.assignmentNo?.trim() ||
@@ -290,8 +269,8 @@ const PackingPage = () => {
       return;
     }
     if (lineByBarcode.fact >= lineByBarcode.plan) {
+      playScanErrorSound();
       triggerFlash("error");
-      playErrorSignal();
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
       const noErr =
         startedAssignment.shipments[0]?.assignmentNo?.trim() ||
@@ -312,14 +291,17 @@ const PackingPage = () => {
     }
     const target = lineByBarcode.shipmentRefs.find((r) => r.fact < r.plan);
     if (!target) {
+      playScanErrorSound();
       triggerFlash("error");
-      playErrorSignal();
       toast.error("Количество по товару уже выполнено");
       focusScanInput();
       return;
     }
     const shipment = startedAssignment.shipments.find((x) => x.id === target.shipmentId);
-    if (!shipment) return;
+    if (!shipment) {
+      playScanErrorSound();
+      return;
+    }
     setIsSubmittingScan(true);
     try {
       const nextFact = (shipment.packedUnits ?? shipment.shippedUnits ?? 0) + 1;
@@ -346,9 +328,12 @@ const PackingPage = () => {
         description: `Отсканирован товар (штрихкод: ${code})`,
       });
       setScanValue("");
+      playScanSuccessSound();
       triggerFlash("ok");
       focusScanInput();
       toast.success(`Пик принят: ${lineByBarcode.article || lineByBarcode.barcode}`);
+    } catch {
+      playScanErrorSound();
     } finally {
       setIsSubmittingScan(false);
     }
