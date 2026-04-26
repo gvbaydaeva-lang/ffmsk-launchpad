@@ -34,8 +34,17 @@ import {
 } from "@/hooks/useWmsMock";
 import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
-import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
+import type {
+  InboundLineItem,
+  InboundSupply,
+  InventoryMovement,
+  Marketplace,
+  OutboundShipment,
+  ProductCatalogItem,
+  TaskWorkflowStatus,
+} from "@/types/domain";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { wmsAvailableForCatalogProduct } from "@/lib/inventoryAvailableForOutbound";
 import {
   formatTaskArchiveDateLabel,
   inboundArchiveSortKey,
@@ -1349,7 +1358,21 @@ const LegalEntityDetailsPage = () => {
     const qty = Number(outboundDraft.quantity);
     const product = rows.find((p) => p.id === selectedOutboundProductId);
     if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
-    if (!product || qty > product.stockOnHand) return toast.error("Количество превышает остаток");
+    if (!product) return toast.error("Товар не найден");
+    const warehouseName = outboundDraft.warehouse.trim() || "Склад Коледино";
+    const movements = queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? [];
+    const outboundSnap = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? [];
+    const wmsAv = wmsAvailableForCatalogProduct({
+      movements,
+      outbound: outboundSnap,
+      catalog: rows,
+      legalEntityId: entity.id.trim(),
+      warehouseName,
+      productId: selectedOutboundProductId,
+    });
+    if (wmsAv !== null && qty > wmsAv) {
+      toast.warning("Недостаточно доступного товара");
+    }
     const assignmentId = `ass-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const assignmentNo = `ОТГ-${Date.now().toString().slice(-8)}`;
     const legalId = entity.id.trim();
@@ -1359,7 +1382,7 @@ const LegalEntityDetailsPage = () => {
       assignmentId,
       assignmentNo,
       marketplace: outboundDraft.marketplace,
-      sourceWarehouse: outboundDraft.warehouse.trim() || "Склад Коледино",
+      sourceWarehouse: warehouseName,
       shippingMethod: outboundDraft.shippingMethod,
       boxBarcode: "",
       gateBarcode: "",
@@ -1618,6 +1641,9 @@ const LegalEntityDetailsPage = () => {
     const stockLeft = new Map<string, number>();
     for (const p of rows) stockLeft.set(p.id, p.stockOnHand);
     const entityIdTrim = entity.id.trim();
+    const movementSnap =
+      queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? [];
+    let outboundImportShortageWarned = false;
 
     const mergeOrCreateOrphan = async (row: OutboundImportPreviewRow, planned: number) => {
       const orphanPid = orphanProductIdForImport(entityIdTrim, row);
@@ -1685,6 +1711,19 @@ const LegalEntityDetailsPage = () => {
       if (!product) {
         await mergeOrCreateOrphan(row, wantQty);
         continue;
+      }
+      const outboundNow = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? [];
+      const wmsAvImport = wmsAvailableForCatalogProduct({
+        movements: movementSnap,
+        outbound: outboundNow,
+        catalog: rows,
+        legalEntityId: entityIdTrim,
+        warehouseName: row.sourceWarehouse,
+        productId: product.id,
+      });
+      if (wmsAvImport !== null && wantQty > wmsAvImport && !outboundImportShortageWarned) {
+        toast.warning("Недостаточно доступного товара");
+        outboundImportShortageWarned = true;
       }
       const available = stockLeft.get(product.id) ?? 0;
       const qty = Math.min(wantQty, available);

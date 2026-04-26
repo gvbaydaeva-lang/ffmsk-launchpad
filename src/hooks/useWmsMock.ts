@@ -257,8 +257,8 @@ export function useOutboundShipments() {
         return { nextOutbound, nextCatalog: catalog };
       }
       const product = catalog.find((p) => p.id === draft.productId);
-      if (!product || product.stockOnHand < draft.plannedUnits) {
-        throw new Error("insufficient_stock");
+      if (!product) {
+        throw new Error("product_not_found");
       }
       const nextOutbound = appendMockOutbound(outbound, draft);
       let nextCatalog = catalog;

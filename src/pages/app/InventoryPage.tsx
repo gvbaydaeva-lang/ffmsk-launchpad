@@ -95,7 +95,7 @@ const InventoryPage = () => {
     return "text-right tabular-nums font-medium text-slate-900";
   };
 
-  const inWorkClass = (qty: number) => {
+  const reserveClass = (qty: number) => {
     if (qty <= 0) return "text-right tabular-nums text-slate-400";
     return "text-right tabular-nums font-medium text-slate-900";
   };
@@ -111,7 +111,7 @@ const InventoryPage = () => {
       <div>
         <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Остатки</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Складские остатки по движениям WMS: приёмка увеличивает, отгрузка и упаковка уменьшают.
+          Остаток по движениям WMS; резерв — план в активных отгрузках (pending/processing); доступно = остаток − резерв.
         </p>
       </div>
 
@@ -187,7 +187,7 @@ const InventoryPage = () => {
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Цвет</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Размер</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Остаток всего</TableHead>
-                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">В работе</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Резерв</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
                     <TableHead className="w-[88px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">
                       Действие
@@ -203,8 +203,8 @@ const InventoryPage = () => {
                     </TableRow>
                   ) : (
                     filtered.map((row: InventoryBalanceRow) => {
-                      const inWork = reservedByKey.get(row.key) ?? 0;
-                      const available = row.balanceQty - inWork;
+                      const reserveQty = reservedByKey.get(row.key) ?? 0;
+                      const available = row.balanceQty - reserveQty;
                       return (
                       <TableRow key={row.key} className="h-8 text-xs">
                         <TableCell className="max-w-[120px] truncate px-2 py-1">{row.legalEntityName}</TableCell>
@@ -218,14 +218,8 @@ const InventoryPage = () => {
                         <TableCell className={`px-2 py-1 ${balanceClass(row.balanceQty)}`}>
                           {row.balanceQty.toLocaleString("ru-RU")}
                         </TableCell>
-                        <TableCell className={`px-2 py-1 ${inWorkClass(inWork)}`}>
-                          {inWork > 0 ? (
-                            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200/80">
-                              {inWork.toLocaleString("ru-RU")}
-                            </span>
-                          ) : (
-                            <span>{inWork.toLocaleString("ru-RU")}</span>
-                          )}
+                        <TableCell className={`px-2 py-1 ${reserveClass(reserveQty)}`}>
+                          {reserveQty.toLocaleString("ru-RU")}
                         </TableCell>
                         <TableCell className={`px-2 py-1 align-top ${availableClass(available)}`}>
                           <div className="flex flex-col items-end gap-0.5">

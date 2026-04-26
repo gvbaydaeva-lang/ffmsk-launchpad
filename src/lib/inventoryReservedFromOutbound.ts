@@ -21,7 +21,7 @@ export function balanceKeyFromOutboundShipment(
   });
 }
 
-/** Строка участвует в резерве «В работе», пока задание не завершено (нет OUTBOUND по завершению). */
+/** Резерв: строки отгрузки в pending / processing (completed и «отгружено» не резервируют). */
 function isOutboundLineActiveReserve(sh: OutboundShipment): boolean {
   if (sh.status === "отгружено") return false;
   const wf = sh.workflowStatus ?? "pending";
@@ -30,7 +30,7 @@ function isOutboundLineActiveReserve(sh: OutboundShipment): boolean {
 }
 
 /**
- * Сумма plannedUnits по активным (pending/processing) строкам outbound, по ключу остатка.
+ * Сумма plannedUnits по резерву (pending/processing) outbound, по ключу остатка.
  */
 export function reservedQtyByBalanceKey(
   outbound: OutboundShipment[] | undefined,
