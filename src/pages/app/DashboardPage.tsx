@@ -25,84 +25,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useDashboardBundleQuery } from "@/hooks/useDashboardAnalytics";
-import { useInboundSupplies, useInventoryMovements, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
-import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
-import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
-import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { sumStorageDay } from "@/services/mockDashboardBundle";
 
 const DashboardPage = () => {
   const { data, isLoading, error } = useDashboardBundleQuery();
-  const { data: inboundRows } = useInboundSupplies();
-  const { data: outboundRows } = useOutboundShipments();
-  const { data: catalogRows } = useProductCatalog();
-  const { data: inventoryMovements, balanceRows } = useInventoryMovements();
 
   const storageTotal = data ? sumStorageDay(data.storageByClient) : 0;
-  const inbound = inboundRows ?? [];
-  const outbound = outboundRows ?? [];
-  const catalog = catalogRows ?? [];
-  const movements = inventoryMovements ?? [];
-
-  const receivingSummary = React.useMemo(() => {
-    const total = inbound.length;
-    const processing = inbound.filter((row) => workflowFromInbound(row) === "processing").length;
-    const completed = inbound.filter((row) => workflowFromInbound(row) === "completed").length;
-    return { total, processing, completed };
-  }, [inbound]);
-
-  const outboundAssignments = React.useMemo(() => {
-    const groups = new Map<string, typeof outbound>();
-    for (const row of outbound) {
-      const key = `${row.legalEntityId}::${row.assignmentId ?? row.assignmentNo ?? row.id}`;
-      const cur = groups.get(key) ?? [];
-      cur.push(row);
-      groups.set(key, cur);
-    }
-    return Array.from(groups.values());
-  }, [outbound]);
-
-  const shippingSummary = React.useMemo(() => {
-    const total = outboundAssignments.length;
-    const processing = outboundAssignments.filter((rows) => workflowFromOutboundGroup(rows) === "processing").length;
-    const balanceByKey = getBalanceByKeyMap(movements);
-    const reserveByKey = reservedQtyByBalanceKey(outbound, catalog);
-    const byProduct = new Map(catalog.map((p) => [p.id, p]));
-    const problematic = outboundAssignments.filter((rows) =>
-      rows.some((sh) => {
-        const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
-        const plan = Number(sh.plannedUnits) || 0;
-        if (plan <= 0 || fact >= plan) return false;
-        const key = balanceKeyFromOutboundShipment(sh, byProduct.get(sh.productId) ?? null);
-        const balance = balanceByKey.get(key) ?? 0;
-        const reserve = reserveByKey.get(key) ?? 0;
-        const available = Math.max(0, balance - reserve);
-        return plan > available;
-      }),
-    ).length;
-    return { total, processing, problematic };
-  }, [outboundAssignments, movements, outbound, catalog]);
-
-  const packingSummary = React.useMemo(() => {
-    const pending = outboundAssignments.filter((rows) => workflowFromOutboundGroup(rows) === "pending").length;
-    const processing = outboundAssignments.filter((rows) => workflowFromOutboundGroup(rows) === "processing").length;
-    const completed = outboundAssignments.filter((rows) => workflowFromOutboundGroup(rows) === "completed").length;
-    return { pending, processing, completed };
-  }, [outboundAssignments]);
-
-  const inventorySummary = React.useMemo(() => {
-    const skuTotal = (balanceRows ?? []).length;
-    const reserveByKey = reservedQtyByBalanceKey(outbound, catalog);
-    let unavailable = 0;
-    let reserved = 0;
-    for (const row of balanceRows ?? []) {
-      const reserve = reserveByKey.get(row.key) ?? 0;
-      const available = row.balanceQty - reserve;
-      if (available <= 0) unavailable += 1;
-      if (reserve > 0) reserved += 1;
-    }
-    return { skuTotal, unavailable, reserved };
-  }, [balanceRows, outbound, catalog]);
 
   return (
     <div className="space-y-6">
@@ -119,47 +47,6 @@ const DashboardPage = () => {
       </div>
 
       <GlobalFiltersBar />
-
-      <Card className="border-slate-200 shadow-sm">
-        <CardHeader className="pb-3">
-          <CardTitle className="font-display text-base text-slate-900">Операционный контроль дня</CardTitle>
-          <CardDescription className="text-slate-500">Короткая сводка по текущей операционной нагрузке склада</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 pt-0 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Приёмка</p>
-            <div className="mt-2 space-y-1 text-sm">
-              <p className="flex items-center justify-between text-slate-700"><span>Всего</span><span className="tabular-nums font-medium text-slate-900">{receivingSummary.total}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>В работе</span><span className="tabular-nums font-medium text-slate-900">{receivingSummary.processing}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>Завершено</span><span className="tabular-nums font-medium text-slate-900">{receivingSummary.completed}</span></p>
-            </div>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Отгрузки</p>
-            <div className="mt-2 space-y-1 text-sm">
-              <p className="flex items-center justify-between text-slate-700"><span>Всего</span><span className="tabular-nums font-medium text-slate-900">{shippingSummary.total}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>В работе</span><span className="tabular-nums font-medium text-slate-900">{shippingSummary.processing}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>Проблемные</span><span className="tabular-nums font-medium text-slate-900">{shippingSummary.problematic}</span></p>
-            </div>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Упаковщик</p>
-            <div className="mt-2 space-y-1 text-sm">
-              <p className="flex items-center justify-between text-slate-700"><span>В очереди</span><span className="tabular-nums font-medium text-slate-900">{packingSummary.pending}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>В работе</span><span className="tabular-nums font-medium text-slate-900">{packingSummary.processing}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>Завершено</span><span className="tabular-nums font-medium text-slate-900">{packingSummary.completed}</span></p>
-            </div>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Остатки</p>
-            <div className="mt-2 space-y-1 text-sm">
-              <p className="flex items-center justify-between text-slate-700"><span>SKU всего</span><span className="tabular-nums font-medium text-slate-900">{inventorySummary.skuTotal}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>Недоступно</span><span className="tabular-nums font-medium text-slate-900">{inventorySummary.unavailable}</span></p>
-              <p className="flex items-center justify-between text-slate-700"><span>В резерве</span><span className="tabular-nums font-medium text-slate-900">{inventorySummary.reserved}</span></p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       {isLoading ? (
         <div className="space-y-4">
