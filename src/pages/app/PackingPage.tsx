@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
+import TaskItemsTable, { type TaskItemRow } from "@/components/app/TaskItemsTable";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
@@ -41,6 +42,7 @@ import {
   getTaskValidation,
 } from "@/utils/wmsValidation";
 import { playScanErrorSound, playScanSuccessSound } from "@/utils/scanFeedbackSound";
+import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
 
 type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
 
@@ -70,6 +72,7 @@ const PackingPage = () => {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [startedAssignmentId, setStartedAssignmentId] = React.useState<string | null>(null);
+  const [packingArchivePeekId, setPackingArchivePeekId] = React.useState<string | null>(null);
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
   const [viewMode, setViewMode] = React.useState<"active" | "archive">("active");
@@ -148,15 +151,52 @@ const PackingPage = () => {
         return `${no} ${entity} ${lineText}`.toLowerCase().includes(q);
       })
       .sort((a, b) => {
+        if (viewMode === "archive") {
+          return outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments);
+        }
         const da = Date.parse(a.shipments[0]?.createdAt || "") || 0;
         const db = Date.parse(b.shipments[0]?.createdAt || "") || 0;
         return db - da;
       });
   }, [allGroupedAssignments, legal, search, viewMode, statusFilter, warehouseFilter, mpFilter, dateFrom, dateTo]);
+
+  React.useEffect(() => {
+    setPackingArchivePeekId(null);
+  }, [viewMode]);
   const warehouses = React.useMemo(
     () => Array.from(new Set(allGroupedAssignments.map((a) => a.shipments[0]?.sourceWarehouse || ""))).filter(Boolean),
     [allGroupedAssignments],
   );
+
+  const packingArchivePeekAssignment =
+    packingArchivePeekId == null ? null : (assignments.find((a) => a.id === packingArchivePeekId) ?? null);
+  const packingArchivePeekRows = React.useMemo<TaskItemRow[]>(() => {
+    if (!packingArchivePeekAssignment?.shipments.length) return [];
+    const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+    return packingArchivePeekAssignment.shipments.map((sh) => {
+      const product = byProduct.get(sh.productId) ?? null;
+      const name = (sh.importName || product?.name || "").trim() || "—";
+      const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
+      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+      const color = (sh.importColor || product?.color || "").trim() || "—";
+      const size = (sh.importSize || product?.size || "").trim() || "—";
+      const plan = Number(sh.plannedUnits) || 0;
+      const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      return {
+        id: sh.id,
+        name,
+        article,
+        barcode,
+        marketplace: sh.marketplace.toUpperCase(),
+        color,
+        size,
+        plan,
+        fact,
+        warehouse: sh.sourceWarehouse || "—",
+        status: sh.workflowStatus ?? "pending",
+      };
+    });
+  }, [packingArchivePeekAssignment, catalog]);
 
   const startedAssignment =
     startedAssignmentId == null ? null : (allGroupedAssignments.find((x) => x.id === startedAssignmentId) ?? null);
@@ -695,7 +735,11 @@ const PackingPage = () => {
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle className="text-base">Очередь заданий на отгрузку</CardTitle>
-            <CardDescription>Выберите документ и нажмите «Взять в работу».</CardDescription>
+            <CardDescription>
+              {viewMode === "archive"
+                ? "Архив завершённых заданий. «Открыть» — просмотр состава без сканирования."
+                : "Выберите документ и нажмите «Взять в работу»."}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {isLoading ? (
@@ -711,11 +755,18 @@ const PackingPage = () => {
               </p>
             ) : (
               <TaskRegistryTable
+                archiveMode={viewMode === "archive"}
+                disableActionForCompleted={viewMode !== "archive"}
                 rows={assignments.map((assignment) => {
                   const first = assignment.shipments[0];
                   const assignmentNo = first?.assignmentNo?.trim() || first?.assignmentId?.trim() || first?.id || "—";
                   const legalName = legal?.find((x) => x.id === assignment.legalEntityId)?.shortName ?? assignment.legalEntityId;
-                  const dateLabel = first?.createdAt ? format(parseISO(first.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—";
+                  const createdIso = assignment.shipments.reduce(
+                    (max, sh) => ((sh.createdAt || "") > (max || "") ? sh.createdAt : max),
+                    first?.createdAt ?? "",
+                  );
+                  const dateLabel = formatTaskArchiveDateLabel(createdIso);
+                  const completedLabel = formatTaskArchiveDateLabel(outboundShipmentsCompletedAtIso(assignment.shipments));
                   const totalPlan = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.plannedUnits) || 0), 0);
                   const totalFact = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0), 0);
                   const wf = normalizeWorkflowStatus(assignment.workflowStatus);
@@ -727,6 +778,7 @@ const PackingPage = () => {
                   return {
                     id: assignment.id,
                     createdAtLabel: dateLabel,
+                    completedAtLabel: completedLabel,
                     taskNo: assignmentNo,
                     legalEntityLabel: legalName,
                     status: wf,
@@ -741,17 +793,45 @@ const PackingPage = () => {
                   };
                 })}
                 onOpen={(id) => {
+                  if (viewMode === "archive") {
+                    setPackingArchivePeekId((p) => (p === id ? null : id));
+                    return;
+                  }
                   const assignment = assignments.find((x) => x.id === id);
                   if (!assignment) return;
                   void startAssignment(assignment);
                 }}
                 onAction={(id) => {
+                  if (viewMode === "archive") {
+                    setPackingArchivePeekId((p) => (p === id ? null : id));
+                    return;
+                  }
                   const assignment = assignments.find((x) => x.id === id);
                   if (!assignment) return;
                   void startAssignment(assignment);
                 }}
               />
             )}
+            {viewMode === "archive" && packingArchivePeekAssignment ? (
+              <Card className="mt-3 border-slate-200 bg-slate-50/50 shadow-sm">
+                <CardHeader className="border-b border-slate-100 px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="text-base">Состав задания (архив)</CardTitle>
+                    <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setPackingArchivePeekId(null)}>
+                      Закрыть
+                    </Button>
+                  </div>
+                  <CardDescription className="text-slate-600">Только просмотр</CardDescription>
+                </CardHeader>
+                <CardContent className="p-3">
+                  {packingArchivePeekRows.length === 0 ? (
+                    <p className="text-sm text-slate-600">Нет строк</p>
+                  ) : (
+                    <TaskItemsTable variant="outboundLines" rows={packingArchivePeekRows} />
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

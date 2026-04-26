@@ -1,7 +1,5 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
-import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +13,12 @@ import { useAppendOperationLog, useInboundSupplies, useInventoryMovements, useLe
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, InventoryMovement, Marketplace, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromInbound } from "@/lib/taskWorkflowUi";
+import {
+  formatTaskArchiveDateLabel,
+  inboundArchiveSortKey,
+  inboundSupplyCompletedAtIso,
+  inboundSupplyCreatedAtIso,
+} from "@/lib/taskArchiveDates";
 import { hasTaskMovements } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
 
@@ -33,6 +37,7 @@ const ReceivingPage = () => {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [startedSupplyId, setStartedSupplyId] = React.useState<string | null>(null);
+  const [receivingArchivePeekId, setReceivingArchivePeekId] = React.useState<string | null>(null);
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -67,8 +72,17 @@ const ReceivingPage = () => {
       }
       return true;
     });
-    return [...filtered].sort((a, b) => (Date.parse(b.eta || "") || 0) - (Date.parse(a.eta || "") || 0));
+    return [...filtered].sort((a, b) => {
+      if (viewMode === "archive") {
+        return inboundArchiveSortKey(b) - inboundArchiveSortKey(a);
+      }
+      return (Date.parse(b.eta || "") || 0) - (Date.parse(a.eta || "") || 0);
+    });
   }, [data, mp, legalEntityId, search, entityName, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
+
+  React.useEffect(() => {
+    setReceivingArchivePeekId(null);
+  }, [viewMode]);
   const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
   const startedSupply =
     startedSupplyId == null ? null : ((data ?? []).find((d) => d.id === startedSupplyId) ?? null);
@@ -289,7 +303,11 @@ const ReceivingPage = () => {
         <Card className="border-slate-200 bg-white shadow-sm">
           <CardHeader>
             <CardTitle className="font-display text-lg text-slate-900">Очередь на приёмку</CardTitle>
-            <CardDescription className="text-slate-500">Нажмите «Взять в работу», чтобы открыть документ.</CardDescription>
+            <CardDescription className="text-slate-500">
+              {viewMode === "archive"
+                ? "Архив завершённых приёмок. Кнопка «Открыть» — только просмотр состава."
+                : "Нажмите «Взять в работу», чтобы открыть документ."}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -305,6 +323,8 @@ const ReceivingPage = () => {
               </p>
             ) : (
               <TaskRegistryTable
+                archiveMode={viewMode === "archive"}
+                disableActionForCompleted={viewMode !== "archive"}
                 rows={rows.map((supply) => {
                   const plan = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
                   const fact = supply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
@@ -315,7 +335,8 @@ const ReceivingPage = () => {
                     wf === "completed" && (plan !== fact || Boolean(supply.completedWithDiscrepancies));
                   return {
                     id: supply.id,
-                    createdAtLabel: supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy HH:mm", { locale: ru }) : "—",
+                    createdAtLabel: formatTaskArchiveDateLabel(inboundSupplyCreatedAtIso(supply)),
+                    completedAtLabel: formatTaskArchiveDateLabel(inboundSupplyCompletedAtIso(supply)),
                     taskNo: supply.documentNo,
                     legalEntityLabel: entityName(supply.legalEntityId),
                     status: wf,
@@ -330,17 +351,79 @@ const ReceivingPage = () => {
                   };
                 })}
                 onOpen={(id) => {
+                  if (viewMode === "archive") {
+                    setReceivingArchivePeekId((p) => (p === id ? null : id));
+                    return;
+                  }
                   const supply = rows.find((x) => x.id === id);
                   if (!supply) return;
                   void startReceiving(supply);
                 }}
                 onAction={(id) => {
+                  if (viewMode === "archive") {
+                    setReceivingArchivePeekId((p) => (p === id ? null : id));
+                    return;
+                  }
                   const supply = rows.find((x) => x.id === id);
                   if (!supply) return;
                   void startReceiving(supply);
                 }}
               />
             )}
+            {viewMode === "archive" && receivingArchivePeekId ? (
+              (() => {
+                const peek = rows.find((s) => s.id === receivingArchivePeekId) ?? (data ?? []).find((s) => s.id === receivingArchivePeekId);
+                if (!peek) return null;
+                const plan = peek.items.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0);
+                const fact = peek.items.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0);
+                return (
+                  <Card className="mt-3 border-slate-200 bg-slate-50/50 shadow-sm">
+                    <CardHeader className="border-b border-slate-100 px-4 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <CardTitle className="text-base">Состав задания №{peek.documentNo || "—"}</CardTitle>
+                        <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setReceivingArchivePeekId(null)}>
+                          Закрыть
+                        </Button>
+                      </div>
+                      <CardDescription className="text-slate-600">Просмотр (архив)</CardDescription>
+                    </CardHeader>
+                    <CardContent className="overflow-x-auto p-3">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
+                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Артикул</th>
+                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
+                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">МП</th>
+                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Цвет</th>
+                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Размер</th>
+                            <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
+                            <th className="border-b px-2 py-1.5 text-right text-xs font-medium">Факт</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {peek.items.map((item, index) => (
+                            <tr key={`${peek.id}-${item.barcode}-${index}`} className="odd:bg-white even:bg-slate-50/50">
+                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.name || "—"}</td>
+                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.supplierArticle || "—"}</td>
+                              <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{item.barcode || "—"}</td>
+                              <td className="border-b border-r px-2 py-1.5 text-xs">{peek.marketplace.toUpperCase()}</td>
+                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.color || "—"}</td>
+                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.size || "—"}</td>
+                              <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.plannedQuantity) || 0}</td>
+                              <td className="border-b px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.factualQuantity) || 0}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="mt-2 text-xs text-slate-600">
+                        План {plan} · Факт {fact}
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              })()
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

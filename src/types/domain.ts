@@ -112,6 +112,10 @@ export type InboundSupply = {
   eta: string;
   /** Закрыто при план ≠ факт (для метки «Требует проверки») */
   completedWithDiscrepancies?: boolean;
+  /** Опционально: для архива и сортировки (mock/API). */
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
 };
 
 export type InboundLineItem = {
@@ -247,6 +251,9 @@ export type OutboundShipment = {
   }>;
   activeBoxId?: string | null;
   createdAt: string;
+  /** Опционально: для архива (mock/API). */
+  updatedAt?: string;
+  completedAt?: string;
 };
 
 /** Движение товара (остаток = сумма qty по согласованным ключам) */

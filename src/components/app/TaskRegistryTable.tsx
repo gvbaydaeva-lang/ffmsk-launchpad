@@ -6,6 +6,8 @@ import StatusBadge from "@/components/app/StatusBadge";
 export type TaskRegistryRow = {
   id: string;
   createdAtLabel: string;
+  /** Для архива завершённых заданий */
+  completedAtLabel?: string;
   taskNo: string;
   legalEntityLabel?: string;
   status: TaskWorkflowStatus;
@@ -28,6 +30,8 @@ type Props = {
   onAction?: (id: string) => void;
   actionLabel?: string;
   disableActionForCompleted?: boolean;
+  /** Архив: только просмотр, кнопка «Открыть», без блокировки для completed */
+  archiveMode?: boolean;
   selectedId?: string | null;
   showLegalEntity?: boolean;
   emptyText?: string;
@@ -39,11 +43,13 @@ export default function TaskRegistryTable({
   onAction,
   actionLabel,
   disableActionForCompleted = true,
+  archiveMode = false,
   selectedId,
   showLegalEntity = true,
   emptyText = "Нет заданий для отображения.",
 }: Props) {
   const workflowActionLabel = (status: TaskWorkflowStatus) => {
+    if (archiveMode) return "Открыть";
     if (status === "processing") return "Продолжить";
     if (status === "completed") return "Завершено";
     return "В работу";
@@ -51,10 +57,11 @@ export default function TaskRegistryTable({
 
   return (
     <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
-    <Table className="min-w-[1200px] table-auto">
+    <Table className="min-w-[1320px] table-auto">
       <TableHeader>
         <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
           <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+          <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
           <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
           {showLegalEntity ? (
             <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
@@ -72,7 +79,7 @@ export default function TaskRegistryTable({
       <TableBody>
         {rows.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={showLegalEntity ? 11 : 10} className="px-3 py-6 text-center text-sm text-slate-500">
+            <TableCell colSpan={showLegalEntity ? 12 : 11} className="px-3 py-6 text-center text-sm text-slate-500">
               {emptyText}
             </TableCell>
           </TableRow>
@@ -86,6 +93,9 @@ export default function TaskRegistryTable({
                 onClick={() => onOpen?.(row.id)}
               >
                 <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">{row.createdAtLabel || "—"}</TableCell>
+                <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-700">
+                  {row.completedAtLabel ?? "—"}
+                </TableCell>
                 <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{row.taskNo || "—"}</TableCell>
                 {showLegalEntity ? <TableCell className="whitespace-nowrap px-3 py-2">{row.legalEntityLabel || "—"}</TableCell> : null}
                 <TableCell className="px-3 py-2">
@@ -115,10 +125,10 @@ export default function TaskRegistryTable({
                     variant="outline"
                     size="sm"
                     className="h-8 border-slate-200 text-xs"
-                    disabled={disableActionForCompleted && row.status === "completed"}
+                    disabled={!archiveMode && disableActionForCompleted && row.status === "completed"}
                     onClick={() => onAction?.(row.id)}
                   >
-                    {actionLabel ?? workflowActionLabel(row.status)}
+                    {archiveMode ? "Открыть" : actionLabel ?? workflowActionLabel(row.status)}
                   </Button>
                 </TableCell>
               </TableRow>

@@ -17,12 +17,14 @@ import { useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hoo
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
 
 type ShipmentDoc = {
   id: string;
   legalEntityId: string;
   assignmentNo: string;
   createdAt: string;
+  completedAtIso?: string;
   sourceWarehouse: string;
   marketplace: Marketplace;
   planned: number;
@@ -80,6 +82,7 @@ const ShippingPage = () => {
         legalEntityId: first.legalEntityId,
         assignmentNo: first.assignmentNo?.trim() || first.assignmentId?.trim() || first.id,
         createdAt,
+        completedAtIso: outboundShipmentsCompletedAtIso(shipments),
         sourceWarehouse: first.sourceWarehouse,
         marketplace: first.marketplace,
         planned,
@@ -115,7 +118,12 @@ const ShippingPage = () => {
       }
       return true;
     });
-    return withFilters.sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
+    return withFilters.sort((a, b) => {
+      if (viewMode === "archive") {
+        return outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments);
+      }
+      return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
+    });
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
@@ -243,6 +251,7 @@ const ShippingPage = () => {
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+                      <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
                       <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
@@ -269,6 +278,9 @@ const ShippingPage = () => {
                           >
                             <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
                               {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-700">
+                              {formatTaskArchiveDateLabel(doc.completedAtIso)}
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{doc.assignmentNo}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
@@ -301,7 +313,7 @@ const ShippingPage = () => {
                           </TableRow>
                           {isSel ? (
                             <TableRow className="border-slate-100 bg-slate-50/90">
-                              <TableCell colSpan={11} className="align-top p-0">
+                              <TableCell colSpan={12} className="align-top p-0">
                                 <div className="space-y-4 border-t border-slate-200 p-4">
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
@@ -351,21 +363,23 @@ const ShippingPage = () => {
                                       {doc.fact > doc.planned ? <span className="font-medium text-red-700">Перерасход: {over}</span> : null}
                                     </div>
                                   )}
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    {doc.workflowStatus === "completed" ? (
-                                      <Button type="button" size="sm" variant="secondary" disabled>
-                                        Сборка завершена
-                                      </Button>
-                                    ) : doc.workflowStatus === "processing" ? (
-                                      <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                        Продолжить сборку
-                                      </Button>
-                                    ) : (
-                                      <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                        Открыть в упаковщике
-                                      </Button>
-                                    )}
-                                  </div>
+                                  {viewMode === "archive" ? null : (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      {doc.workflowStatus === "completed" ? (
+                                        <Button type="button" size="sm" variant="secondary" disabled>
+                                          Сборка завершена
+                                        </Button>
+                                      ) : doc.workflowStatus === "processing" ? (
+                                        <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                          Продолжить сборку
+                                        </Button>
+                                      ) : (
+                                        <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                          Открыть в упаковщике
+                                        </Button>
+                                      )}
+                                    </div>
+                                  )}
                                   <div>
                                     <p className="mb-2 text-xs font-medium text-slate-600">Состав задания</p>
                                     {selectedShipmentItemRows.length === 0 ? (

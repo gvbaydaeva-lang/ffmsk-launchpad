@@ -37,6 +37,14 @@ import { persistOutboundDurably } from "@/services/mockOutbound";
 import type { InboundLineItem, InboundSupply, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import {
+  formatTaskArchiveDateLabel,
+  inboundArchiveSortKey,
+  inboundSupplyCompletedAtIso,
+  inboundSupplyCreatedAtIso,
+  outboundArchiveSortKey,
+  outboundShipmentsCompletedAtIso,
+} from "@/lib/taskArchiveDates";
+import {
   formatOperationLogDescription,
   formatOperationLogShortStatus,
   operationLogTypeBadgeClass,
@@ -559,6 +567,7 @@ const LegalEntityDetailsPage = () => {
         return {
           id: key,
           createdAt,
+          completedAtIso: outboundShipmentsCompletedAtIso(shipments),
           assignmentNo: first.assignmentNo?.trim() || first.assignmentId?.trim() || first.id,
           sourceWarehouse: warehouseLabel,
           marketplace: first.marketplace,
@@ -570,21 +579,25 @@ const LegalEntityDetailsPage = () => {
       })
       .sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
   }, [outboundRows, outboundRowDrafts]);
-  const inboundDocumentsFiltered = React.useMemo(
-    () =>
-      inboundDocuments.filter((doc) => {
-        const wf = workflowFromInbound(doc);
-        return inboundViewMode === "active" ? wf !== "completed" : wf === "completed";
-      }),
-    [inboundDocuments, inboundViewMode],
-  );
-  const outboundDocumentsFiltered = React.useMemo(
-    () =>
-      outboundDocuments.filter((doc) =>
-        outboundViewMode === "active" ? doc.workflowStatus !== "completed" : doc.workflowStatus === "completed",
-      ),
-    [outboundDocuments, outboundViewMode],
-  );
+  const inboundDocumentsFiltered = React.useMemo(() => {
+    const filtered = inboundDocuments.filter((doc) => {
+      const wf = workflowFromInbound(doc);
+      return inboundViewMode === "active" ? wf !== "completed" : wf === "completed";
+    });
+    if (inboundViewMode === "archive") {
+      return [...filtered].sort((a, b) => inboundArchiveSortKey(b) - inboundArchiveSortKey(a));
+    }
+    return [...filtered].sort((a, b) => (Date.parse(b.eta || "") || 0) - (Date.parse(a.eta || "") || 0));
+  }, [inboundDocuments, inboundViewMode]);
+  const outboundDocumentsFiltered = React.useMemo(() => {
+    const filtered = outboundDocuments.filter((doc) =>
+      outboundViewMode === "active" ? doc.workflowStatus !== "completed" : doc.workflowStatus === "completed",
+    );
+    if (outboundViewMode === "archive") {
+      return [...filtered].sort((a, b) => outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments));
+    }
+    return [...filtered].sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
+  }, [outboundDocuments, outboundViewMode]);
   const selectedInboundDoc = inboundDocumentsFiltered.find((x) => x.id === selectedInboundDocId) ?? null;
   const selectedOutboundDoc = outboundDocumentsFiltered.find((x) => x.id === selectedOutboundDocId) ?? null;
   const filteredProducts = React.useMemo(() => {
@@ -2473,8 +2486,9 @@ const LegalEntityDetailsPage = () => {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
-                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата</TableHead>
-                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ документа</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
@@ -2487,7 +2501,7 @@ const LegalEntityDetailsPage = () => {
                   <TableBody>
                     {inboundDocumentsFiltered.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="px-3 py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={10} className="px-3 py-6 text-center text-sm text-slate-500">
                           {inboundViewMode === "active" ? "Активных документов приёмки нет" : "Архив приёмки пуст"}
                         </TableCell>
                       </TableRow>
@@ -2496,6 +2510,7 @@ const LegalEntityDetailsPage = () => {
                         const wf = workflowFromInbound(doc);
                         const planSum = doc.items.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0);
                         const factSum = doc.items.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0);
+                        const rem = Math.max(0, planSum - factSum);
                         const open = selectedInboundDocId === doc.id;
                         return (
                           <TableRow
@@ -2504,7 +2519,10 @@ const LegalEntityDetailsPage = () => {
                             onClick={() => setSelectedInboundDocId((prev) => (prev === doc.id ? null : doc.id))}
                           >
                             <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">
-                              {doc.eta ? format(parseISO(doc.eta), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                              {formatTaskArchiveDateLabel(inboundSupplyCreatedAtIso(doc))}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-700">
+                              {formatTaskArchiveDateLabel(inboundSupplyCompletedAtIso(doc))}
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{doc.documentNo}</TableCell>
                             <TableCell className="px-3 py-2">
@@ -2518,6 +2536,7 @@ const LegalEntityDetailsPage = () => {
                             <TableCell className="px-3 py-2">{mpLabelShort(doc.marketplace)}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{planSum}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{factSum}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{rem}</TableCell>
                             <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 type="button"
@@ -3007,25 +3026,28 @@ const LegalEntityDetailsPage = () => {
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
                       <TableHead className="h-9 w-[100px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {outboundDocumentsFiltered.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="px-3 py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={10} className="px-3 py-6 text-center text-sm text-slate-500">
                           {outboundViewMode === "active" ? "Активных заданий на отгрузку нет" : "Архив отгрузок пуст"}
                         </TableCell>
                       </TableRow>
                     ) : (
                       outboundDocumentsFiltered.map((doc) => {
                         const open = selectedOutboundDocId === doc.id;
+                        const rem = Math.max(0, doc.totalPlan - doc.totalFact);
                         return (
                           <TableRow
                             key={doc.id}
@@ -3034,6 +3056,9 @@ const LegalEntityDetailsPage = () => {
                           >
                             <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">
                               {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-700">
+                              {formatTaskArchiveDateLabel(doc.completedAtIso)}
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{doc.assignmentNo}</TableCell>
                             <TableCell className="px-3 py-2">
@@ -3049,10 +3074,10 @@ const LegalEntityDetailsPage = () => {
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-800">{doc.totalFact}</TableCell>
                             <TableCell
                               className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${
-                                doc.totalPlan - doc.totalFact !== 0 ? "font-medium text-red-700" : "text-slate-800"
+                                rem > 0 ? "font-medium text-amber-800" : "text-slate-800"
                               }`}
                             >
-                              {Math.max(0, doc.totalPlan - doc.totalFact)}
+                              {rem}
                             </TableCell>
                             <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                               <Button
