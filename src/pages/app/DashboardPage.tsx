@@ -27,7 +27,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useDashboardBundleQuery } from "@/hooks/useDashboardAnalytics";
 import { useInboundSupplies, useInventoryMovements, useOperationLogs, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
-import { mergePriorityFromShipments } from "@/lib/outboundTaskPriority";
+import { cn } from "@/lib/utils";
+import { mergePriorityFromShipments, outboundPrioritySortKey, type OutboundTaskPriority } from "@/lib/outboundTaskPriority";
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
@@ -86,20 +87,13 @@ const DashboardPage = () => {
     line: "shortage" | "high" | "processing";
     shortageUnits?: number;
   }> = (() => {
-    const out: Array<{
-      groupKey: string;
-      label: string;
-      line: "shortage" | "high" | "processing";
-      shortageUnits?: number;
-    }> = [];
     if (!Array.isArray(assignments) || assignments.length === 0) {
-      return out;
+      return [];
     }
     const byProduct = new Map(catalog.map((p) => [p.id, p]));
     const balanceByKey = getBalanceByKeyMap(movements);
     const resByKey = reservedQtyByBalanceKey(shipping, catalog);
     const hasMovements = movements.length > 0;
-    const used = new Set<string>();
 
     const groupKey = (rows: (typeof shipping)[number][]) => {
       if (!Array.isArray(rows) || !rows[0]) return "";
@@ -130,38 +124,58 @@ const DashboardPage = () => {
       return total;
     };
 
-    for (const rows of assignments) {
-      if (out.length >= 3) break;
-      if (!Array.isArray(rows) || !rows[0]) continue;
+    type StartCandidate = {
+      groupKey: string;
+      label: string;
+      line: "shortage" | "high" | "processing";
+      shortageUnits: number;
+      mergedPriority: OutboundTaskPriority;
+      assignOrder: number;
+      createdTs: number;
+    };
+
+    const candidates: StartCandidate[] = [];
+    assignments.forEach((rows, assignOrder) => {
+      if (!Array.isArray(rows) || !rows[0]) return;
       const k = groupKey(rows);
-      if (!k || used.has(k)) continue;
+      if (!k) return;
       const st = shortageTotalForGroup(rows);
-      if (st > 0) {
-        used.add(k);
-        out.push({ groupKey: k, label: label(rows), line: "shortage", shortageUnits: st });
-      }
-    }
-    for (const rows of assignments) {
-      if (out.length >= 3) break;
-      if (!Array.isArray(rows) || !rows[0]) continue;
-      const k = groupKey(rows);
-      if (!k || used.has(k)) continue;
-      if (mergePriorityFromShipments(rows) === "high") {
-        used.add(k);
-        out.push({ groupKey: k, label: label(rows), line: "high" });
-      }
-    }
-    for (const rows of assignments) {
-      if (out.length >= 3) break;
-      if (!Array.isArray(rows) || !rows[0]) continue;
-      const k = groupKey(rows);
-      if (!k || used.has(k)) continue;
-      if (workflowFromOutboundGroup(rows) === "processing") {
-        used.add(k);
-        out.push({ groupKey: k, label: label(rows), line: "processing" });
-      }
-    }
-    return out;
+      const mergedPriority = mergePriorityFromShipments(rows);
+      const wf = workflowFromOutboundGroup(rows);
+      const eligible = st > 0 || mergedPriority === "high" || wf === "processing";
+      if (!eligible) return;
+      let line: StartCandidate["line"] = "processing";
+      if (st > 0) line = "shortage";
+      else if (mergedPriority === "high") line = "high";
+      const first = rows[0];
+      const rawDate = first?.createdAt ?? first?.updatedAt ?? "";
+      const parsed = Date.parse(String(rawDate));
+      candidates.push({
+        groupKey: k,
+        label: label(rows),
+        line,
+        shortageUnits: st,
+        mergedPriority,
+        assignOrder,
+        createdTs: Number.isFinite(parsed) ? parsed : 0,
+      });
+    });
+
+    candidates.sort((a, b) => {
+      if (b.shortageUnits !== a.shortageUnits) return b.shortageUnits - a.shortageUnits;
+      const pa = outboundPrioritySortKey(a.mergedPriority);
+      const pb = outboundPrioritySortKey(b.mergedPriority);
+      if (pa !== pb) return pa - pb;
+      if (a.assignOrder !== b.assignOrder) return a.assignOrder - b.assignOrder;
+      return a.createdTs - b.createdTs;
+    });
+
+    return candidates.slice(0, 3).map((c) => ({
+      groupKey: c.groupKey,
+      label: c.label,
+      line: c.line,
+      shortageUnits: c.line === "shortage" && c.shortageUnits > 0 ? c.shortageUnits : undefined,
+    }));
   })();
 
   const shippingTotal = assignments.length;
@@ -362,18 +376,27 @@ const DashboardPage = () => {
           {startWithTopTasks.length === 0 ? (
             <p className="text-sm text-slate-600">Нет задач для отображения</p>
           ) : (
-            <ul className="divide-y divide-slate-100">
-              {startWithTopTasks.map((row) => (
-                <li key={row.groupKey}>
+            <ul className="space-y-1">
+              {startWithTopTasks.map((row, index) => (
+                <li key={row.groupKey} className="min-w-0">
+                  {index === 0 ? (
+                    <p className="mb-1 text-xs font-medium text-slate-500">Рекомендуем начать с:</p>
+                  ) : null}
                   <div
                     role="button"
                     tabIndex={0}
+                    title="Открыть отгрузки"
                     onClick={() => navigate("/shipping")}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") navigate("/shipping");
                     }}
-                    className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-2.5 text-sm text-slate-800 transition-colors hover:bg-slate-50"
-                    aria-label={`Перейти к отгрузкам, задание ${row.label}`}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2.5 text-sm text-slate-800 transition-colors",
+                      index === 0
+                        ? "bg-slate-100/90 font-semibold ring-1 ring-slate-200/60 hover:bg-slate-100"
+                        : "hover:bg-slate-50",
+                    )}
+                    aria-label={`Открыть отгрузки, задание ${row.label}`}
                   >
                     <span
                       className="inline-flex w-5 shrink-0 justify-center text-center text-base leading-tight"
@@ -382,15 +405,20 @@ const DashboardPage = () => {
                       {row.line === "shortage" ? "⚠️" : row.line === "high" ? "🔴" : "\u2003"}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="font-medium text-slate-900 tabular-nums">{row.label}</p>
-                      <p className="mt-0.5 text-slate-600">
+                      <p className={cn("tabular-nums text-slate-900", index === 0 ? "font-semibold" : "font-medium")}>
+                        {row.label}
+                      </p>
+                      <p className={cn("mt-0.5 text-slate-600", index === 0 ? "font-semibold" : "font-normal")}>
                         {row.line === "shortage" && row.shortageUnits != null
-                          ? `не хватает ${row.shortageUnits} шт`
+                          ? `Нехватка: ${row.shortageUnits} шт`
                           : row.line === "high"
-                            ? "высокий приоритет"
-                            : "в работе"}
+                            ? "Высокий приоритет"
+                            : "В работе"}
                       </p>
                     </div>
+                    <span className="shrink-0 self-center text-xs text-slate-400" aria-hidden>
+                      Открыть отгрузки
+                    </span>
                   </div>
                 </li>
               ))}
