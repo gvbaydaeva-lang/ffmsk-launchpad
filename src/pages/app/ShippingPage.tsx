@@ -197,8 +197,8 @@ const ShippingPage = () => {
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
   /**
-   * ⚠️ только при строках: plan > 0, fact < plan, plan > доступно, где доступно = max(0, остаток − резерв).
-   * Без движений WMS не считаем (пустой снимок дал бы ложные срабатывания).
+   * ⚠️ только при наличии строк, где: plan>0, fact<plan, plan>доступно, доступно=max(0, остаток−резерв).
+   * Не опираемся на статус задания: только критерии по строке. Без движений WMS — пусто.
    */
   const shippingDocStockWarning = React.useMemo(() => {
     const map = new Map<string, { lines: ShippingStockWarnLine[] }>();
@@ -211,10 +211,6 @@ const ShippingPage = () => {
     const reserveByKey = reservedQtyByBalanceKey(data ?? [], catalog ?? []);
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     for (const doc of documents) {
-      if (doc.workflowStatus === "completed") {
-        map.set(doc.id, empty());
-        continue;
-      }
       const lines: ShippingStockWarnLine[] = [];
       for (const sh of doc.shipments) {
         const plan = Number(sh.plannedUnits) || 0;
@@ -402,7 +398,7 @@ const ShippingPage = () => {
                       const legalLabel = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
                       const stockWarnLines = shippingDocStockWarning.get(doc.id)?.lines ?? [];
                       const stockWarnTooltip = formatShippingStockTooltip(stockWarnLines);
-                      const showStockWarn = doc.workflowStatus !== "completed" && stockWarnLines.length > 0;
+                      const showStockWarn = stockWarnLines.length > 0;
                       const stockWarnAria =
                         stockWarnLines.length === 1
                           ? "Недостаточно доступного товара по одной позиции. Подробности в подсказке."
