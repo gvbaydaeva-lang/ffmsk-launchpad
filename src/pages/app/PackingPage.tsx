@@ -550,6 +550,14 @@ const PackingPage = () => {
       const f = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
       return p !== f;
     });
+    const currentAssignmentId = startedAssignment.id;
+    const nextAssignment =
+      assignments.find(
+        (a) =>
+          a.id !== currentAssignmentId &&
+          (normalizeWorkflowStatus(a.workflowStatus) === "pending" ||
+            normalizeWorkflowStatus(a.workflowStatus) === "processing"),
+      ) ?? null;
     try {
       const moves: InventoryMovement[] = startedAssignment.shipments
         .map((sh) => {
@@ -606,6 +614,7 @@ const PackingPage = () => {
       }
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
+      await queryClient.refetchQueries({ queryKey: ["wms", "outbound"] });
       if (hasDiscrepancy) {
         appendOperationLog({
           type: "TASK_COMPLETED_WITH_MISMATCH",
@@ -630,7 +639,13 @@ const PackingPage = () => {
       } else {
         toast.success("Задание завершено и убрано из активных.");
       }
-      setStartedAssignmentId(null);
+      if (nextAssignment) {
+        await startAssignment(nextAssignment);
+        focusScanInput();
+      } else {
+        setStartedAssignmentId(null);
+        toast.message("Заданий больше нет");
+      }
     } catch {
       toast.error("Не удалось завершить задание. Повторите попытку.");
     }
