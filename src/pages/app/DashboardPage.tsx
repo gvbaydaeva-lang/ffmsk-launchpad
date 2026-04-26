@@ -25,12 +25,74 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import { useDashboardBundleQuery } from "@/hooks/useDashboardAnalytics";
+import { useInboundSupplies, useInventoryMovements, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
+import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { sumStorageDay } from "@/services/mockDashboardBundle";
+
+function safeArray<T>(value: T[] | undefined | null): T[] {
+  return Array.isArray(value) ? value : [];
+}
 
 const DashboardPage = () => {
   const { data, isLoading, error } = useDashboardBundleQuery();
+  const { data: inboundRaw } = useInboundSupplies();
+  const { data: outboundRaw } = useOutboundShipments();
+  const { data: catalogRaw } = useProductCatalog();
+  const { data: movementsRaw, balanceRows: balanceRowsRaw } = useInventoryMovements();
 
   const storageTotal = data ? sumStorageDay(data.storageByClient) : 0;
+  const receiving = safeArray(inboundRaw);
+  const shipping = safeArray(outboundRaw);
+  const catalog = safeArray(catalogRaw);
+  const movements = safeArray(movementsRaw);
+  const inventory = safeArray(balanceRowsRaw);
+
+  const receivingTotal = receiving.length;
+  const receivingProcessing = receiving.filter((row) => workflowFromInbound(row) === "processing").length;
+  const receivingCompleted = receiving.filter((row) => workflowFromInbound(row) === "completed").length;
+
+  const assignmentGroups = new Map<string, typeof shipping>();
+  for (const row of shipping) {
+    const key = `${row.legalEntityId}::${row.assignmentId ?? row.assignmentNo ?? row.id}`;
+    const prev = assignmentGroups.get(key) ?? [];
+    prev.push(row);
+    assignmentGroups.set(key, prev);
+  }
+  const assignments = Array.from(assignmentGroups.values());
+  const shippingTotal = assignments.length;
+  const shippingProcessing = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "processing").length;
+  const shippingPending = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "pending").length;
+  const shippingCompleted = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "completed").length;
+
+  let shippingProblematic = 0;
+  if (assignments.length > 0) {
+    const balanceByKey = getBalanceByKeyMap(movements);
+    const reserveByKey = reservedQtyByBalanceKey(shipping, catalog);
+    const byProduct = new Map(catalog.map((p) => [p.id, p]));
+    shippingProblematic = assignments.filter((rows) =>
+      rows.some((sh) => {
+        const plan = Number(sh.plannedUnits) || 0;
+        const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+        if (plan <= 0 || fact >= plan) return false;
+        const key = balanceKeyFromOutboundShipment(sh, byProduct.get(sh.productId) ?? null);
+        const balance = balanceByKey.get(key) ?? 0;
+        const reserve = reserveByKey.get(key) ?? 0;
+        const available = Math.max(0, balance - reserve);
+        return plan > available;
+      }),
+    ).length;
+  }
+
+  const inventorySkuTotal = inventory.length;
+  const reserveByKey = reservedQtyByBalanceKey(shipping, catalog);
+  const inventoryReserved = inventory.filter((row) => (reserveByKey.get(row.key) ?? 0) > 0).length;
+  const inventoryUnavailable = inventory.filter((row) => {
+    const reserve = reserveByKey.get(row.key) ?? 0;
+    const available = row.balanceQty - reserve;
+    return available <= 0;
+  }).length;
 
   return (
     <div className="space-y-6">
@@ -47,6 +109,47 @@ const DashboardPage = () => {
       </div>
 
       <GlobalFiltersBar />
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-base text-slate-900">Операционный контроль дня</CardTitle>
+          <CardDescription className="text-slate-500">Только чтение: оперативная сводка по текущему состоянию</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 pt-0 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Приёмка</p>
+            <div className="mt-2 space-y-1 text-sm">
+              <p className="flex items-center justify-between text-slate-700"><span>Всего</span><span className="tabular-nums font-medium text-slate-900">{receivingTotal || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>В работе</span><span className="tabular-nums font-medium text-slate-900">{receivingProcessing || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>Завершено</span><span className="tabular-nums font-medium text-slate-900">{receivingCompleted || 0}</span></p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Отгрузки</p>
+            <div className="mt-2 space-y-1 text-sm">
+              <p className="flex items-center justify-between text-slate-700"><span>Всего</span><span className="tabular-nums font-medium text-slate-900">{shippingTotal || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>В работе</span><span className="tabular-nums font-medium text-slate-900">{shippingProcessing || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>Проблемные</span><span className="tabular-nums font-medium text-slate-900">{shippingProblematic || 0}</span></p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Упаковщик</p>
+            <div className="mt-2 space-y-1 text-sm">
+              <p className="flex items-center justify-between text-slate-700"><span>В очереди</span><span className="tabular-nums font-medium text-slate-900">{shippingPending || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>В работе</span><span className="tabular-nums font-medium text-slate-900">{shippingProcessing || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>Завершено</span><span className="tabular-nums font-medium text-slate-900">{shippingCompleted || 0}</span></p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Остатки</p>
+            <div className="mt-2 space-y-1 text-sm">
+              <p className="flex items-center justify-between text-slate-700"><span>SKU всего</span><span className="tabular-nums font-medium text-slate-900">{inventorySkuTotal || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>Недоступно</span><span className="tabular-nums font-medium text-slate-900">{inventoryUnavailable || 0}</span></p>
+              <p className="flex items-center justify-between text-slate-700"><span>В резерве</span><span className="tabular-nums font-medium text-slate-900">{inventoryReserved || 0}</span></p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {isLoading ? (
         <div className="space-y-4">
