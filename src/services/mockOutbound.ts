@@ -140,6 +140,11 @@ function normalizeBoxesFromDb(raw: unknown): OutboundShipment["boxes"] {
   return [];
 }
 
+function parsePackingPriority(raw: unknown): OutboundShipment["packingPriority"] | undefined {
+  if (raw === "high" || raw === "normal" || raw === "low") return raw;
+  return undefined;
+}
+
 function toDb(row: OutboundShipment): OutboundDbRow {
   return {
     id: row.id,
@@ -200,6 +205,7 @@ function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipme
     importName: row.import_name ?? undefined,
     importSize: row.import_size ?? undefined,
     importColor: row.import_color ?? undefined,
+    packingPriority: parsePackingPriority((row as { packing_priority?: unknown }).packing_priority),
   };
 }
 

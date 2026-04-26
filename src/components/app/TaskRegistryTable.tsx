@@ -1,7 +1,20 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { TaskWorkflowStatus } from "@/types/domain";
 import StatusBadge from "@/components/app/StatusBadge";
+
+function packingPriorityBadgeClass(p: "high" | "normal" | "low"): string {
+  if (p === "high") return "bg-red-100 text-red-800 ring-1 ring-red-200";
+  if (p === "low") return "bg-slate-50 text-slate-500 ring-1 ring-slate-200/80";
+  return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+}
+
+function packingPriorityLabel(p: "high" | "normal" | "low"): string {
+  if (p === "high") return "Высокий";
+  if (p === "low") return "Низкий";
+  return "Обычный";
+}
 
 export type TaskRegistryRow = {
   id: string;
@@ -22,6 +35,8 @@ export type TaskRegistryRow = {
   requiresReview?: boolean;
   /** Суммарный перерасход max(0, факт − план) */
   overrun?: number;
+  /** Упаковщик: high | normal | low */
+  packingPriority?: "high" | "normal" | "low";
 };
 
 type Props = {
@@ -34,6 +49,8 @@ type Props = {
   archiveMode?: boolean;
   selectedId?: string | null;
   showLegalEntity?: boolean;
+  /** Колонка «Приоритет» (бейджи как в остальных реестрах) */
+  showPackingPriority?: boolean;
   emptyText?: string;
 };
 
@@ -46,8 +63,11 @@ export default function TaskRegistryTable({
   archiveMode = false,
   selectedId,
   showLegalEntity = true,
+  showPackingPriority = false,
   emptyText = "Нет заданий для отображения.",
 }: Props) {
+  const colCount = (showLegalEntity ? 12 : 11) + (showPackingPriority ? 1 : 0);
+
   const workflowActionLabel = (status: TaskWorkflowStatus) => {
     if (archiveMode) return "Открыть";
     if (status === "processing") return "Продолжить";
@@ -57,7 +77,7 @@ export default function TaskRegistryTable({
 
   return (
     <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
-    <Table className="min-w-[1320px] table-auto">
+    <Table className={cn("table-auto", showPackingPriority ? "min-w-[1400px]" : "min-w-[1320px]")}>
       <TableHeader>
         <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
           <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
@@ -65,6 +85,9 @@ export default function TaskRegistryTable({
           <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
           {showLegalEntity ? (
             <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
+          ) : null}
+          {showPackingPriority ? (
+            <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Приоритет</TableHead>
           ) : null}
           <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
           <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
@@ -79,7 +102,7 @@ export default function TaskRegistryTable({
       <TableBody>
         {rows.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={showLegalEntity ? 12 : 11} className="px-3 py-6 text-center text-sm text-slate-500">
+            <TableCell colSpan={colCount} className="px-3 py-6 text-center text-sm text-slate-500">
               {emptyText}
             </TableCell>
           </TableRow>
@@ -98,6 +121,17 @@ export default function TaskRegistryTable({
                 </TableCell>
                 <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{row.taskNo || "—"}</TableCell>
                 {showLegalEntity ? <TableCell className="whitespace-nowrap px-3 py-2">{row.legalEntityLabel || "—"}</TableCell> : null}
+                {showPackingPriority ? (
+                  <TableCell className="whitespace-nowrap px-3 py-2">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${packingPriorityBadgeClass(
+                        row.packingPriority ?? "normal",
+                      )}`}
+                    >
+                      {packingPriorityLabel(row.packingPriority ?? "normal")}
+                    </span>
+                  </TableCell>
+                ) : null}
                 <TableCell className="px-3 py-2">
                   <StatusBadge status={row.status} mismatch={row.mismatch} requiresReview={row.requiresReview} />
                 </TableCell>

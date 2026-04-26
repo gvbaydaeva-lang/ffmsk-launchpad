@@ -45,7 +45,32 @@ import {
 import { playScanErrorSound, playScanSuccessSound } from "@/utils/scanFeedbackSound";
 import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
 
-type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
+type PackingPriority = "high" | "normal" | "low";
+
+function mergePackingPriorityFromShipments(shipments: OutboundShipment[]): PackingPriority {
+  let rank = 0;
+  for (const sh of shipments) {
+    const p = sh.packingPriority ?? "normal";
+    const r = p === "high" ? 2 : p === "normal" ? 1 : 0;
+    rank = Math.max(rank, r);
+  }
+  if (rank === 2) return "high";
+  if (rank === 1) return "normal";
+  return "low";
+}
+
+function packingPrioritySortKey(p: PackingPriority): number {
+  return p === "high" ? 0 : p === "normal" ? 1 : 2;
+}
+
+type PackingAssignment = {
+  id: string;
+  display: string;
+  legalEntityId: string;
+  shipments: OutboundShipment[];
+  workflowStatus: TaskWorkflowStatus;
+  priority: PackingPriority;
+};
 
 type LastScanResult =
   | { status: "idle" }
@@ -144,7 +169,8 @@ const PackingPage = () => {
     }
     return Array.from(groups.values()).map((group) => {
       const allCompleted = group.shipments.every((sh) => (sh.workflowStatus ?? "pending") === "completed");
-      return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus };
+      const priority = mergePackingPriorityFromShipments(group.shipments);
+      return { ...group, workflowStatus: allCompleted ? "completed" : group.workflowStatus, priority };
     });
   }, [allShipments, legal]);
 
@@ -176,6 +202,8 @@ const PackingPage = () => {
         return `${no} ${entity} ${lineText}`.toLowerCase().includes(q);
       })
       .sort((a, b) => {
+        const pr = packingPrioritySortKey(a.priority) - packingPrioritySortKey(b.priority);
+        if (pr !== 0) return pr;
         if (viewMode === "archive") {
           return outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments);
         }
@@ -828,6 +856,7 @@ const PackingPage = () => {
               <TaskRegistryTable
                 archiveMode={viewMode === "archive"}
                 disableActionForCompleted={viewMode !== "archive"}
+                showPackingPriority
                 rows={assignments.map((assignment) => {
                   const first = assignment.shipments[0];
                   const assignmentNo = first?.assignmentNo?.trim() || first?.assignmentId?.trim() || first?.id || "—";
@@ -852,6 +881,7 @@ const PackingPage = () => {
                     completedAtLabel: completedLabel,
                     taskNo: assignmentNo,
                     legalEntityLabel: legalName,
+                    packingPriority: assignment.priority,
                     status: wf,
                     warehouseLabel: first?.sourceWarehouse ?? "—",
                     marketplaceLabel: first?.marketplace?.toUpperCase() ?? "—",

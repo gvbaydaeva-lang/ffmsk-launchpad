@@ -242,6 +242,8 @@ export type OutboundShipment = {
   shippedUnits: number | null;
   status: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено";
   workflowStatus?: TaskWorkflowStatus;
+  /** Очередь Упаковщика: важность задания (по строкам задания; по умолчанию — как не задано) */
+  packingPriority?: "high" | "normal" | "low";
   /** Завершено при план ≠ факт по строке */
   completedWithDiscrepancies?: boolean;
   boxes?: Array<{
