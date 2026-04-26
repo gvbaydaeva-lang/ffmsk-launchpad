@@ -23,6 +23,42 @@ function PrimaryBadge({ status }: { status: TaskWorkflowStatus }) {
       </span>
     );
   }
+  if (status === "assembling") {
+    return (
+      <span
+        className={cn(
+          "inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
+          "bg-sky-100 text-sky-900 ring-sky-200",
+        )}
+      >
+        В сборке
+      </span>
+    );
+  }
+  if (status === "assembled") {
+    return (
+      <span
+        className={cn(
+          "inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
+          "bg-emerald-50 text-emerald-800 ring-emerald-200/90",
+        )}
+      >
+        Собрано
+      </span>
+    );
+  }
+  if (status === "shipped") {
+    return (
+      <span
+        className={cn(
+          "inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
+          "bg-emerald-800 text-emerald-50 ring-emerald-900/30",
+        )}
+      >
+        Отгружено
+      </span>
+    );
+  }
   if (status === "completed") {
     return (
       <span

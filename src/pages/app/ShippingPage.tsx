@@ -17,7 +17,7 @@ import { useUserRole } from "@/contexts/UserRoleContext";
 import { useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
-import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { isOutboundWorkflowTerminal, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
 import { cn } from "@/lib/utils";
 import {
@@ -47,6 +47,9 @@ type ShipmentDoc = {
 function shippingDispatcherHint(status: TaskWorkflowStatus): string {
   if (status === "pending") return "Задание создано и ожидает сборки";
   if (status === "processing") return "Задание находится в сборке";
+  if (status === "assembling") return "Задание в сборке на складе";
+  if (status === "assembled") return "Задание собрано, ожидает отгрузки";
+  if (status === "shipped") return "Отгрузка завершена";
   return "Сборка завершена";
 }
 
@@ -189,8 +192,8 @@ const ShippingPage = () => {
           return `${entity} ${d.assignmentNo} ${lines}`.toLowerCase().includes(q);
         });
     const withFilters = searched.filter((d) => {
-      if (viewMode === "active" && d.workflowStatus === "completed") return false;
-      if (viewMode === "archive" && d.workflowStatus !== "completed") return false;
+      if (viewMode === "active" && isOutboundWorkflowTerminal(d.workflowStatus)) return false;
+      if (viewMode === "archive" && !isOutboundWorkflowTerminal(d.workflowStatus)) return false;
       if (statusFilter !== "all" && d.workflowStatus !== statusFilter) return false;
       if (warehouseFilter !== "all" && d.sourceWarehouse !== warehouseFilter) return false;
       const created = Date.parse(d.createdAt || "");
@@ -322,7 +325,7 @@ const ShippingPage = () => {
   const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
     if (!selectedDoc?.shipments?.length) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
-    const showStock = selectedDoc.workflowStatus !== "completed";
+    const showStock = !isOutboundWorkflowTerminal(selectedDoc.workflowStatus);
     const movementsReady = inventoryMovements.length > 0;
     const balanceByKey = showStock && movementsReady ? getBalanceByKeyMap(inventoryMovements) : null;
     const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalog ?? []) : null;
@@ -421,7 +424,10 @@ const ShippingPage = () => {
               <SelectItem value="all">Все статусы</SelectItem>
               <SelectItem value="pending">Новое</SelectItem>
               <SelectItem value="processing">В работе</SelectItem>
+              <SelectItem value="assembling">В сборке</SelectItem>
+              <SelectItem value="assembled">Собрано</SelectItem>
               <SelectItem value="completed">Завершено</SelectItem>
+              <SelectItem value="shipped">Отгружено</SelectItem>
             </SelectContent>
           </Select>
           <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
@@ -495,6 +501,8 @@ const ShippingPage = () => {
                               "cursor-pointer border-slate-100 text-sm transition-[background-color,box-shadow] duration-300",
                               isSel ? "bg-slate-50" : "",
                               doc.workflowStatus === "pending" ? "bg-blue-50/60" : "",
+                              doc.workflowStatus === "assembling" ? "bg-sky-50/70" : "",
+                              doc.workflowStatus === "assembled" ? "bg-emerald-50/50" : "",
                               openTaskHighlightId === doc.id &&
                                 "z-[1] ring-2 ring-amber-400/50 ring-inset bg-amber-50/50",
                             )}
@@ -608,11 +616,11 @@ const ShippingPage = () => {
                                   )}
                                   {viewMode === "archive" ? null : (
                                     <div className="flex flex-wrap items-center gap-2">
-                                      {doc.workflowStatus === "completed" ? (
+                                      {isOutboundWorkflowTerminal(doc.workflowStatus) ? (
                                         <Button type="button" size="sm" variant="secondary" disabled>
-                                          Сборка завершена
+                                          {doc.workflowStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
                                         </Button>
-                                      ) : doc.workflowStatus === "processing" ? (
+                                      ) : doc.workflowStatus === "processing" || doc.workflowStatus === "assembling" ? (
                                         <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
                                           Продолжить сборку
                                         </Button>

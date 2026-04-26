@@ -34,7 +34,12 @@ export function inboundArchiveSortKey(s: InboundSupply): number {
 
 /** Группа outbound завершена, если все строки завершены/отгружены. */
 export function outboundGroupIsArchived(shipments: OutboundShipment[]): boolean {
-  return shipments.every((sh) => sh.workflowStatus === "completed" || sh.status === "отгружено");
+  return shipments.every(
+    (sh) =>
+      sh.workflowStatus === "completed" ||
+      sh.workflowStatus === "shipped" ||
+      sh.status === "отгружено",
+  );
 }
 
 /** Максимальный момент завершения по строкам (completedAt → updatedAt → createdAt). */

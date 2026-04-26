@@ -44,7 +44,7 @@ import type {
   ProductCatalogItem,
   TaskWorkflowStatus,
 } from "@/types/domain";
-import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { isOutboundWorkflowTerminal, workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
 import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import {
@@ -403,12 +403,18 @@ function paramsLabel(item: ProductCatalogItem) {
 
 function workflowStatusLabel(status: TaskWorkflowStatus | undefined) {
   if (status === "processing") return "В работе";
+  if (status === "assembling") return "В сборке";
+  if (status === "assembled") return "Собрано";
+  if (status === "shipped") return "Отгружено";
   if (status === "completed") return "Завершено";
   return "Новое";
 }
 
 function outboundRegistryBadgeClass(status: TaskWorkflowStatus | undefined) {
   if (status === "processing") return "bg-violet-100 text-violet-800 ring-1 ring-violet-200";
+  if (status === "assembling") return "bg-sky-100 text-sky-900 ring-1 ring-sky-200";
+  if (status === "assembled") return "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/90";
+  if (status === "shipped") return "bg-emerald-800 text-emerald-50 ring-1 ring-emerald-900/30";
   if (status === "completed") return "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200";
   return "bg-blue-100 text-blue-800 ring-1 ring-blue-200";
 }
@@ -745,7 +751,9 @@ const LegalEntityDetailsPage = () => {
   }, [inboundDocuments, inboundViewMode]);
   const outboundDocumentsFiltered = React.useMemo(() => {
     const filtered = outboundDocuments.filter((doc) =>
-      outboundViewMode === "active" ? doc.workflowStatus !== "completed" : doc.workflowStatus === "completed",
+      outboundViewMode === "active"
+        ? !isOutboundWorkflowTerminal(doc.workflowStatus)
+        : isOutboundWorkflowTerminal(doc.workflowStatus),
     );
     if (outboundViewMode === "archive") {
       return [...filtered].sort((a, b) => outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments));

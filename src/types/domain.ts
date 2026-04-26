@@ -93,8 +93,14 @@ export type ShipmentBox = {
   createdAt: string;
 };
 
-/** Входящая поставка (приёмка) */
-export type TaskWorkflowStatus = "pending" | "processing" | "completed";
+/** Статус задания (приёмка / отгрузка); расширенные значения — в основном для outbound. */
+export type TaskWorkflowStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "assembling"
+  | "assembled"
+  | "shipped";
 
 /** Входящая поставка (приёмка) */
 export type InboundSupply = {

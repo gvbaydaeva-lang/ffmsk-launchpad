@@ -1,4 +1,4 @@
-import type { Marketplace, OutboundShipment } from "@/types/domain";
+import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { hasSupabase, supabase } from "@/lib/supabaseClient";
 
 function delay(ms: number) {
@@ -145,6 +145,20 @@ function parseOutboundPriority(raw: unknown): OutboundShipment["priority"] | und
   return undefined;
 }
 
+function parseOutboundWorkflowStatus(raw: unknown): TaskWorkflowStatus | undefined {
+  if (
+    raw === "pending" ||
+    raw === "processing" ||
+    raw === "completed" ||
+    raw === "assembling" ||
+    raw === "assembled" ||
+    raw === "shipped"
+  ) {
+    return raw;
+  }
+  return undefined;
+}
+
 function toDb(row: OutboundShipment): OutboundDbRow {
   return {
     id: row.id,
@@ -194,7 +208,9 @@ function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipme
     plannedShipDate: row.planned_ship_date ?? null,
     shippedUnits: row.shipped_units ?? null,
     status: row.status,
-    workflowStatus: row.workflow_status ?? (row.status === "отгружено" ? "completed" : "pending"),
+    workflowStatus:
+      parseOutboundWorkflowStatus(row.workflow_status) ??
+      (row.status === "отгружено" ? "completed" : "pending"),
     boxes: normalizeBoxesFromDb(row.boxes),
     activeBoxId: row.active_box_id ?? null,
     createdAt: row.created_at ?? new Date().toISOString(),

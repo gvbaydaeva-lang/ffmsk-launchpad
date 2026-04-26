@@ -5,6 +5,11 @@ export function normalizeWorkflowStatus(status: TaskWorkflowStatus | undefined |
   return status ?? "pending";
 }
 
+/** Завершённые по отгрузке этапы: закрыто в архиве вместе с «Завершено». */
+export function isOutboundWorkflowTerminal(status: TaskWorkflowStatus): boolean {
+  return status === "completed" || status === "shipped";
+}
+
 /** Обводка и фон карточки задания */
 export function taskWorkflowCardClass(status: TaskWorkflowStatus): string {
   switch (status) {
@@ -65,7 +70,22 @@ export function taskWorkflowActionLabel(status: TaskWorkflowStatus): string {
 
 /** Порядок сортировки: новые сверху, завершённые в конец */
 export function compareWorkflowPriority(a: TaskWorkflowStatus, b: TaskWorkflowStatus): number {
-  const order = (s: TaskWorkflowStatus) => (s === "pending" ? 0 : s === "processing" ? 1 : 2);
+  const order = (s: TaskWorkflowStatus) => {
+    switch (s) {
+      case "pending":
+        return 0;
+      case "assembling":
+        return 1;
+      case "processing":
+        return 2;
+      case "assembled":
+        return 3;
+      case "completed":
+        return 4;
+      case "shipped":
+        return 5;
+    }
+  };
   return order(a) - order(b);
 }
 
@@ -79,12 +99,21 @@ export function workflowFromInbound(row: InboundSupply): TaskWorkflowStatus {
 
 /** Статус задания отгрузки по группе строк */
 export function workflowFromOutboundGroup(shipments: OutboundShipment[]): TaskWorkflowStatus {
-  const perRow = shipments.map((s) => {
-    if (s.workflowStatus === "completed" || s.status === "отгружено") return "completed" as const;
-    if (s.workflowStatus === "processing") return "processing" as const;
+  const perRow = shipments.map((s): TaskWorkflowStatus => {
+    if (s.workflowStatus === "completed" || s.status === "отгружено") return "completed";
+    if (s.workflowStatus === "processing") return "processing";
+    if (s.workflowStatus === "assembling") return "assembling";
+    if (s.workflowStatus === "assembled") return "assembled";
+    if (s.workflowStatus === "shipped") return "shipped";
     return (s.workflowStatus ?? "pending") as TaskWorkflowStatus;
   });
-  if (perRow.every((x) => x === "completed")) return "completed";
   if (perRow.some((x) => x === "processing")) return "processing";
+  if (perRow.some((x) => x === "assembling")) return "assembling";
+  if (perRow.every((x) => x === "completed")) return "completed";
+  if (perRow.every((x) => x === "shipped")) return "shipped";
+  if (perRow.every((x) => x === "completed" || x === "shipped")) {
+    return perRow.some((x) => x === "shipped") ? "shipped" : "completed";
+  }
+  if (perRow.every((x) => x === "assembled")) return "assembled";
   return "pending";
 }

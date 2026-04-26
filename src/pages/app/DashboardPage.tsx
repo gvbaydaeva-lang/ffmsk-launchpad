@@ -29,7 +29,7 @@ import { useDashboardBundleQuery } from "@/hooks/useDashboardAnalytics";
 import { useInboundSupplies, useInventoryMovements, useOperationLogs, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { cn } from "@/lib/utils";
 import { mergePriorityFromShipments, outboundPrioritySortKey, type OutboundTaskPriority } from "@/lib/outboundTaskPriority";
-import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { isOutboundWorkflowTerminal, workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { sumStorageDay } from "@/services/mockDashboardBundle";
@@ -181,7 +181,9 @@ const DashboardPage = () => {
   const shippingTotal = assignments.length;
   const shippingProcessing = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "processing").length;
   const shippingPending = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "pending").length;
-  const shippingCompleted = assignments.filter((rows) => workflowFromOutboundGroup(rows) === "completed").length;
+  const shippingCompleted = assignments.filter((rows) =>
+    isOutboundWorkflowTerminal(workflowFromOutboundGroup(rows)),
+  ).length;
 
   let shippingProblematic = 0;
   if (assignments.length > 0) {
@@ -228,14 +230,18 @@ const DashboardPage = () => {
     .reduce((sum, row) => sum + (Number(row.receivedUnits ?? row.expectedUnits) || 0), 0);
 
   const shippedUnitsToday = shipping
-    .filter((row) => workflowFromOutboundGroup([row]) === "completed" && isTodayIso(row.completedAt ?? row.updatedAt ?? row.createdAt))
+    .filter(
+      (row) =>
+        isOutboundWorkflowTerminal(workflowFromOutboundGroup([row])) &&
+        isTodayIso(row.completedAt ?? row.updatedAt ?? row.createdAt),
+    )
     .reduce((sum, row) => sum + (Number(row.shippedUnits ?? row.packedUnits ?? 0) || 0), 0);
 
   const inboundCompletedToday = receiving.filter(
     (row) => workflowFromInbound(row) === "completed" && isTodayIso(row.completedAt ?? row.updatedAt ?? row.createdAt),
   ).length;
   const outboundCompletedToday = assignments.filter((rows) => {
-    if (workflowFromOutboundGroup(rows) !== "completed") return false;
+    if (!isOutboundWorkflowTerminal(workflowFromOutboundGroup(rows))) return false;
     const dateIso = rows
       .map((row) => row.completedAt ?? row.updatedAt ?? row.createdAt)
       .find((iso) => isTodayIso(iso));
