@@ -61,19 +61,20 @@ function shippingShortage(plan: number, available: number): number {
 
 function formatShippingStockTooltip(lines: ShippingStockWarnLine[]): string {
   if (!lines.length) return "";
-  const head =
-    "Недостаточно доступного товара (план > доступно). Доступно = max(0, остаток по движениям − резерв), не хватает = max(0, план − доступно).";
   if (lines.length === 1) {
     const L = lines[0];
-    return `${head}\n\nПлан: ${L.plan.toLocaleString("ru-RU")}, доступно: ${L.available.toLocaleString("ru-RU")}, не хватает: ${L.shortage.toLocaleString("ru-RU")}.\nБаркод: ${L.barcode}.`;
+    return [
+      "Недостаточно доступного товара.",
+      "",
+      `План: ${L.plan.toLocaleString("ru-RU")}`,
+      `Доступно: ${L.available.toLocaleString("ru-RU")}`,
+      `Не хватает: ${L.shortage.toLocaleString("ru-RU")} шт`,
+      `Баркод: ${L.barcode}`,
+    ].join("\n");
   }
-  const list = lines
-    .map(
-      (L) =>
-        `• Баркод ${L.barcode}: план ${L.plan.toLocaleString("ru-RU")}, доступно ${L.available.toLocaleString("ru-RU")}, не хватает ${L.shortage.toLocaleString("ru-RU")} шт`,
-    )
-    .join("\n");
-  return `${head}\n\nНедостаточно по ${lines.length} позициям:\n${list}`;
+  const intro = `Недостаточно доступного товара по ${lines.length} позициям.`;
+  const list = lines.map((L) => `- Баркод ${L.barcode}: не хватает ${L.shortage.toLocaleString("ru-RU")} шт`).join("\n");
+  return `${intro}\n\n${list}`;
 }
 
 function ShippingStockWarnTrigger({
