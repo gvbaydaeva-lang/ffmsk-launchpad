@@ -676,13 +676,16 @@ const PackingPage = () => {
         const plan = Number(sh.plannedUnits) || 0;
         const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
         const shipQty = Math.min(packed, plan);
+        const remaining = Math.max(0, plan - packed);
+        const lineFullyPacked = plan <= 0 || packed >= plan || remaining === 0;
         await updateOutboundDraft({
           id: sh.id,
           patch: {
             packedUnits: shipQty,
             shippedUnits: shipQty,
-            workflowStatus: "assembled",
+            workflowStatus: lineFullyPacked ? "assembled" : "processing",
             completedWithDiscrepancies: plan !== packed,
+            ...(lineFullyPacked ? { completedAt: ts, updatedAt: ts } : { updatedAt: ts }),
           },
         });
         await setOutboundStatus({ id: sh.id, status: "отгружено", shippedUnits: shipQty });
