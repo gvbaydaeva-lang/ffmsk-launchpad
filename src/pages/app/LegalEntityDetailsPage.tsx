@@ -46,6 +46,12 @@ import type {
 import { workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { wmsAvailableForCatalogProduct } from "@/lib/inventoryAvailableForOutbound";
 import {
+  mergePriorityFromShipments,
+  outboundPriorityBadgeClass,
+  outboundPriorityLabel,
+  type OutboundTaskPriority,
+} from "@/lib/outboundTaskPriority";
+import {
   formatTaskArchiveDateLabel,
   inboundArchiveSortKey,
   inboundSupplyCompletedAtIso,
@@ -446,6 +452,7 @@ const LegalEntityDetailsPage = () => {
     marketplace: "wb" as "wb" | "ozon" | "yandex",
     warehouse: "Склад Коледино",
     shippingMethod: "fbo" as "fbo" | "fbs" | "self",
+    priority: "normal" as OutboundTaskPriority,
   });
   const [quickBarcode, setQuickBarcode] = React.useState("");
   const [catalogSearch, setCatalogSearch] = React.useState("");
@@ -573,6 +580,7 @@ const LegalEntityDetailsPage = () => {
         }, 0);
         const workflowStatus = workflowFromOutboundGroup(shipments);
         const warehouseLabel = [...new Set(shipments.map((s) => s.sourceWarehouse))].join(", ");
+        const priority = mergePriorityFromShipments(shipments);
         return {
           id: key,
           createdAt,
@@ -581,6 +589,7 @@ const LegalEntityDetailsPage = () => {
           sourceWarehouse: warehouseLabel,
           marketplace: first.marketplace,
           workflowStatus,
+          priority,
           shipments,
           totalPlan,
           totalFact,
@@ -1384,6 +1393,7 @@ const LegalEntityDetailsPage = () => {
       marketplace: outboundDraft.marketplace,
       sourceWarehouse: warehouseName,
       shippingMethod: outboundDraft.shippingMethod,
+      priority: outboundDraft.priority,
       boxBarcode: "",
       gateBarcode: "",
       supplyNumber: "",
@@ -1399,7 +1409,7 @@ const LegalEntityDetailsPage = () => {
     });
     toast.success("Задание на отгрузку создано");
     setCreateOutboundOpen(false);
-    setOutboundDraft({ quantity: "", marketplace: "wb", warehouse: "Склад Коледино", shippingMethod: "fbo" });
+    setOutboundDraft({ quantity: "", marketplace: "wb", warehouse: "Склад Коледино", shippingMethod: "fbo", priority: "normal" });
     setSelectedOutboundProductId("");
     setSelectedOutboundDocId(`${legalId}::${assignmentId}`);
   };
@@ -1685,6 +1695,7 @@ const LegalEntityDetailsPage = () => {
         marketplace: row.marketplace,
         sourceWarehouse: row.sourceWarehouse,
         shippingMethod: "fbo",
+        priority: "normal",
         boxBarcode: "",
         gateBarcode: "",
         supplyNumber: "",
@@ -1771,6 +1782,7 @@ const LegalEntityDetailsPage = () => {
         marketplace: row.marketplace,
         sourceWarehouse: row.sourceWarehouse,
         shippingMethod: "fbo",
+        priority: "normal",
         boxBarcode: "",
         gateBarcode: "",
         supplyNumber: "",
@@ -3045,6 +3057,23 @@ const LegalEntityDetailsPage = () => {
                       <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
                       <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
                       <div className="grid gap-1.5"><Label>Способ отгрузки</Label><Select value={outboundDraft.shippingMethod} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, shippingMethod: v as "fbo" | "fbs" | "self" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fbo">FBO</SelectItem><SelectItem value="fbs">FBS</SelectItem><SelectItem value="self">Самовывоз</SelectItem></SelectContent></Select></div>
+                      <div className="grid gap-1.5">
+                        <Label>Приоритет задания</Label>
+                        <Select
+                          value={outboundDraft.priority}
+                          onValueChange={(v) => setOutboundDraft((s) => ({ ...s, priority: v as OutboundTaskPriority }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="high">Высокий</SelectItem>
+                            <SelectItem value="normal">Обычный</SelectItem>
+                            <SelectItem value="low">Низкий</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-slate-500">Внутренний приоритет для очереди упаковки на складе.</p>
+                      </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setCreateOutboundOpen(false)}>Отмена</Button>
@@ -3067,6 +3096,7 @@ const LegalEntityDetailsPage = () => {
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Приоритет</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
@@ -3079,7 +3109,7 @@ const LegalEntityDetailsPage = () => {
                   <TableBody>
                     {outboundDocumentsFiltered.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={10} className="px-3 py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={11} className="px-3 py-6 text-center text-sm text-slate-500">
                           {outboundViewMode === "active" ? "Активных заданий на отгрузку нет" : "Архив отгрузок пуст"}
                         </TableCell>
                       </TableRow>
@@ -3100,6 +3130,13 @@ const LegalEntityDetailsPage = () => {
                               {formatTaskArchiveDateLabel(doc.completedAtIso)}
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{doc.assignmentNo}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${outboundPriorityBadgeClass(doc.priority)}`}
+                              >
+                                {outboundPriorityLabel(doc.priority)}
+                              </span>
+                            </TableCell>
                             <TableCell className="px-3 py-2">
                               <span
                                 className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${outboundRegistryBadgeClass(doc.workflowStatus)}`}

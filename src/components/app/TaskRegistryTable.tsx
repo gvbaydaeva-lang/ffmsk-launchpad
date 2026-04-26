@@ -1,20 +1,9 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { outboundPriorityBadgeClass, outboundPriorityLabel } from "@/lib/outboundTaskPriority";
 import { cn } from "@/lib/utils";
 import type { TaskWorkflowStatus } from "@/types/domain";
 import StatusBadge from "@/components/app/StatusBadge";
-
-function packingPriorityBadgeClass(p: "high" | "normal" | "low"): string {
-  if (p === "high") return "bg-red-100 text-red-800 ring-1 ring-red-200";
-  if (p === "low") return "bg-slate-50 text-slate-500 ring-1 ring-slate-200/80";
-  return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
-}
-
-function packingPriorityLabel(p: "high" | "normal" | "low"): string {
-  if (p === "high") return "Высокий";
-  if (p === "low") return "Низкий";
-  return "Обычный";
-}
 
 export type TaskRegistryRow = {
   id: string;
@@ -35,8 +24,8 @@ export type TaskRegistryRow = {
   requiresReview?: boolean;
   /** Суммарный перерасход max(0, факт − план) */
   overrun?: number;
-  /** Упаковщик: high | normal | low */
-  packingPriority?: "high" | "normal" | "low";
+  /** Приоритет задания (внутренний) */
+  priority?: "high" | "normal" | "low";
 };
 
 type Props = {
@@ -124,11 +113,11 @@ export default function TaskRegistryTable({
                 {showPackingPriority ? (
                   <TableCell className="whitespace-nowrap px-3 py-2">
                     <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${packingPriorityBadgeClass(
-                        row.packingPriority ?? "normal",
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${outboundPriorityBadgeClass(
+                        row.priority ?? "normal",
                       )}`}
                     >
-                      {packingPriorityLabel(row.packingPriority ?? "normal")}
+                      {outboundPriorityLabel(row.priority ?? "normal")}
                     </span>
                   </TableCell>
                 ) : null}
