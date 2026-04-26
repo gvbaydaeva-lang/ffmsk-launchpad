@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskItemsTable, { type TaskItemRow } from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
@@ -46,6 +47,53 @@ function shippingDispatcherHint(status: TaskWorkflowStatus): string {
   if (status === "pending") return "Задание создано и ожидает сборки";
   if (status === "processing") return "Задание находится в сборке";
   return "Сборка завершена";
+}
+
+type ShippingStockWarnLine = { barcode: string; plan: number; available: number; shortage: number };
+
+function formatShippingStockTooltip(lines: ShippingStockWarnLine[]): string {
+  if (!lines.length) return "";
+  const head = "Недостаточно доступного товара (план > доступно, доступно = остаток по движениям − резерв).";
+  if (lines.length === 1) {
+    const L = lines[0];
+    return `${head}\n\nПлан: ${L.plan.toLocaleString("ru-RU")}, доступно: ${L.available.toLocaleString("ru-RU")}, не хватает: ${L.shortage.toLocaleString("ru-RU")}.\nБаркод: ${L.barcode}.`;
+  }
+  const list = lines
+    .map(
+      (L) =>
+        `• Баркод ${L.barcode}: план ${L.plan.toLocaleString("ru-RU")}, доступно ${L.available.toLocaleString("ru-RU")}, не хватает ${L.shortage.toLocaleString("ru-RU")} шт`,
+    )
+    .join("\n");
+  return `${head}\n\nНедостаточно по ${lines.length} позициям:\n${list}`;
+}
+
+function ShippingStockWarnTrigger({
+  tooltip,
+  ariaLabel,
+  children,
+}: {
+  tooltip: string;
+  ariaLabel: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex cursor-help select-none border-0 bg-transparent p-0 text-[13px] leading-none text-amber-600 hover:text-amber-700"
+          aria-label={ariaLabel}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="start" className="max-w-sm whitespace-pre-line text-left text-xs">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 const ShippingPage = () => {
@@ -139,13 +187,14 @@ const ShippingPage = () => {
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
   /**
-   * Проблема только при: есть строка с plan > 0, plan > (остаток по движениям − резерв), и по заданию ещё не закрыт фактом план.
-   * Без движений WMS сравнение «план > доступно» не считаем — иначе при пустом снимке остатков ложно срабатывает для всех.
+   * ⚠️ только при строках с plan > 0, fact < plan, plan > (остаток по движениям − резерв) — как в форме создания отгрузки.
+   * Без движений WMS не считаем (пустой снимок дал бы ложные срабатывания).
    */
-  const shippingDocHasStockShortage = React.useMemo(() => {
-    const map = new Map<string, boolean>();
+  const shippingDocStockWarning = React.useMemo(() => {
+    const map = new Map<string, { lines: ShippingStockWarnLine[] }>();
+    const empty = () => ({ lines: [] as ShippingStockWarnLine[] });
     if (!inventoryMovements.length) {
-      for (const doc of documents) map.set(doc.id, false);
+      for (const doc of documents) map.set(doc.id, empty());
       return map;
     }
     const balanceByKey = getBalanceByKeyMap(inventoryMovements);
@@ -153,26 +202,24 @@ const ShippingPage = () => {
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     for (const doc of documents) {
       if (doc.workflowStatus === "completed") {
-        map.set(doc.id, false);
+        map.set(doc.id, empty());
         continue;
       }
-      if (doc.planned > 0 && doc.fact >= doc.planned) {
-        map.set(doc.id, false);
-        continue;
-      }
-      let bad = false;
+      const lines: ShippingStockWarnLine[] = [];
       for (const sh of doc.shipments) {
         const plan = Number(sh.plannedUnits) || 0;
         if (plan <= 0) continue;
+        const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+        if (fact >= plan) continue;
         const product = byProduct.get(sh.productId) ?? null;
         const key = balanceKeyFromOutboundShipment(sh, product);
         const available = (balanceByKey.get(key) ?? 0) - (reserveByKey.get(key) ?? 0);
         if (plan > available) {
-          bad = true;
-          break;
+          const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+          lines.push({ barcode, plan, available, shortage: plan - available });
         }
       }
-      map.set(doc.id, bad);
+      map.set(doc.id, { lines });
     }
     return map;
   }, [documents, inventoryMovements, data, catalog]);
@@ -200,8 +247,13 @@ const ShippingPage = () => {
       if (showStock && balanceByKey && reserveByKey) {
         const key = balanceKeyFromOutboundShipment(sh, product);
         const available = (balanceByKey.get(key) ?? 0) - (reserveByKey.get(key) ?? 0);
-        shippingStock =
-          plan > available ? { state: "short", available, shortage: plan - available } : { state: "sufficient" };
+        if (fact >= plan) {
+          shippingStock = { state: "sufficient" };
+        } else if (plan > available) {
+          shippingStock = { state: "short", available, shortage: plan - available };
+        } else {
+          shippingStock = { state: "sufficient" };
+        }
       }
       return {
         id: sh.id,
@@ -334,6 +386,13 @@ const ShippingPage = () => {
                       const over = Math.max(0, doc.fact - doc.planned);
                       const isSel = selectedId === doc.id;
                       const legalLabel = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
+                      const stockWarnLines = shippingDocStockWarning.get(doc.id)?.lines ?? [];
+                      const stockWarnTooltip = formatShippingStockTooltip(stockWarnLines);
+                      const showStockWarn = doc.workflowStatus !== "completed" && stockWarnLines.length > 0;
+                      const stockWarnAria =
+                        stockWarnLines.length === 1
+                          ? "Недостаточно доступного товара по одной позиции. Подробности в подсказке."
+                          : `Недостаточно доступного товара по ${stockWarnLines.length} позициям. Подробности в подсказке.`;
                       return (
                         <React.Fragment key={doc.id}>
                           <TableRow
@@ -358,14 +417,10 @@ const ShippingPage = () => {
                             <TableCell className="px-3 py-2">
                               <div className="inline-flex flex-wrap items-center gap-1">
                                 <StatusBadge status={doc.workflowStatus} />
-                                {doc.workflowStatus !== "completed" && shippingDocHasStockShortage.get(doc.id) ? (
-                                  <span
-                                    className="select-none text-[13px] leading-none text-amber-600"
-                                    title="Недостаточно доступного товара по плану (остаток по движениям минус резерв)"
-                                    aria-label="Внимание: недостаточно доступного товара"
-                                  >
-                                    ⚠️
-                                  </span>
+                                {showStockWarn ? (
+                                  <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
+                                    <span aria-hidden>⚠️</span>
+                                  </ShippingStockWarnTrigger>
                                 ) : null}
                               </div>
                             </TableCell>
@@ -414,14 +469,10 @@ const ShippingPage = () => {
                                       <span className="text-slate-500">Статус</span>
                                       <div className="mt-0.5 inline-flex flex-wrap items-center gap-1">
                                         <StatusBadge status={doc.workflowStatus} />
-                                        {doc.workflowStatus !== "completed" && shippingDocHasStockShortage.get(doc.id) ? (
-                                          <span
-                                            className="select-none text-[13px] leading-none text-amber-600"
-                                            title="Недостаточно доступного товара по плану (остаток по движениям минус резерв)"
-                                            aria-label="Внимание: недостаточно доступного товара"
-                                          >
-                                            ⚠️
-                                          </span>
+                                        {showStockWarn ? (
+                                          <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
+                                            <span aria-hidden>⚠️</span>
+                                          </ShippingStockWarnTrigger>
                                         ) : null}
                                       </div>
                                     </div>
