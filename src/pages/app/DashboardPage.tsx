@@ -1,5 +1,6 @@
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
+import { useNavigate } from "react-router-dom";
 import {
   Boxes,
   Package,
@@ -36,6 +37,7 @@ function safeArray<T>(value: T[] | undefined | null): T[] {
 }
 
 const DashboardPage = () => {
+  const navigate = useNavigate();
   const { data, isLoading, error } = useDashboardBundleQuery();
   const { data: inboundRaw } = useInboundSupplies();
   const { data: outboundRaw } = useOutboundShipments();
@@ -116,7 +118,15 @@ const DashboardPage = () => {
           <CardDescription className="text-slate-500">Только чтение: оперативная сводка по текущему состоянию</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 pt-0 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("/receiving")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") navigate("/receiving");
+            }}
+            className="cursor-pointer rounded-lg border border-slate-200 bg-white p-3 transition-colors hover:bg-slate-50"
+          >
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Приёмка</p>
             <div className="mt-2 space-y-1 text-sm">
               <p className="flex items-center justify-between text-slate-700"><span>Всего</span><span className="tabular-nums font-medium text-slate-900">{receivingTotal || 0}</span></p>
@@ -124,7 +134,15 @@ const DashboardPage = () => {
               <p className="flex items-center justify-between text-slate-700"><span>Завершено</span><span className="tabular-nums font-medium text-slate-900">{receivingCompleted || 0}</span></p>
             </div>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("/shipping")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") navigate("/shipping");
+            }}
+            className="cursor-pointer rounded-lg border border-slate-200 bg-white p-3 transition-colors hover:bg-slate-50"
+          >
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Отгрузки</p>
             <div className="mt-2 space-y-1 text-sm">
               <p className="flex items-center justify-between text-slate-700"><span>Всего</span><span className="tabular-nums font-medium text-slate-900">{shippingTotal || 0}</span></p>
@@ -132,7 +150,15 @@ const DashboardPage = () => {
               <p className="flex items-center justify-between text-slate-700"><span>Проблемные</span><span className="tabular-nums font-medium text-slate-900">{shippingProblematic || 0}</span></p>
             </div>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("/packing")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") navigate("/packing");
+            }}
+            className="cursor-pointer rounded-lg border border-slate-200 bg-white p-3 transition-colors hover:bg-slate-50"
+          >
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Упаковщик</p>
             <div className="mt-2 space-y-1 text-sm">
               <p className="flex items-center justify-between text-slate-700"><span>В очереди</span><span className="tabular-nums font-medium text-slate-900">{shippingPending || 0}</span></p>
@@ -140,7 +166,15 @@ const DashboardPage = () => {
               <p className="flex items-center justify-between text-slate-700"><span>Завершено</span><span className="tabular-nums font-medium text-slate-900">{shippingCompleted || 0}</span></p>
             </div>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("/inventory")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") navigate("/inventory");
+            }}
+            className="cursor-pointer rounded-lg border border-slate-200 bg-white p-3 transition-colors hover:bg-slate-50"
+          >
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Остатки</p>
             <div className="mt-2 space-y-1 text-sm">
               <p className="flex items-center justify-between text-slate-700"><span>SKU всего</span><span className="tabular-nums font-medium text-slate-900">{inventorySkuTotal || 0}</span></p>
