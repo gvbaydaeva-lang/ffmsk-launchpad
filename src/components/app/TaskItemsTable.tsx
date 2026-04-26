@@ -1,4 +1,5 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import {
   planFactRemaining,
   planFactRowBgClass,
@@ -43,9 +44,17 @@ type TaskItemsTableProps = {
   rows: TaskItemRow[];
   /** Реестр отгрузки: колонка «Осталось» и статус план/факт вместо склада и бейджа workflow */
   variant?: "default" | "outboundLines";
+  /** Краткая подсветка строки после скана (UI) */
+  highlightedRowId?: string | null;
+  rowHighlight?: "success" | "error" | null;
 };
 
-export default function TaskItemsTable({ rows, variant = "default" }: TaskItemsTableProps) {
+export default function TaskItemsTable({
+  rows,
+  variant = "default",
+  highlightedRowId = null,
+  rowHighlight = null,
+}: TaskItemsTableProps) {
   const outbound = variant === "outboundLines";
   return (
     <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
@@ -74,8 +83,15 @@ export default function TaskItemsTable({ rows, variant = "default" }: TaskItemsT
           const remaining = planFactRemaining(row.plan, row.fact);
           const validation = getLineValidation({ plannedQty: row.plan, factQty: row.fact });
           const rowBg = outbound ? planFactRowBgClass(row.plan, row.fact) : mismatch ? "bg-red-50/50" : "";
+          const isFlash = highlightedRowId != null && row.id === highlightedRowId && rowHighlight != null;
+          const flashClass =
+            rowHighlight === "success"
+              ? "bg-emerald-100 ring-2 ring-inset ring-emerald-400/90"
+              : rowHighlight === "error"
+                ? "bg-rose-100 ring-2 ring-inset ring-rose-400/90"
+                : "";
           return (
-            <TableRow key={row.id} className={`text-sm ${rowBg}`}>
+            <TableRow key={row.id} className={cn("text-sm transition-colors duration-150", rowBg, isFlash && flashClass)}>
               <TableCell className="whitespace-nowrap px-3 py-2">{row.name || "—"}</TableCell>
               <TableCell className="whitespace-nowrap px-3 py-2">{row.article || "—"}</TableCell>
               <TableCell className="whitespace-nowrap px-3 py-2 font-mono text-xs">{row.barcode || "—"}</TableCell>

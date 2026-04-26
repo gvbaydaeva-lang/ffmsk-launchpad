@@ -6,6 +6,7 @@ import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
@@ -46,6 +47,11 @@ import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCo
 
 type PackingAssignment = { id: string; display: string; legalEntityId: string; shipments: OutboundShipment[]; workflowStatus: TaskWorkflowStatus };
 
+type LastScanResult =
+  | { status: "idle" }
+  | { status: "success"; title: string; hint?: string }
+  | { status: "error"; message: string };
+
 type ScanLine = {
   key: string;
   name: string;
@@ -84,7 +90,26 @@ const PackingPage = () => {
   const [isSubmittingScan, setIsSubmittingScan] = React.useState(false);
   const [flashState, setFlashState] = React.useState<"ok" | "error" | null>(null);
   const [finalizePlanFactWarning, setFinalizePlanFactWarning] = React.useState<string | null>(null);
+  const [lastScanResult, setLastScanResult] = React.useState<LastScanResult>({ status: "idle" });
+  const [highlightedLineKey, setHighlightedLineKey] = React.useState<string | null>(null);
+  const [lineHighlightTone, setLineHighlightTone] = React.useState<"success" | "error" | null>(null);
   const scanInputRef = React.useRef<HTMLInputElement | null>(null);
+  const lineHighlightTimerRef = React.useRef<number | null>(null);
+
+  const clearLineHighlightLater = React.useCallback(() => {
+    if (lineHighlightTimerRef.current != null) window.clearTimeout(lineHighlightTimerRef.current);
+    lineHighlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedLineKey(null);
+      setLineHighlightTone(null);
+      lineHighlightTimerRef.current = null;
+    }, 1600);
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (lineHighlightTimerRef.current != null) window.clearTimeout(lineHighlightTimerRef.current);
+    };
+  }, []);
 
   const allShipments = React.useMemo(() => {
     const rows = outbound ?? [];
@@ -290,6 +315,9 @@ const PackingPage = () => {
     if (!lineByBarcode) {
       playScanErrorSound();
       triggerFlash("error");
+      setHighlightedLineKey(null);
+      setLineHighlightTone(null);
+      setLastScanResult({ status: "error", message: "Товар не найден" });
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
       const noErr =
         startedAssignment.shipments[0]?.assignmentNo?.trim() ||
@@ -311,6 +339,10 @@ const PackingPage = () => {
     if (lineByBarcode.fact >= lineByBarcode.plan) {
       playScanErrorSound();
       triggerFlash("error");
+      setHighlightedLineKey(lineByBarcode.key);
+      setLineHighlightTone("error");
+      clearLineHighlightLater();
+      setLastScanResult({ status: "error", message: "Уже выполнено" });
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
       const noErr =
         startedAssignment.shipments[0]?.assignmentNo?.trim() ||
@@ -333,6 +365,10 @@ const PackingPage = () => {
     if (!target) {
       playScanErrorSound();
       triggerFlash("error");
+      setHighlightedLineKey(lineByBarcode.key);
+      setLineHighlightTone("error");
+      clearLineHighlightLater();
+      setLastScanResult({ status: "error", message: "Уже выполнено" });
       toast.error("Количество по товару уже выполнено");
       focusScanInput();
       return;
@@ -340,6 +376,9 @@ const PackingPage = () => {
     const shipment = startedAssignment.shipments.find((x) => x.id === target.shipmentId);
     if (!shipment) {
       playScanErrorSound();
+      triggerFlash("error");
+      setLastScanResult({ status: "error", message: "Товар не найден" });
+      focusScanInput();
       return;
     }
     setIsSubmittingScan(true);
@@ -370,10 +409,22 @@ const PackingPage = () => {
       setScanValue("");
       playScanSuccessSound();
       triggerFlash("ok");
+      const hint = (lineByBarcode.name || lineByBarcode.article || lineByBarcode.barcode || "").trim();
+      setLastScanResult({
+        status: "success",
+        title: "Собрано +1",
+        hint: hint || undefined,
+      });
+      setHighlightedLineKey(lineByBarcode.key);
+      setLineHighlightTone("success");
+      clearLineHighlightLater();
       focusScanInput();
       toast.success(`Пик принят: ${lineByBarcode.article || lineByBarcode.barcode}`);
     } catch {
       playScanErrorSound();
+      triggerFlash("error");
+      setLastScanResult({ status: "error", message: "Не удалось сохранить" });
+      focusScanInput();
     } finally {
       setIsSubmittingScan(false);
     }
@@ -464,6 +515,8 @@ const PackingPage = () => {
           "—",
         description: "Ошибка: недостаточно товара на остатке",
       });
+      setLastScanResult({ status: "error", message: "Недостаточно остатка" });
+      focusScanInput();
       toast.error("Недостаточно товара на остатке", { description: shortages.join("\n") });
       return;
     }
@@ -601,8 +654,10 @@ const PackingPage = () => {
   }, [allGroupedAssignments, startedAssignmentId]);
 
   React.useEffect(() => {
-    if (startedAssignment) focusScanInput();
-  }, [startedAssignment, focusScanInput]);
+    if (!startedAssignmentId) return;
+    setLastScanResult({ status: "idle" });
+    focusScanInput();
+  }, [startedAssignmentId, focusScanInput]);
 
   const startAssignment = async (assignment: PackingAssignment) => {
     if (normalizeWorkflowStatus(assignment.workflowStatus) === "completed") return;
@@ -855,14 +910,17 @@ const PackingPage = () => {
               </div>
               <div><span className="text-slate-500">Дата создания:</span><div className="font-medium text-slate-900">{startedCreatedLabel}</div></div>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
               <Input
                 ref={scanInputRef}
-                placeholder="Введите штрихкод товара"
+                placeholder="Сканируйте или введите штрихкод"
                 value={scanValue}
                 onChange={(e) => setScanValue(e.target.value)}
-                className="h-14 text-xl"
-                onBlur={() => focusScanInput()}
+                className={cn(
+                  "h-16 min-w-0 flex-1 border-2 border-slate-300 bg-white text-xl shadow-sm transition-[box-shadow,border-color] md:text-2xl",
+                  "placeholder:text-slate-400",
+                  "focus-visible:border-blue-500 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25",
+                )}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -873,23 +931,65 @@ const PackingPage = () => {
               <Button
                 type="button"
                 variant="ghost"
-                className="h-14 shrink-0 rounded-lg bg-blue-600 px-6 text-base font-semibold text-white shadow-none hover:bg-blue-700 disabled:opacity-50"
+                className="h-16 shrink-0 rounded-lg bg-blue-600 px-6 text-base font-semibold text-white shadow-none hover:bg-blue-700 disabled:opacity-50"
                 onClick={() => void applyScan()}
                 disabled={!scanValue.trim() || isSubmittingScan || isUpdatingOutboundDraft}
               >
                 {isSubmittingScan || isUpdatingOutboundDraft ? "Обработка..." : "Пикнуть"}
               </Button>
             </div>
+
+            <div
+              className={cn(
+                "rounded-lg border px-4 py-3 text-sm",
+                lastScanResult.status === "idle" && "border-slate-200 bg-slate-50 text-slate-600",
+                lastScanResult.status === "success" && "border-emerald-200 bg-emerald-50/90 text-emerald-900",
+                lastScanResult.status === "error" && "border-red-200 bg-red-50/90 text-red-800",
+              )}
+              aria-live="polite"
+            >
+              {lastScanResult.status === "idle" ? (
+                <p className="font-medium">Ожидание сканирования…</p>
+              ) : lastScanResult.status === "success" ? (
+                <div>
+                  <p className="font-semibold text-emerald-800">{lastScanResult.title}</p>
+                  {lastScanResult.hint ? <p className="mt-0.5 line-clamp-2 text-emerald-900/90">{lastScanResult.hint}</p> : null}
+                </div>
+              ) : (
+                <p className="font-semibold">{lastScanResult.message}</p>
+              )}
+            </div>
+
             <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="font-medium text-slate-900">
-                  План {progress.totalPlan} · Факт {progress.totalFact} · Осталось {progress.remaining}
-                  {progress.overrun > 0 ? ` · Перерасход ${progress.overrun}` : null}
+                  План {progress.totalPlan} · Факт {progress.totalFact} ·{" "}
+                  {progress.remaining === 0 ? (
+                    <span className="font-semibold text-emerald-600">Готово</span>
+                  ) : (
+                    <span className="font-semibold text-amber-600">Осталось {progress.remaining}</span>
+                  )}
+                  {progress.overrun > 0 ? (
+                    <span className="text-slate-700">{` · Перерасход ${progress.overrun}`}</span>
+                  ) : null}
                 </span>
-                <span className="text-slate-600">{progress.percent}%</span>
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    progress.remaining === 0 ? "font-semibold text-emerald-600" : "text-slate-600",
+                  )}
+                >
+                  {progress.percent}%
+                </span>
               </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${progress.percent}%` }} />
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    progress.percent >= 100 ? "bg-emerald-600" : "bg-slate-500",
+                  )}
+                  style={{ width: `${progress.percent}%` }}
+                />
               </div>
             </div>
 
@@ -917,8 +1017,14 @@ const PackingPage = () => {
                     const over = planFactOverrun(line.plan, line.fact);
                     const disc = planFactDiscrepancyText(line.plan, line.fact);
                     const rowBg = planFactRowBgClass(line.plan, line.fact);
+                    const flashRow =
+                      highlightedLineKey === line.key && lineHighlightTone === "success"
+                        ? "bg-emerald-100 ring-2 ring-inset ring-emerald-400/90"
+                        : highlightedLineKey === line.key && lineHighlightTone === "error"
+                          ? "bg-rose-100 ring-2 ring-inset ring-rose-400/90"
+                          : "";
                     return (
-                    <tr key={line.key} className={`odd:bg-white even:bg-slate-50/50 ${rowBg}`}>
+                    <tr key={line.key} className={cn("odd:bg-white even:bg-slate-50/50 transition-colors duration-150", rowBg, flashRow)}>
                       <td className="border-b border-r px-2 py-1.5 text-xs">{line.name || "—"}</td>
                       <td className="border-b border-r px-2 py-1.5 text-xs">{line.article || "—"}</td>
                       <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{line.barcode || "—"}</td>
