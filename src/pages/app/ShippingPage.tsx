@@ -138,9 +138,16 @@ const ShippingPage = () => {
     });
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
-  /** Активные задания: план строки > доступно (остаток по движениям − резерв). Архив не помечаем. */
+  /**
+   * Проблема только при: есть строка с plan > 0, plan > (остаток по движениям − резерв), и по заданию ещё не закрыт фактом план.
+   * Без движений WMS сравнение «план > доступно» не считаем — иначе при пустом снимке остатков ложно срабатывает для всех.
+   */
   const shippingDocHasStockShortage = React.useMemo(() => {
     const map = new Map<string, boolean>();
+    if (!inventoryMovements.length) {
+      for (const doc of documents) map.set(doc.id, false);
+      return map;
+    }
     const balanceByKey = getBalanceByKeyMap(inventoryMovements);
     const reserveByKey = reservedQtyByBalanceKey(data ?? [], catalog ?? []);
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
@@ -149,12 +156,17 @@ const ShippingPage = () => {
         map.set(doc.id, false);
         continue;
       }
+      if (doc.planned > 0 && doc.fact >= doc.planned) {
+        map.set(doc.id, false);
+        continue;
+      }
       let bad = false;
       for (const sh of doc.shipments) {
+        const plan = Number(sh.plannedUnits) || 0;
+        if (plan <= 0) continue;
         const product = byProduct.get(sh.productId) ?? null;
         const key = balanceKeyFromOutboundShipment(sh, product);
         const available = (balanceByKey.get(key) ?? 0) - (reserveByKey.get(key) ?? 0);
-        const plan = Number(sh.plannedUnits) || 0;
         if (plan > available) {
           bad = true;
           break;
@@ -172,8 +184,9 @@ const ShippingPage = () => {
     if (!selectedDoc?.shipments?.length) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     const showStock = selectedDoc.workflowStatus !== "completed";
-    const balanceByKey = showStock ? getBalanceByKeyMap(inventoryMovements) : null;
-    const reserveByKey = showStock ? reservedQtyByBalanceKey(data ?? [], catalog ?? []) : null;
+    const movementsReady = inventoryMovements.length > 0;
+    const balanceByKey = showStock && movementsReady ? getBalanceByKeyMap(inventoryMovements) : null;
+    const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalog ?? []) : null;
     return selectedDoc.shipments.map((sh) => {
       const product = byProduct.get(sh.productId) ?? null;
       const name = (sh.importName || product?.name || "").trim() || "—";
