@@ -39,6 +39,9 @@ function safeArray<T>(value: T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+/** Подписи причин расхождений (как при подтверждении отгрузки в приложении). */
+const DISCREPANCY_REASON_LABELS = ["Нет товара", "Пересорт", "Повреждение", "Ошибка учёта", "Другое"] as const;
+
 /** Согласовано с агрегацией статуса задания на странице «Отгрузки» (группа строк). */
 function dashboardOutboundGroupUiStatus(shipments: OutboundShipment[]): TaskWorkflowStatus | "shipped_with_diff" {
   const perRow = shipments.map((s): TaskWorkflowStatus | "shipped_with_diff" => {
@@ -255,6 +258,25 @@ const DashboardPage = () => {
       : null,
   ].filter((item): item is { id: string; text: string; path: string; count: number } => item !== null);
 
+  const discrepancyReasonStats: Array<{ label: string; count: number }> = (() => {
+    const known = new Set<string>([...DISCREPANCY_REASON_LABELS]);
+    const counts = new Map<string, number>();
+    for (const label of DISCREPANCY_REASON_LABELS) counts.set(label, 0);
+    for (const rows of assignments) {
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      if (dashboardOutboundGroupUiStatus(rows) !== "shipped_with_diff") continue;
+      const raw = rows
+        .map((s) => String((s as OutboundShipment & { differenceReason?: string }).differenceReason ?? "").trim())
+        .find(Boolean) ?? "";
+      const bucket = raw && known.has(raw) ? raw : "Другое";
+      counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .filter(([, c]) => c > 0)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
   const acceptedUnitsToday = receiving
     .filter((row) => workflowFromInbound(row) === "completed" && isTodayIso(row.completedAt ?? row.updatedAt ?? row.createdAt))
     .reduce((sum, row) => sum + (Number(row.receivedUnits ?? row.expectedUnits) || 0), 0);
@@ -399,6 +421,34 @@ const DashboardPage = () => {
                 <span className="tabular-nums font-medium text-amber-800">{item.count}</span>
               </div>
             ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-display text-base text-slate-900">Причины расхождений</CardTitle>
+          <CardDescription className="text-slate-500">
+            По отгрузкам со статусом «Отгружено с расхождением», поле причины
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 pt-0">
+          {discrepancyReasonStats.length === 0 ? (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              Нет отгрузок с расхождением или причины не указаны.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {discrepancyReasonStats.map((row) => (
+                <li
+                  key={row.label}
+                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                >
+                  <span>{row.label}</span>
+                  <span className="tabular-nums font-medium text-slate-900">{row.count}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>
