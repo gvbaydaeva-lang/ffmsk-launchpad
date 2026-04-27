@@ -64,7 +64,7 @@ function shippingStageIndex(status: ShippingUiStatus): number {
 }
 
 function isShippingTerminal(status: ShippingUiStatus): boolean {
-  return status === "completed" || status === "shipped" || status === "shipped_with_diff";
+  return status === "shipped" || status === "shipped_with_diff";
 }
 
 function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiStatus {
