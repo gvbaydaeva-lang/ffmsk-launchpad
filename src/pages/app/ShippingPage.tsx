@@ -229,6 +229,8 @@ const ShippingPage = () => {
   const [warehouseFilter, setWarehouseFilter] = React.useState("all");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
+  type ShippingQuickFilter = "all" | "problematic" | "shortage" | "shipped_with_diff" | "assembled";
+  const [shippingQuickFilter, setShippingQuickFilter] = React.useState<ShippingQuickFilter>("all");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const openTaskRowRef = React.useRef<HTMLTableRowElement | null>(null);
   const urlOpenTaskApplied = React.useRef<string | null>(null);
@@ -343,7 +345,20 @@ const ShippingPage = () => {
       problemFromUrl === "shortage"
         ? withFilters.filter((d) => shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0)
         : withFilters;
-    return afterProblem.sort((a, b) => {
+    const afterQuick =
+      shippingQuickFilter === "all"
+        ? afterProblem
+        : afterProblem.filter((d) => {
+            const ui = shippingWorkflowFromGroup(d.shipments);
+            const hasShortage =
+              shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0;
+            if (shippingQuickFilter === "problematic") return hasShortage || ui === "shipped_with_diff";
+            if (shippingQuickFilter === "shortage") return hasShortage;
+            if (shippingQuickFilter === "shipped_with_diff") return ui === "shipped_with_diff";
+            if (shippingQuickFilter === "assembled") return ui === "assembled";
+            return true;
+          });
+    return afterQuick.sort((a, b) => {
       if (viewMode === "archive") {
         return outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments);
       }
@@ -360,6 +375,7 @@ const ShippingPage = () => {
     dateTo,
     reasonFromUrl,
     problemFromUrl,
+    shippingQuickFilter,
     inventoryMovements,
     data,
     catalog,
@@ -657,6 +673,36 @@ const ShippingPage = () => {
           <CardTitle className="font-display text-lg text-slate-900">Реестр заданий на отгрузку</CardTitle>
         </CardHeader>
         <CardContent className="min-w-0 space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { id: "all" as const, label: "Все" },
+                { id: "problematic" as const, label: "Проблемные" },
+                { id: "shortage" as const, label: "Не хватает товара" },
+                { id: "shipped_with_diff" as const, label: "С расхождением" },
+                { id: "assembled" as const, label: "Готово к отгрузке" },
+              ] as const
+            ).map((opt) => {
+              const active = shippingQuickFilter === opt.id;
+              return (
+                <Button
+                  key={opt.id}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShippingQuickFilter(opt.id)}
+                  className={cn(
+                    "h-8 cursor-pointer px-3 text-xs font-medium shadow-none",
+                    active
+                      ? "border-slate-800 bg-slate-900 text-white hover:bg-slate-800 hover:text-white"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  {opt.label}
+                </Button>
+              );
+            })}
+          </div>
           {isLoading ? (
             <div className="grid gap-3">
               <Skeleton className="h-36 w-full" />
