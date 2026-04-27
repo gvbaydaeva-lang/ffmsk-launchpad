@@ -246,6 +246,7 @@ const ShippingPage = () => {
   const [selectedDiffReason, setSelectedDiffReason] = React.useState<string>("");
   const [selectedShipmentIds, setSelectedShipmentIds] = React.useState<string[]>([]);
   const [bulkConfirming, setBulkConfirming] = React.useState(false);
+  const [bulkTakingToWork, setBulkTakingToWork] = React.useState(false);
 
   const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
   const reasonFromUrl = React.useMemo(() => {
@@ -624,7 +625,7 @@ const ShippingPage = () => {
     const bulkExact = Array.isArray(pendingBulkExactDocs) ? pendingBulkExactDocs : [];
 
     if (bulkDiff.length > 0) {
-      if (bulkConfirming) return;
+      if (bulkConfirming || bulkTakingToWork) return;
       setBulkConfirming(true);
       const ts = new Date().toISOString();
       try {
@@ -694,6 +695,7 @@ const ShippingPage = () => {
     selectedDiffReason,
     confirmingShipmentId,
     bulkConfirming,
+    bulkTakingToWork,
     updateOutboundDraft,
   ]);
 
@@ -707,7 +709,7 @@ const ShippingPage = () => {
       toast.warning("Подтвердить можно только отгрузки со статусом 'Собрано'.");
     }
     if (assembled.length === 0) return;
-    if (bulkConfirming) return;
+    if (bulkConfirming || bulkTakingToWork) return;
     const withDiff = assembled.filter((d) => d.fact < d.planned);
     const withoutDiff = assembled.filter((d) => d.fact >= d.planned);
     if (withDiff.length > 0) {
@@ -718,6 +720,7 @@ const ShippingPage = () => {
       setDiffReasonDialogOpen(true);
       return;
     }
+    if (bulkTakingToWork) return;
     setBulkConfirming(true);
     const ts = new Date().toISOString();
     try {
@@ -738,7 +741,35 @@ const ShippingPage = () => {
     } finally {
       setBulkConfirming(false);
     }
-  }, [selectedShipmentIds, documents, bulkConfirming, updateOutboundDraft]);
+  }, [selectedShipmentIds, documents, bulkConfirming, bulkTakingToWork, updateOutboundDraft]);
+
+  const takeBulkSelectedToWork = React.useCallback(async () => {
+    const ids = new Set(Array.isArray(selectedShipmentIds) ? selectedShipmentIds : []);
+    const list = Array.isArray(documents) ? documents : [];
+    const selected = list.filter((d) => d && ids.has(d.id));
+    const pendingDocs = selected.filter((d) => d.workflowStatus === "pending");
+    const nonPending = selected.filter((d) => d.workflowStatus !== "pending");
+    if (nonPending.length > 0) {
+      toast.warning("В работу можно взять только отгрузки со статусом 'Новое'.");
+    }
+    if (pendingDocs.length === 0) return;
+    if (bulkTakingToWork || bulkConfirming) return;
+    setBulkTakingToWork(true);
+    try {
+      for (const doc of pendingDocs) {
+        for (const sh of doc.shipments) {
+          await updateOutboundDraft({
+            id: sh.id,
+            patch: { workflowStatus: "processing", status: "к отгрузке" },
+          });
+        }
+      }
+      setSelectedShipmentIds([]);
+      toast.success(`В работу передано: ${pendingDocs.length}`);
+    } finally {
+      setBulkTakingToWork(false);
+    }
+  }, [selectedShipmentIds, documents, bulkTakingToWork, bulkConfirming, updateOutboundDraft]);
 
   return (
     <div className="space-y-4">
@@ -853,15 +884,26 @@ const ShippingPage = () => {
           {selectedShipmentIds.length > 0 ? (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
               <span className="text-sm font-medium text-slate-800">Выбрано: {selectedShipmentIds.length}</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={bulkConfirming || isUpdatingOutboundDraft}
-                onClick={() => void confirmBulkSelectedShipments()}
-              >
-                Подтвердить выбранные
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={bulkTakingToWork || bulkConfirming || isUpdatingOutboundDraft}
+                  onClick={() => void takeBulkSelectedToWork()}
+                >
+                  Взять в работу
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={bulkConfirming || bulkTakingToWork || isUpdatingOutboundDraft}
+                  onClick={() => void confirmBulkSelectedShipments()}
+                >
+                  Подтвердить выбранные
+                </Button>
+              </div>
             </div>
           ) : null}
           {isLoading ? (
@@ -1180,7 +1222,10 @@ const ShippingPage = () => {
                                           size="sm"
                                           onClick={() => void confirmShipment(doc)}
                                           disabled={
-                                            confirmingShipmentId === doc.id || isUpdatingOutboundDraft || bulkConfirming
+                                            confirmingShipmentId === doc.id ||
+                                            isUpdatingOutboundDraft ||
+                                            bulkConfirming ||
+                                            bulkTakingToWork
                                           }
                                         >
                                           Подтвердить отгрузку
@@ -1274,6 +1319,7 @@ const ShippingPage = () => {
               disabled={
                 !selectedDiffReason ||
                 bulkConfirming ||
+                bulkTakingToWork ||
                 (pendingBulkDiffDocs.length > 0
                   ? false
                   : !pendingDiffDoc ||
