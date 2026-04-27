@@ -507,6 +507,7 @@ const ShippingPage = () => {
                   </TableHeader>
                   <TableBody>
                     {documents.map((doc) => {
+                      const uiStatus = workflowFromOutboundGroup(doc.shipments);
                       const rem = Math.max(0, doc.planned - doc.fact);
                       const over = Math.max(0, doc.fact - doc.planned);
                       const isSel = selectedId === doc.id;
@@ -525,9 +526,9 @@ const ShippingPage = () => {
                             className={cn(
                               "cursor-pointer border-slate-100 text-sm transition-[background-color,box-shadow] duration-300",
                               isSel ? "bg-slate-50" : "",
-                              doc.workflowStatus === "pending" ? "bg-blue-50/60" : "",
-                              doc.workflowStatus === "assembling" ? "bg-sky-50/70" : "",
-                              doc.workflowStatus === "assembled" ? "bg-emerald-50/50" : "",
+                              uiStatus === "pending" ? "bg-blue-50/60" : "",
+                              uiStatus === "assembling" ? "bg-sky-50/70" : "",
+                              uiStatus === "assembled" ? "bg-emerald-50/50" : "",
                               openTaskHighlightId === doc.id &&
                                 "z-[1] ring-2 ring-amber-400/50 ring-inset bg-amber-50/50",
                             )}
@@ -550,7 +551,7 @@ const ShippingPage = () => {
                             <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
                             <TableCell className="px-3 py-2">
                               <div className="inline-flex flex-wrap items-center gap-1">
-                                <StatusBadge status={doc.workflowStatus} />
+                                <StatusBadge status={uiStatus} />
                                 {showStockWarn ? (
                                   <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
                                     <span aria-hidden>⚠️</span>
@@ -588,7 +589,7 @@ const ShippingPage = () => {
                                 <div className="space-y-4 border-t border-slate-200 p-4">
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
-                                    <p className="mt-1 text-sm text-slate-600">{shippingDispatcherHint(doc.workflowStatus)}</p>
+                                    <p className="mt-1 text-sm text-slate-600">{shippingDispatcherHint(uiStatus)}</p>
                                   </div>
                                   <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
                                     <div>
@@ -602,7 +603,7 @@ const ShippingPage = () => {
                                     <div>
                                       <span className="text-slate-500">Статус</span>
                                       <div className="mt-0.5 inline-flex flex-wrap items-center gap-1">
-                                        <StatusBadge status={doc.workflowStatus} />
+                                        <StatusBadge status={uiStatus} />
                                         {showStockWarn ? (
                                           <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
                                             <span aria-hidden>⚠️</span>
@@ -641,7 +642,7 @@ const ShippingPage = () => {
                                   )}
                                   {viewMode === "archive" ? null : (
                                     <div className="flex flex-wrap items-center gap-2">
-                                      {doc.workflowStatus === "assembled" ? (
+                                      {uiStatus === "assembled" ? (
                                         <Button
                                           type="button"
                                           size="sm"
@@ -650,13 +651,13 @@ const ShippingPage = () => {
                                         >
                                           Подтвердить отгрузку
                                         </Button>
-                                      ) : doc.workflowStatus === "shipped" ? (
+                                      ) : uiStatus === "shipped" ? (
                                         <p className="text-sm font-medium text-emerald-700">Отгрузка подтверждена</p>
-                                      ) : isOutboundWorkflowTerminal(doc.workflowStatus) ? (
+                                      ) : isOutboundWorkflowTerminal(uiStatus) ? (
                                         <Button type="button" size="sm" variant="secondary" disabled>
-                                          {doc.workflowStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
+                                          {uiStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
                                         </Button>
-                                      ) : doc.workflowStatus === "processing" || doc.workflowStatus === "assembling" ? (
+                                      ) : uiStatus === "processing" || uiStatus === "assembling" ? (
                                         <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
                                           Продолжить сборку
                                         </Button>
