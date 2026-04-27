@@ -523,6 +523,7 @@ const ShippingPage = () => {
                       const stockWarnLines = shippingDocStockWarning.get(doc.id)?.lines ?? [];
                       const stockWarnTooltip = formatShippingStockTooltip(stockWarnLines);
                       const showStockWarn = stockWarnLines.length > 0;
+                      const hasShippingProblem = uiStatus !== "shipped" && (showStockWarn || rem > 0 || doc.fact < doc.planned);
                       const stockWarnAria =
                         stockWarnLines.length === 1
                           ? "Недостаточно доступного товара по одной позиции. Подробности в подсказке."
@@ -627,6 +628,14 @@ const ShippingPage = () => {
                                       })}
                                     </div>
                                   </div>
+                                  {hasShippingProblem ? (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2">
+                                      <p className="text-sm font-medium text-amber-800">⚠ Не хватает товара</p>
+                                      <Button type="button" size="sm" variant="outline" onClick={() => navigate("/receiving")}>
+                                        Перейти в приёмку
+                                      </Button>
+                                    </div>
+                                  ) : null}
                                   <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
                                     <div>
                                       <span className="text-slate-500">Юрлицо</span>
