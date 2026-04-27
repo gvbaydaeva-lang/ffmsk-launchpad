@@ -113,7 +113,7 @@ function ShippingStockWarnTrigger({
 const ShippingPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { data, isLoading, error } = useOutboundShipments();
+  const { data, isLoading, error, updateOutboundDraft, isUpdatingOutboundDraft } = useOutboundShipments();
   const { data: inventoryMovements = [] } = useInventoryMovements();
   const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
@@ -131,6 +131,7 @@ const ShippingPage = () => {
   const urlOpenTaskApplied = React.useRef<string | null>(null);
   const openTaskScrollDone = React.useRef<string | null>(null);
   const [openTaskHighlightId, setOpenTaskHighlightId] = React.useState<string | null>(null);
+  const [confirmingShipmentId, setConfirmingShipmentId] = React.useState<string | null>(null);
 
   const openTaskParam = searchParams.get("openTask");
   const openTaskDecoded = React.useMemo(() => {
@@ -378,6 +379,30 @@ const ShippingPage = () => {
     [navigate],
   );
 
+  const confirmShipment = React.useCallback(
+    async (doc: ShipmentDoc) => {
+      if (doc.workflowStatus !== "assembled") return;
+      if (confirmingShipmentId === doc.id) return;
+      setConfirmingShipmentId(doc.id);
+      const ts = new Date().toISOString();
+      try {
+        for (const sh of doc.shipments) {
+          await updateOutboundDraft({
+            id: sh.id,
+            patch: {
+              workflowStatus: "shipped",
+              completedAt: sh.completedAt ?? ts,
+              updatedAt: ts,
+            },
+          });
+        }
+      } finally {
+        setConfirmingShipmentId(null);
+      }
+    },
+    [updateOutboundDraft, confirmingShipmentId],
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
@@ -616,7 +641,18 @@ const ShippingPage = () => {
                                   )}
                                   {viewMode === "archive" ? null : (
                                     <div className="flex flex-wrap items-center gap-2">
-                                      {isOutboundWorkflowTerminal(doc.workflowStatus) ? (
+                                      {doc.workflowStatus === "assembled" ? (
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          onClick={() => void confirmShipment(doc)}
+                                          disabled={confirmingShipmentId === doc.id || isUpdatingOutboundDraft}
+                                        >
+                                          Подтвердить отгрузку
+                                        </Button>
+                                      ) : doc.workflowStatus === "shipped" ? (
+                                        <p className="text-sm font-medium text-emerald-700">Отгрузка подтверждена</p>
+                                      ) : isOutboundWorkflowTerminal(doc.workflowStatus) ? (
                                         <Button type="button" size="sm" variant="secondary" disabled>
                                           {doc.workflowStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
                                         </Button>
