@@ -644,6 +644,8 @@ const ShippingPage = () => {
                                       ].map((stage) => {
                                         const passed = currentStage > stage.order;
                                         const current = currentStage === stage.order;
+                                        const shippedWithDiffCurrent =
+                                          stage.id === "shipped" && current && uiStatus === "shipped_with_diff";
                                         return (
                                           <div
                                             key={stage.id}
@@ -651,11 +653,15 @@ const ShippingPage = () => {
                                               "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
                                               passed && "border-emerald-200 bg-emerald-50 text-emerald-700",
                                               current && "border-violet-200 bg-violet-50 text-violet-700",
+                                              shippedWithDiffCurrent && "border-amber-200 bg-amber-50 text-amber-800",
                                               !passed && !current && "border-slate-200 bg-slate-50 text-slate-500",
                                             )}
                                           >
                                             <span aria-hidden>{passed ? "✓" : "•"}</span>
-                                            <span>{stage.label}</span>
+                                            <span>
+                                              {stage.label}
+                                              {shippedWithDiffCurrent ? " (с расхождением)" : ""}
+                                            </span>
                                           </div>
                                         );
                                       })}
