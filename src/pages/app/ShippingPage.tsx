@@ -17,7 +17,7 @@ import { useUserRole } from "@/contexts/UserRoleContext";
 import { useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
-import { isOutboundWorkflowTerminal, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
 import { cn } from "@/lib/utils";
 import {
@@ -40,24 +40,48 @@ type ShipmentDoc = {
   planned: number;
   fact: number;
   shipments: OutboundShipment[];
-  workflowStatus: TaskWorkflowStatus;
+  workflowStatus: TaskWorkflowStatus | "shipped_with_diff";
   priority: OutboundTaskPriority;
 };
 
-function shippingDispatcherHint(status: TaskWorkflowStatus): string {
+type ShippingUiStatus = TaskWorkflowStatus | "shipped_with_diff";
+
+function shippingDispatcherHint(status: ShippingUiStatus): string {
   if (status === "pending") return "Задание создано и ожидает сборки";
   if (status === "processing") return "Задание находится в сборке";
   if (status === "assembling") return "Задание в сборке на складе";
   if (status === "assembled") return "Задание собрано, ожидает отгрузки";
   if (status === "shipped") return "Отгрузка завершена";
+  if (status === "shipped_with_diff") return "Отгрузка завершена с расхождением";
   return "Сборка завершена";
 }
 
-function shippingStageIndex(status: TaskWorkflowStatus): number {
-  if (status === "shipped") return 3;
+function shippingStageIndex(status: ShippingUiStatus): number {
+  if (status === "shipped" || status === "shipped_with_diff") return 3;
   if (status === "assembled") return 2;
   if (status === "processing" || status === "assembling") return 1;
   return 0;
+}
+
+function isShippingTerminal(status: ShippingUiStatus): boolean {
+  return status === "completed" || status === "shipped" || status === "shipped_with_diff";
+}
+
+function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiStatus {
+  const perRow = shipments.map((s): ShippingUiStatus => {
+    const wf = (s.workflowStatus ?? "pending") as string;
+    if (wf === "shipped_with_diff") return "shipped_with_diff";
+    if (wf === "completed" || s.status === "отгружено") return "completed";
+    if (wf === "processing" || wf === "assembling" || wf === "assembled" || wf === "shipped") return wf;
+    return "pending";
+  });
+  if (perRow.some((x) => x === "processing")) return "processing";
+  if (perRow.some((x) => x === "assembling")) return "assembling";
+  if (perRow.every((x) => x === "shipped_with_diff")) return "shipped_with_diff";
+  if (perRow.every((x) => x === "shipped")) return "shipped";
+  if (perRow.every((x) => x === "completed")) return "completed";
+  if (perRow.every((x) => x === "assembled")) return "assembled";
+  return "pending";
 }
 
 type ShippingStockWarnLine = { barcode: string; plan: number; available: number; shortage: number };
@@ -128,7 +152,7 @@ const ShippingPage = () => {
   useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus>("all");
+  const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus | "shipped_with_diff">("all");
   const [viewMode, setViewMode] = React.useState<"active" | "archive">("active");
   const [warehouseFilter, setWarehouseFilter] = React.useState("all");
   const [dateFrom, setDateFrom] = React.useState("");
@@ -170,7 +194,7 @@ const ShippingPage = () => {
       const createdAt = shipments.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
       const planned = shipments.reduce((s, sh) => s + (Number(sh.plannedUnits) || 0), 0);
       const fact = shipments.reduce((s, sh) => s + (Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0), 0);
-      const workflowStatus = workflowFromOutboundGroup(shipments);
+      const workflowStatus = shippingWorkflowFromGroup(shipments);
       const priority = mergePriorityFromShipments(shipments);
       const groupId = `${first.legalEntityId}::${first.assignmentId ?? first.assignmentNo ?? first.id}`;
       docs.push({
@@ -200,8 +224,8 @@ const ShippingPage = () => {
           return `${entity} ${d.assignmentNo} ${lines}`.toLowerCase().includes(q);
         });
     const withFilters = searched.filter((d) => {
-      if (viewMode === "active" && isOutboundWorkflowTerminal(d.workflowStatus)) return false;
-      if (viewMode === "archive" && !isOutboundWorkflowTerminal(d.workflowStatus)) return false;
+      if (viewMode === "active" && isShippingTerminal(d.workflowStatus)) return false;
+      if (viewMode === "archive" && !isShippingTerminal(d.workflowStatus)) return false;
       if (statusFilter !== "all" && d.workflowStatus !== statusFilter) return false;
       if (warehouseFilter !== "all" && d.sourceWarehouse !== warehouseFilter) return false;
       const created = Date.parse(d.createdAt || "");
@@ -333,7 +357,7 @@ const ShippingPage = () => {
   const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
     if (!selectedDoc?.shipments?.length) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
-    const showStock = !isOutboundWorkflowTerminal(selectedDoc.workflowStatus);
+    const showStock = !isShippingTerminal(selectedDoc.workflowStatus);
     const movementsReady = inventoryMovements.length > 0;
     const balanceByKey = showStock && movementsReady ? getBalanceByKeyMap(inventoryMovements) : null;
     const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalog ?? []) : null;
@@ -392,12 +416,14 @@ const ShippingPage = () => {
       if (confirmingShipmentId === doc.id) return;
       setConfirmingShipmentId(doc.id);
       const ts = new Date().toISOString();
+      const hasDiff = doc.fact < doc.planned;
+      const nextWorkflowStatus: ShippingUiStatus = hasDiff ? "shipped_with_diff" : "shipped";
       try {
         for (const sh of doc.shipments) {
           await updateOutboundDraft({
             id: sh.id,
             patch: {
-              workflowStatus: "shipped",
+              workflowStatus: nextWorkflowStatus as TaskWorkflowStatus,
               completedAt: sh.completedAt ?? ts,
               updatedAt: ts,
             },
@@ -450,7 +476,7 @@ const ShippingPage = () => {
               <SelectItem value="yandex">Яндекс.Маркет</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | TaskWorkflowStatus)}>
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | TaskWorkflowStatus | "shipped_with_diff")}>
             <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Все статусы</SelectItem>
@@ -460,6 +486,7 @@ const ShippingPage = () => {
               <SelectItem value="assembled">Собрано</SelectItem>
               <SelectItem value="completed">Завершено</SelectItem>
               <SelectItem value="shipped">Отгружено</SelectItem>
+              <SelectItem value="shipped_with_diff">Отгружено с расхождением</SelectItem>
             </SelectContent>
           </Select>
           <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
@@ -514,7 +541,7 @@ const ShippingPage = () => {
                   </TableHeader>
                   <TableBody>
                     {documents.map((doc) => {
-                      const uiStatus = workflowFromOutboundGroup(doc.shipments);
+                      const uiStatus = shippingWorkflowFromGroup(doc.shipments);
                       const currentStage = shippingStageIndex(uiStatus);
                       const rem = Math.max(0, doc.planned - doc.fact);
                       const over = Math.max(0, doc.fact - doc.planned);
@@ -523,7 +550,7 @@ const ShippingPage = () => {
                       const stockWarnLines = shippingDocStockWarning.get(doc.id)?.lines ?? [];
                       const stockWarnTooltip = formatShippingStockTooltip(stockWarnLines);
                       const showStockWarn = stockWarnLines.length > 0;
-                      const hasShippingProblem = uiStatus !== "shipped" && (showStockWarn || rem > 0 || doc.fact < doc.planned);
+                      const hasShippingProblem = !isShippingTerminal(uiStatus) && (showStockWarn || rem > 0 || doc.fact < doc.planned);
                       const stockWarnAria =
                         stockWarnLines.length === 1
                           ? "Недостаточно доступного товара по одной позиции. Подробности в подсказке."
@@ -538,6 +565,7 @@ const ShippingPage = () => {
                               uiStatus === "pending" ? "bg-blue-50/60" : "",
                               uiStatus === "assembling" ? "bg-sky-50/70" : "",
                               uiStatus === "assembled" ? "bg-emerald-50/50" : "",
+                              uiStatus === "shipped_with_diff" ? "bg-amber-50/60" : "",
                               openTaskHighlightId === doc.id &&
                                 "z-[1] ring-2 ring-amber-400/50 ring-inset bg-amber-50/50",
                             )}
@@ -560,7 +588,13 @@ const ShippingPage = () => {
                             <TableCell className="whitespace-nowrap px-3 py-2">{legalLabel}</TableCell>
                             <TableCell className="px-3 py-2">
                               <div className="inline-flex flex-wrap items-center gap-1">
-                                <StatusBadge status={uiStatus} />
+                                {uiStatus === "shipped_with_diff" ? (
+                                  <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
+                                    Отгружено с расхождением
+                                  </span>
+                                ) : (
+                                  <StatusBadge status={uiStatus} />
+                                )}
                                 {showStockWarn ? (
                                   <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
                                     <span aria-hidden>⚠️</span>
@@ -651,7 +685,13 @@ const ShippingPage = () => {
                                     <div>
                                       <span className="text-slate-500">Статус</span>
                                       <div className="mt-0.5 inline-flex flex-wrap items-center gap-1">
-                                        <StatusBadge status={uiStatus} />
+                                        {uiStatus === "shipped_with_diff" ? (
+                                          <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
+                                            Отгружено с расхождением
+                                          </span>
+                                        ) : (
+                                          <StatusBadge status={uiStatus} />
+                                        )}
                                         {showStockWarn ? (
                                           <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
                                             <span aria-hidden>⚠️</span>
@@ -688,6 +728,9 @@ const ShippingPage = () => {
                                       {doc.fact > doc.planned ? <span className="font-medium text-red-700">Перерасход: {over}</span> : null}
                                     </div>
                                   )}
+                                  {uiStatus === "shipped_with_diff" ? (
+                                    <p className="text-sm font-medium text-amber-800">Расхождение: {Math.max(0, doc.planned - doc.fact)} шт</p>
+                                  ) : null}
                                   {viewMode === "archive" ? null : (
                                     <div className="flex flex-wrap items-center gap-2">
                                       {uiStatus === "assembled" ? (
@@ -701,7 +744,9 @@ const ShippingPage = () => {
                                         </Button>
                                       ) : uiStatus === "shipped" ? (
                                         <p className="text-sm font-medium text-emerald-700">Отгрузка подтверждена</p>
-                                      ) : isOutboundWorkflowTerminal(uiStatus) ? (
+                                      ) : uiStatus === "shipped_with_diff" ? (
+                                        <p className="text-sm font-medium text-amber-700">Отгружено с расхождением</p>
+                                      ) : isShippingTerminal(uiStatus) ? (
                                         <Button type="button" size="sm" variant="secondary" disabled>
                                           {uiStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
                                         </Button>
