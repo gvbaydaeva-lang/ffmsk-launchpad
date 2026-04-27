@@ -274,7 +274,8 @@ const ShippingPage = () => {
     return base.filter((x) => x.legalEntityId === legalEntityId);
   }, [data, mp, legalEntityId]);
 
-  const documents = React.useMemo(() => {
+  /** Список заданий после всех контекстных фильтров, но до быстрого фильтра (для счётчиков и второго шага). */
+  const documentsBeforeQuickFilter = React.useMemo(() => {
     const groups = new Map<string, OutboundShipment[]>();
     for (const x of filtered) {
       const key = `${x.legalEntityId}::${x.assignmentId ?? x.assignmentNo ?? x.id}`;
@@ -341,10 +342,51 @@ const ShippingPage = () => {
       }
       return true;
     });
-    const afterProblem =
-      problemFromUrl === "shortage"
-        ? withFilters.filter((d) => shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0)
-        : withFilters;
+    return problemFromUrl === "shortage"
+      ? withFilters.filter((d) => shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0)
+      : withFilters;
+  }, [
+    filtered,
+    search,
+    entities,
+    viewMode,
+    statusFilter,
+    warehouseFilter,
+    dateFrom,
+    dateTo,
+    reasonFromUrl,
+    problemFromUrl,
+    inventoryMovements,
+    data,
+    catalog,
+  ]);
+
+  const shippingQuickFilterCounts = React.useMemo(() => {
+    const base = Array.isArray(documentsBeforeQuickFilter) ? documentsBeforeQuickFilter : [];
+    let problematic = 0;
+    let shortage = 0;
+    let shippedWithDiff = 0;
+    let assembled = 0;
+    for (const d of base) {
+      const ui = shippingWorkflowFromGroup(d.shipments);
+      const hasShortage =
+        shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0;
+      if (hasShortage || ui === "shipped_with_diff") problematic += 1;
+      if (hasShortage) shortage += 1;
+      if (ui === "shipped_with_diff") shippedWithDiff += 1;
+      if (ui === "assembled") assembled += 1;
+    }
+    return {
+      all: base.length,
+      problematic,
+      shortage,
+      shipped_with_diff: shippedWithDiff,
+      assembled,
+    };
+  }, [documentsBeforeQuickFilter, inventoryMovements, data, catalog]);
+
+  const documents = React.useMemo(() => {
+    const afterProblem = Array.isArray(documentsBeforeQuickFilter) ? documentsBeforeQuickFilter : [];
     const afterQuick =
       shippingQuickFilter === "all"
         ? afterProblem
@@ -358,28 +400,13 @@ const ShippingPage = () => {
             if (shippingQuickFilter === "assembled") return ui === "assembled";
             return true;
           });
-    return afterQuick.sort((a, b) => {
+    return [...afterQuick].sort((a, b) => {
       if (viewMode === "archive") {
         return outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments);
       }
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
-  }, [
-    filtered,
-    search,
-    entities,
-    viewMode,
-    statusFilter,
-    warehouseFilter,
-    dateFrom,
-    dateTo,
-    reasonFromUrl,
-    problemFromUrl,
-    shippingQuickFilter,
-    inventoryMovements,
-    data,
-    catalog,
-  ]);
+  }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, inventoryMovements, data, catalog]);
 
   const openTaskResolvedId = React.useMemo(() => {
     if (!openTaskDecoded) return null;
@@ -684,6 +711,7 @@ const ShippingPage = () => {
               ] as const
             ).map((opt) => {
               const active = shippingQuickFilter === opt.id;
+              const cnt = shippingQuickFilterCounts[opt.id] ?? 0;
               return (
                 <Button
                   key={opt.id}
@@ -692,13 +720,21 @@ const ShippingPage = () => {
                   variant="outline"
                   onClick={() => setShippingQuickFilter(opt.id)}
                   className={cn(
-                    "h-8 cursor-pointer px-3 text-xs font-medium shadow-none",
+                    "h-8 cursor-pointer gap-1.5 px-3 text-xs font-medium shadow-none",
                     active
                       ? "border-slate-800 bg-slate-900 text-white hover:bg-slate-800 hover:text-white"
                       : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  {opt.label}
+                  <span>{opt.label}</span>
+                  <span
+                    className={cn(
+                      "tabular-nums",
+                      active ? "text-slate-200" : "text-slate-500",
+                    )}
+                  >
+                    {cnt}
+                  </span>
                 </Button>
               );
             })}
