@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskItemsTable, { type TaskItemRow } from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
@@ -37,6 +38,7 @@ import {
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { formatOperationLogDescription, formatOperationLogShortStatus } from "@/lib/operationLogDisplay";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
+import { toast } from "sonner";
 
 type ShipmentDoc = {
   id: string;
@@ -239,7 +241,11 @@ const ShippingPage = () => {
   const [confirmingShipmentId, setConfirmingShipmentId] = React.useState<string | null>(null);
   const [diffReasonDialogOpen, setDiffReasonDialogOpen] = React.useState(false);
   const [pendingDiffDoc, setPendingDiffDoc] = React.useState<ShipmentDoc | null>(null);
+  const [pendingBulkDiffDocs, setPendingBulkDiffDocs] = React.useState<ShipmentDoc[]>([]);
+  const [pendingBulkExactDocs, setPendingBulkExactDocs] = React.useState<ShipmentDoc[]>([]);
   const [selectedDiffReason, setSelectedDiffReason] = React.useState<string>("");
+  const [selectedShipmentIds, setSelectedShipmentIds] = React.useState<string[]>([]);
+  const [bulkConfirming, setBulkConfirming] = React.useState(false);
 
   const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
   const reasonFromUrl = React.useMemo(() => {
@@ -407,6 +413,13 @@ const ShippingPage = () => {
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
   }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, inventoryMovements, data, catalog]);
+
+  const documentIdsOnPage = React.useMemo(() => documents.map((d) => d.id), [documents]);
+
+  React.useEffect(() => {
+    const allowed = new Set(documentIdsOnPage);
+    setSelectedShipmentIds((prev) => (Array.isArray(prev) ? prev : []).filter((id) => allowed.has(id)));
+  }, [documentIdsOnPage]);
 
   const openTaskResolvedId = React.useMemo(() => {
     if (!openTaskDecoded) return null;
@@ -577,6 +590,8 @@ const ShippingPage = () => {
       if (confirmingShipmentId === doc.id) return;
       const hasDiff = doc.fact < doc.planned;
       if (hasDiff) {
+        setPendingBulkDiffDocs([]);
+        setPendingBulkExactDocs([]);
         setPendingDiffDoc(doc);
         setSelectedDiffReason("");
         setDiffReasonDialogOpen(true);
@@ -603,8 +618,53 @@ const ShippingPage = () => {
   );
 
   const submitDiffShipmentConfirm = React.useCallback(async () => {
-    if (!pendingDiffDoc || pendingDiffDoc.workflowStatus !== "assembled") return;
     if (!selectedDiffReason) return;
+
+    const bulkDiff = Array.isArray(pendingBulkDiffDocs) ? pendingBulkDiffDocs : [];
+    const bulkExact = Array.isArray(pendingBulkExactDocs) ? pendingBulkExactDocs : [];
+
+    if (bulkDiff.length > 0) {
+      if (bulkConfirming) return;
+      setBulkConfirming(true);
+      const ts = new Date().toISOString();
+      try {
+        for (const doc of bulkDiff) {
+          for (const sh of doc.shipments) {
+            const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
+              workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
+              completedAt: sh.completedAt ?? ts,
+              updatedAt: ts,
+              differenceReason: selectedDiffReason,
+            };
+            await updateOutboundDraft({ id: sh.id, patch });
+          }
+        }
+        for (const doc of bulkExact) {
+          for (const sh of doc.shipments) {
+            await updateOutboundDraft({
+              id: sh.id,
+              patch: {
+                workflowStatus: "shipped",
+                completedAt: sh.completedAt ?? ts,
+                updatedAt: ts,
+              },
+            });
+          }
+        }
+        const n = bulkDiff.length + bulkExact.length;
+        setDiffReasonDialogOpen(false);
+        setPendingBulkDiffDocs([]);
+        setPendingBulkExactDocs([]);
+        setSelectedDiffReason("");
+        setSelectedShipmentIds([]);
+        toast.success("Отгрузки подтверждены", { description: `Обработано заданий: ${n}.` });
+      } finally {
+        setBulkConfirming(false);
+      }
+      return;
+    }
+
+    if (!pendingDiffDoc || pendingDiffDoc.workflowStatus !== "assembled") return;
     if (confirmingShipmentId === pendingDiffDoc.id) return;
     setConfirmingShipmentId(pendingDiffDoc.id);
     const ts = new Date().toISOString();
@@ -627,7 +687,58 @@ const ShippingPage = () => {
     } finally {
       setConfirmingShipmentId(null);
     }
-  }, [pendingDiffDoc, selectedDiffReason, confirmingShipmentId, updateOutboundDraft]);
+  }, [
+    pendingDiffDoc,
+    pendingBulkDiffDocs,
+    pendingBulkExactDocs,
+    selectedDiffReason,
+    confirmingShipmentId,
+    bulkConfirming,
+    updateOutboundDraft,
+  ]);
+
+  const confirmBulkSelectedShipments = React.useCallback(async () => {
+    const ids = new Set(Array.isArray(selectedShipmentIds) ? selectedShipmentIds : []);
+    const list = Array.isArray(documents) ? documents : [];
+    const selected = list.filter((d) => d && ids.has(d.id));
+    const nonAssembled = selected.filter((d) => d.workflowStatus !== "assembled");
+    const assembled = selected.filter((d) => d.workflowStatus === "assembled");
+    if (nonAssembled.length > 0) {
+      toast.warning("Подтвердить можно только отгрузки со статусом 'Собрано'.");
+    }
+    if (assembled.length === 0) return;
+    if (bulkConfirming) return;
+    const withDiff = assembled.filter((d) => d.fact < d.planned);
+    const withoutDiff = assembled.filter((d) => d.fact >= d.planned);
+    if (withDiff.length > 0) {
+      setPendingDiffDoc(null);
+      setPendingBulkDiffDocs(withDiff);
+      setPendingBulkExactDocs(withoutDiff);
+      setSelectedDiffReason("");
+      setDiffReasonDialogOpen(true);
+      return;
+    }
+    setBulkConfirming(true);
+    const ts = new Date().toISOString();
+    try {
+      for (const doc of withoutDiff) {
+        for (const sh of doc.shipments) {
+          await updateOutboundDraft({
+            id: sh.id,
+            patch: {
+              workflowStatus: "shipped",
+              completedAt: sh.completedAt ?? ts,
+              updatedAt: ts,
+            },
+          });
+        }
+      }
+      setSelectedShipmentIds([]);
+      toast.success("Отгрузки подтверждены", { description: `Подтверждено заданий: ${withoutDiff.length}.` });
+    } finally {
+      setBulkConfirming(false);
+    }
+  }, [selectedShipmentIds, documents, bulkConfirming, updateOutboundDraft]);
 
   return (
     <div className="space-y-4">
@@ -739,6 +850,20 @@ const ShippingPage = () => {
               );
             })}
           </div>
+          {selectedShipmentIds.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+              <span className="text-sm font-medium text-slate-800">Выбрано: {selectedShipmentIds.length}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={bulkConfirming || isUpdatingOutboundDraft}
+                onClick={() => void confirmBulkSelectedShipments()}
+              >
+                Подтвердить выбранные
+              </Button>
+            </div>
+          ) : null}
           {isLoading ? (
             <div className="grid gap-3">
               <Skeleton className="h-36 w-full" />
@@ -752,9 +877,37 @@ const ShippingPage = () => {
           ) : (
             <>
               <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-slate-200">
-                <Table className="min-w-[1280px] table-auto">
+                <Table className="min-w-[1320px] table-auto">
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
+                      <TableHead className="h-9 w-10 px-2 py-2">
+                        <Checkbox
+                          checked={
+                            documentIdsOnPage.length > 0 &&
+                            documentIdsOnPage.every((id) => selectedShipmentIds.includes(id))
+                              ? true
+                              : documentIdsOnPage.some((id) => selectedShipmentIds.includes(id))
+                                ? "indeterminate"
+                                : false
+                          }
+                          onCheckedChange={() => {
+                            const allIds = documentIdsOnPage;
+                            const allSelected =
+                              allIds.length > 0 && allIds.every((id) => selectedShipmentIds.includes(id));
+                            setSelectedShipmentIds((prev) => {
+                              const cur = new Set(Array.isArray(prev) ? prev : []);
+                              if (allSelected) {
+                                allIds.forEach((id) => cur.delete(id));
+                              } else {
+                                allIds.forEach((id) => cur.add(id));
+                              }
+                              return [...cur];
+                            });
+                          }}
+                          aria-label="Выбрать все на странице"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
                       <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
@@ -786,6 +939,7 @@ const ShippingPage = () => {
                         stockWarnLines.length === 1
                           ? "Недостаточно доступного товара по одной позиции. Подробности в подсказке."
                           : `Недостаточно доступного товара по ${stockWarnLines.length} позициям. Подробности в подсказке.`;
+                      const rowSelected = selectedShipmentIds.includes(doc.id);
                       return (
                         <React.Fragment key={doc.id}>
                           <TableRow
@@ -802,6 +956,20 @@ const ShippingPage = () => {
                             )}
                             onClick={() => setSelectedId((p) => (p === doc.id ? null : doc.id))}
                           >
+                            <TableCell className="w-10 px-2 py-2 align-middle" onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={rowSelected}
+                                onCheckedChange={(v) => {
+                                  const on = v === true;
+                                  setSelectedShipmentIds((prev) => {
+                                    const p = Array.isArray(prev) ? prev : [];
+                                    if (on) return p.includes(doc.id) ? p : [...p, doc.id];
+                                    return p.filter((id) => id !== doc.id);
+                                  });
+                                }}
+                                aria-label={`Выбрать задание ${doc.assignmentNo}`}
+                              />
+                            </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
                               {doc.createdAt ? format(parseISO(doc.createdAt), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
                             </TableCell>
@@ -866,7 +1034,7 @@ const ShippingPage = () => {
                           </TableRow>
                           {isSel ? (
                             <TableRow className="border-slate-100 bg-slate-50/90">
-                              <TableCell colSpan={13} className="align-top p-0">
+                              <TableCell colSpan={14} className="align-top p-0">
                                 <div className="space-y-4 border-t border-slate-200 p-4">
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
@@ -1011,7 +1179,9 @@ const ShippingPage = () => {
                                           type="button"
                                           size="sm"
                                           onClick={() => void confirmShipment(doc)}
-                                          disabled={confirmingShipmentId === doc.id || isUpdatingOutboundDraft}
+                                          disabled={
+                                            confirmingShipmentId === doc.id || isUpdatingOutboundDraft || bulkConfirming
+                                          }
                                         >
                                           Подтвердить отгрузку
                                         </Button>
@@ -1062,6 +1232,8 @@ const ShippingPage = () => {
           setDiffReasonDialogOpen(open);
           if (!open) {
             setPendingDiffDoc(null);
+            setPendingBulkDiffDocs([]);
+            setPendingBulkExactDocs([]);
             setSelectedDiffReason("");
           }
         }}
@@ -1069,7 +1241,11 @@ const ShippingPage = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Укажите причину расхождения</DialogTitle>
-            <DialogDescription>Факт меньше плана. Перед подтверждением выберите причину.</DialogDescription>
+            <DialogDescription>
+              {pendingBulkDiffDocs.length > 0
+                ? `Факт меньше плана у ${pendingBulkDiffDocs.length} заданий. Причина будет применена ко всем таким отгрузкам. Перед подтверждением выберите причину.`
+                : "Факт меньше плана. Перед подтверждением выберите причину."}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             {DIFF_REASONS.map((reason) => (
@@ -1095,7 +1271,15 @@ const ShippingPage = () => {
             <Button
               type="button"
               onClick={() => void submitDiffShipmentConfirm()}
-              disabled={!selectedDiffReason || !pendingDiffDoc || confirmingShipmentId === pendingDiffDoc.id}
+              disabled={
+                !selectedDiffReason ||
+                bulkConfirming ||
+                (pendingBulkDiffDocs.length > 0
+                  ? false
+                  : !pendingDiffDoc ||
+                    pendingDiffDoc.workflowStatus !== "assembled" ||
+                    confirmingShipmentId === pendingDiffDoc.id)
+              }
             >
               Подтвердить
             </Button>
