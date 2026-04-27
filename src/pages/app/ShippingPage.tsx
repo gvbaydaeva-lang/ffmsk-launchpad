@@ -174,6 +174,13 @@ const ShippingPage = () => {
   const [selectedDiffReason, setSelectedDiffReason] = React.useState<string>("");
 
   const openTaskParam = searchParams.get("openTask");
+  /** Диплинк с дашборда: показать только отгрузки с расхождением (в архиве — терминальный статус). */
+  React.useEffect(() => {
+    if (searchParams.get("status") !== "shipped_with_diff") return;
+    setStatusFilter("shipped_with_diff");
+    setViewMode("archive");
+  }, [searchParams]);
+
   const openTaskDecoded = React.useMemo(() => {
     if (!openTaskParam) return null;
     try {
@@ -530,7 +537,7 @@ const ShippingPage = () => {
               <SelectItem value="assembling">В сборке</SelectItem>
               <SelectItem value="assembled">Собрано</SelectItem>
               <SelectItem value="shipped">Отгружено</SelectItem>
-              <SelectItem value="shipped_with_diff">Отгружено с расхождением</SelectItem>
+              <SelectItem value="shipped_with_diff">С расхождением</SelectItem>
             </SelectContent>
           </Select>
           <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
@@ -621,7 +628,14 @@ const ShippingPage = () => {
                             <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-700">
                               {formatTaskArchiveDateLabel(doc.completedAtIso)}
                             </TableCell>
-                            <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{doc.assignmentNo}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 font-medium">
+                              {uiStatus === "shipped_with_diff" ? (
+                                <span className="mr-1 inline-block text-amber-600" title="Отгружено с расхождением" aria-hidden>
+                                  ⚠
+                                </span>
+                              ) : null}
+                              {doc.assignmentNo}
+                            </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2">
                               <span
                                 className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${outboundPriorityBadgeClass(doc.priority)}`}

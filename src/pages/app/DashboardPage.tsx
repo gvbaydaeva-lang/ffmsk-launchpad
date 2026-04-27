@@ -30,12 +30,31 @@ import { useInboundSupplies, useInventoryMovements, useOperationLogs, useOutboun
 import { cn } from "@/lib/utils";
 import { mergePriorityFromShipments, outboundPrioritySortKey, type OutboundTaskPriority } from "@/lib/outboundTaskPriority";
 import { isOutboundWorkflowTerminal, workflowFromInbound, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
+import type { OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { sumStorageDay } from "@/services/mockDashboardBundle";
 
 function safeArray<T>(value: T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [];
+}
+
+/** Согласовано с агрегацией статуса задания на странице «Отгрузки» (группа строк). */
+function dashboardOutboundGroupUiStatus(shipments: OutboundShipment[]): TaskWorkflowStatus | "shipped_with_diff" {
+  const perRow = shipments.map((s): TaskWorkflowStatus | "shipped_with_diff" => {
+    const wf = (s.workflowStatus ?? "pending") as string;
+    if (wf === "shipped_with_diff") return "shipped_with_diff";
+    if (wf === "completed") return "assembled";
+    if (wf === "processing" || wf === "assembling" || wf === "assembled" || wf === "shipped") return wf;
+    if (s.status === "отгружено") return "shipped";
+    return "pending";
+  });
+  if (perRow.some((x) => x === "processing")) return "processing";
+  if (perRow.some((x) => x === "assembling")) return "assembling";
+  if (perRow.every((x) => x === "shipped_with_diff")) return "shipped_with_diff";
+  if (perRow.every((x) => x === "shipped")) return "shipped";
+  if (perRow.every((x) => x === "assembled")) return "assembled";
+  return "pending";
 }
 
 function isTodayIso(iso: string | undefined | null): boolean {
@@ -213,9 +232,20 @@ const DashboardPage = () => {
     return available <= 0;
   }).length;
   const activeAssignmentsInWork = shippingProcessing;
+  const shippingWithDiscrepancy = assignments.filter(
+    (rows) => Array.isArray(rows) && rows.length > 0 && dashboardOutboundGroupUiStatus(rows) === "shipped_with_diff",
+  ).length;
   const attentionItems = [
     shippingProblematic > 0
       ? { id: "shipping-problem", text: "Есть отгрузки с нехваткой товара", path: "/shipping", count: shippingProblematic }
+      : null,
+    shippingWithDiscrepancy > 0
+      ? {
+          id: "shipping-with-diff",
+          text: "Есть отгрузки с расхождением",
+          path: "/shipping?status=shipped_with_diff",
+          count: shippingWithDiscrepancy,
+        }
       : null,
     inventoryUnavailable > 0
       ? { id: "inventory-unavailable", text: "Есть товары без доступного остатка", path: "/inventory", count: inventoryUnavailable }
