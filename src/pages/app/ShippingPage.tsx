@@ -629,8 +629,11 @@ const ShippingPage = () => {
                                     </div>
                                   </div>
                                   {hasShippingProblem ? (
-                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2">
+                                    <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2">
                                       <p className="text-sm font-medium text-amber-800">⚠ Не хватает товара</p>
+                                      <p className="text-xs text-amber-800/90">
+                                        Товаров не хватает. Можно перейти в приёмку для пополнения или продолжить сборку с расхождением.
+                                      </p>
                                       <Button type="button" size="sm" variant="outline" onClick={() => navigate("/receiving")}>
                                         Перейти в приёмку
                                       </Button>
@@ -704,7 +707,7 @@ const ShippingPage = () => {
                                         </Button>
                                       ) : uiStatus === "processing" || uiStatus === "assembling" ? (
                                         <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                          Продолжить сборку
+                                          {hasShippingProblem ? "Продолжить с расхождением" : "Продолжить сборку"}
                                         </Button>
                                       ) : (
                                         <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
