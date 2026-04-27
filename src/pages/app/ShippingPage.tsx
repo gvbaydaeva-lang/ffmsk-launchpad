@@ -53,6 +53,13 @@ function shippingDispatcherHint(status: TaskWorkflowStatus): string {
   return "Сборка завершена";
 }
 
+function shippingStageIndex(status: TaskWorkflowStatus): number {
+  if (status === "shipped") return 3;
+  if (status === "assembled") return 2;
+  if (status === "processing" || status === "assembling") return 1;
+  return 0;
+}
+
 type ShippingStockWarnLine = { barcode: string; plan: number; available: number; shortage: number };
 
 function shippingAvailableFromBalanceReserve(balance: number, reserve: number): number {
@@ -508,6 +515,7 @@ const ShippingPage = () => {
                   <TableBody>
                     {documents.map((doc) => {
                       const uiStatus = workflowFromOutboundGroup(doc.shipments);
+                      const currentStage = shippingStageIndex(uiStatus);
                       const rem = Math.max(0, doc.planned - doc.fact);
                       const over = Math.max(0, doc.fact - doc.planned);
                       const isSel = selectedId === doc.id;
@@ -590,6 +598,34 @@ const ShippingPage = () => {
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
                                     <p className="mt-1 text-sm text-slate-600">{shippingDispatcherHint(uiStatus)}</p>
+                                  </div>
+                                  <div className="rounded-md border border-slate-200 bg-white p-3">
+                                    <p className="mb-2 text-xs font-medium text-slate-600">Этапы отгрузки</p>
+                                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                      {[
+                                        { id: "pending", label: "Новое", order: 0 },
+                                        { id: "processing", label: "В работе", order: 1 },
+                                        { id: "assembled", label: "Собрано", order: 2 },
+                                        { id: "shipped", label: "Отгружено", order: 3 },
+                                      ].map((stage) => {
+                                        const passed = currentStage > stage.order;
+                                        const current = currentStage === stage.order;
+                                        return (
+                                          <div
+                                            key={stage.id}
+                                            className={cn(
+                                              "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
+                                              passed && "border-emerald-200 bg-emerald-50 text-emerald-700",
+                                              current && "border-violet-200 bg-violet-50 text-violet-700",
+                                              !passed && !current && "border-slate-200 bg-slate-50 text-slate-500",
+                                            )}
+                                          >
+                                            <span aria-hidden>{passed ? "✓" : "•"}</span>
+                                            <span>{stage.label}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
                                   </div>
                                   <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
                                     <div>
