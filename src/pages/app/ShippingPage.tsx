@@ -39,6 +39,7 @@ type ShipmentDoc = {
   marketplace: Marketplace;
   planned: number;
   fact: number;
+  differenceReason?: string;
   shipments: OutboundShipment[];
   workflowStatus: TaskWorkflowStatus | "shipped_with_diff";
   priority: OutboundTaskPriority;
@@ -142,6 +143,10 @@ function ShippingStockWarnTrigger({
 }
 
 const ShippingPage = () => {
+  const DIFF_REASONS = React.useMemo(
+    () => ["Нет товара", "Пересорт", "Повреждение", "Ошибка учёта", "Другое"],
+    [],
+  );
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { data, isLoading, error, updateOutboundDraft, isUpdatingOutboundDraft } = useOutboundShipments();
@@ -207,6 +212,10 @@ const ShippingPage = () => {
         marketplace: first.marketplace,
         planned,
         fact,
+        differenceReason:
+          shipments
+            .map((s) => ((s as OutboundShipment & { differenceReason?: string }).differenceReason ?? "").trim())
+            .find(Boolean) || undefined,
         shipments,
         workflowStatus,
         priority,
@@ -418,22 +427,48 @@ const ShippingPage = () => {
       const ts = new Date().toISOString();
       const hasDiff = doc.fact < doc.planned;
       const nextWorkflowStatus: ShippingUiStatus = hasDiff ? "shipped_with_diff" : "shipped";
+      let differenceReason = "";
+      if (hasDiff) {
+        const answer = window.prompt(
+          `Выберите причину расхождения:\n1. ${DIFF_REASONS[0]}\n2. ${DIFF_REASONS[1]}\n3. ${DIFF_REASONS[2]}\n4. ${DIFF_REASONS[3]}\n5. ${DIFF_REASONS[4]}\n\nВведите номер (1-5) или текст причины:`,
+          "",
+        );
+        if (!answer) {
+          setConfirmingShipmentId(null);
+          return;
+        }
+        const normalized = answer.trim();
+        const idx = Number(normalized);
+        if (Number.isInteger(idx) && idx >= 1 && idx <= DIFF_REASONS.length) {
+          differenceReason = DIFF_REASONS[idx - 1];
+        } else {
+          const byText = DIFF_REASONS.find((r) => r.toLowerCase() === normalized.toLowerCase());
+          if (!byText) {
+            window.alert("Нужно выбрать одну из предложенных причин.");
+            setConfirmingShipmentId(null);
+            return;
+          }
+          differenceReason = byText;
+        }
+      }
       try {
         for (const sh of doc.shipments) {
+          const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
+            workflowStatus: nextWorkflowStatus as TaskWorkflowStatus,
+            completedAt: sh.completedAt ?? ts,
+            updatedAt: ts,
+          };
+          if (hasDiff) patch.differenceReason = differenceReason;
           await updateOutboundDraft({
             id: sh.id,
-            patch: {
-              workflowStatus: nextWorkflowStatus as TaskWorkflowStatus,
-              completedAt: sh.completedAt ?? ts,
-              updatedAt: ts,
-            },
+            patch,
           });
         }
       } finally {
         setConfirmingShipmentId(null);
       }
     },
-    [updateOutboundDraft, confirmingShipmentId],
+    [updateOutboundDraft, confirmingShipmentId, DIFF_REASONS],
   );
 
   return (
@@ -734,7 +769,10 @@ const ShippingPage = () => {
                                     </div>
                                   )}
                                   {uiStatus === "shipped_with_diff" ? (
-                                    <p className="text-sm font-medium text-amber-800">Расхождение: {Math.max(0, doc.planned - doc.fact)} шт</p>
+                                    <div className="space-y-1">
+                                      <p className="text-sm font-medium text-amber-800">Расхождение: {Math.max(0, doc.planned - doc.fact)} шт</p>
+                                      <p className="text-sm text-amber-800">Причина: {doc.differenceReason || "—"}</p>
+                                    </div>
                                   ) : null}
                                   {viewMode === "archive" ? null : (
                                     <div className="flex flex-wrap items-center gap-2">
