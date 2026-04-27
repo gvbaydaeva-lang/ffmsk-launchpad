@@ -440,12 +440,20 @@ const DashboardPage = () => {
           ) : (
             <ul className="space-y-1.5">
               {discrepancyReasonStats.map((row) => (
-                <li
-                  key={row.label}
-                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
-                >
-                  <span>{row.label}</span>
-                  <span className="tabular-nums font-medium text-slate-900">{row.count}</span>
+                <li key={row.label} className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(
+                        `/shipping?status=shipped_with_diff&reason=${encodeURIComponent(row.label)}`,
+                      )
+                    }
+                    className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-800 transition-colors hover:bg-slate-50"
+                    aria-label={`Открыть отгрузки с причиной «${row.label}»`}
+                  >
+                    <span>{row.label}</span>
+                    <span className="tabular-nums font-medium text-slate-900">{row.count}</span>
+                  </button>
                 </li>
               ))}
             </ul>

@@ -174,6 +174,15 @@ const ShippingPage = () => {
   const [selectedDiffReason, setSelectedDiffReason] = React.useState<string>("");
 
   const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
+  const reasonFromUrl = React.useMemo(() => {
+    const raw = searchParams.get("reason");
+    if (!raw) return null;
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }, [searchParams]);
   /** Диплинк с дашборда: показать только отгрузки с расхождением (в архиве — терминальный статус). */
   React.useEffect(() => {
     if (searchParams.get("status") !== "shipped_with_diff") return;
@@ -257,6 +266,10 @@ const ShippingPage = () => {
         const to = Date.parse(`${dateTo}T23:59:59`);
         if (Number.isFinite(to) && created > to) return false;
       }
+      if (reasonFromUrl && reasonFromUrl.trim() !== "") {
+        const want = reasonFromUrl.trim();
+        if (String(d.differenceReason ?? "").trim() !== want) return false;
+      }
       return true;
     });
     return withFilters.sort((a, b) => {
@@ -265,7 +278,7 @@ const ShippingPage = () => {
       }
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
-  }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
+  }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo, reasonFromUrl]);
 
   const openTaskResolvedId = React.useMemo(() => {
     if (!openTaskDecoded) return null;
