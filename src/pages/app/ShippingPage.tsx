@@ -15,9 +15,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
-import { useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import { useInventoryMovements, useLegalEntities, useOperationLogs, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
-import type { InventoryMovement, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
+import type {
+  InventoryMovement,
+  Marketplace,
+  OperationLog,
+  OutboundShipment,
+  ProductCatalogItem,
+  TaskWorkflowStatus,
+} from "@/types/domain";
 import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
 import { cn } from "@/lib/utils";
@@ -28,6 +35,7 @@ import {
   type OutboundTaskPriority,
 } from "@/lib/outboundTaskPriority";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
+import { formatOperationLogDescription, formatOperationLogShortStatus } from "@/lib/operationLogDisplay";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 
 type ShipmentDoc = {
@@ -45,6 +53,33 @@ type ShipmentDoc = {
   workflowStatus: TaskWorkflowStatus | "shipped_with_diff";
   priority: OutboundTaskPriority;
 };
+
+function addShipmentOperationLogKey(set: Set<string>, value: string | undefined | null) {
+  const t = String(value ?? "").trim();
+  if (t) set.add(t);
+}
+
+/** Ключи задания для сопоставления с `OperationLog.taskId` / `taskNumber` (журнал WMS). */
+function shipmentDocOperationLogKeys(doc: ShipmentDoc): Set<string> {
+  const keys = new Set<string>();
+  addShipmentOperationLogKey(keys, doc.id);
+  addShipmentOperationLogKey(keys, doc.assignmentNo);
+  for (const sh of doc.shipments) {
+    addShipmentOperationLogKey(keys, sh.assignmentNo);
+    addShipmentOperationLogKey(keys, sh.assignmentId);
+    addShipmentOperationLogKey(keys, `${doc.legalEntityId}::${sh.assignmentId ?? sh.assignmentNo ?? sh.id}`);
+  }
+  return keys;
+}
+
+function operationLogBelongsToShipmentDoc(doc: ShipmentDoc, log: OperationLog): boolean {
+  const keys = shipmentDocOperationLogKeys(doc);
+  const tid = String(log.taskId ?? "").trim();
+  const tn = String(log.taskNumber ?? "").trim();
+  if (tid && keys.has(tid)) return true;
+  if (tn && keys.has(tn)) return true;
+  return false;
+}
 
 type ShippingUiStatus = TaskWorkflowStatus | "shipped_with_diff";
 
@@ -184,6 +219,7 @@ const ShippingPage = () => {
   const { data: inventoryMovements = [] } = useInventoryMovements();
   const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
+  const { data: operationLogsRaw } = useOperationLogs();
   const { legalEntityId } = useAppFilters();
   useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
@@ -422,6 +458,18 @@ const ShippingPage = () => {
   }, [documents, inventoryMovements, data, catalog]);
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
+
+  const operationLogsList = React.useMemo(
+    () => (Array.isArray(operationLogsRaw) ? operationLogsRaw : []),
+    [operationLogsRaw],
+  );
+
+  const selectedShipmentTaskLogs = React.useMemo(() => {
+    if (!selectedId || !selectedDoc) return [];
+    return operationLogsList
+      .filter((log) => operationLogBelongsToShipmentDoc(selectedDoc, log))
+      .sort((a, b) => (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0));
+  }, [selectedId, selectedDoc, operationLogsList]);
 
   /** Строки отгрузки из хранилища часто без import* — подставляем поля из каталога по productId (как в упаковщике). */
   const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
@@ -775,6 +823,32 @@ const ShippingPage = () => {
                                         );
                                       })}
                                     </div>
+                                  </div>
+                                  <div className="rounded-md border border-slate-200 bg-white p-3">
+                                    <p className="mb-2 text-xs font-medium text-slate-600">История задачи</p>
+                                    {selectedShipmentTaskLogs.length === 0 ? (
+                                      <p className="text-sm text-slate-600">История по задаче пока пустая</p>
+                                    ) : (
+                                      <div className="divide-y divide-slate-100">
+                                        {selectedShipmentTaskLogs.map((log) => {
+                                          const ts = Date.parse(log.createdAt);
+                                          const when = Number.isFinite(ts)
+                                            ? format(new Date(ts), "dd.MM.yyyy HH:mm", { locale: ru })
+                                            : log.createdAt || "—";
+                                          return (
+                                            <div key={log.id} className="py-2.5 first:pt-0 last:pb-0">
+                                              <p className="text-xs tabular-nums text-slate-500">{when}</p>
+                                              <p className="mt-0.5 text-sm text-slate-900">
+                                                {formatOperationLogDescription(log.description)}
+                                              </p>
+                                              <p className="mt-0.5 text-xs text-slate-600">
+                                                {formatOperationLogShortStatus(log.type)}
+                                              </p>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
                                   </div>
                                   {hasShippingProblem ? (
                                     <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2">
