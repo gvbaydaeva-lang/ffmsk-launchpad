@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import ReceivingTaskWorkScreen from "@/components/app/ReceivingTaskWorkScreen";
+import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useAppendOperationLog, useInboundSupplies, useInventoryMovements, useLegalEntities } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
@@ -38,7 +40,7 @@ const ReceivingPage = () => {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [startedSupplyId, setStartedSupplyId] = React.useState<string | null>(null);
-  const [receivingArchivePeekId, setReceivingArchivePeekId] = React.useState<string | null>(null);
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -82,7 +84,7 @@ const ReceivingPage = () => {
   }, [data, mp, legalEntityId, search, entityName, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
   React.useEffect(() => {
-    setReceivingArchivePeekId(null);
+    setSelectedId(null);
   }, [viewMode]);
   const warehouses = React.useMemo(() => Array.from(new Set(rows.map((x) => x.destinationWarehouse))).filter(Boolean), [rows]);
   const startedSupply =
@@ -301,7 +303,7 @@ const ReceivingPage = () => {
               <p className="text-sm text-slate-600">
                 {viewMode === "active" ? "Нет активных документов приёмки." : "Архив приёмки пуст."}
               </p>
-            ) : (
+            ) : viewMode === "active" ? (
               <TaskRegistryTable
                 archiveMode={viewMode === "archive"}
                 disableActionForCompleted={viewMode !== "archive"}
@@ -331,100 +333,148 @@ const ReceivingPage = () => {
                   };
                 })}
                 onOpen={(id) => {
-                  if (viewMode === "archive") {
-                    setReceivingArchivePeekId((p) => (p === id ? null : id));
-                    return;
-                  }
                   const supply = rows.find((x) => x.id === id);
                   if (!supply) return;
                   void startReceiving(supply);
                 }}
                 onAction={(id) => {
-                  if (viewMode === "archive") {
-                    setReceivingArchivePeekId((p) => (p === id ? null : id));
-                    return;
-                  }
                   const supply = rows.find((x) => x.id === id);
                   if (!supply) return;
                   void startReceiving(supply);
                 }}
               />
-            )}
-            {viewMode === "archive" && receivingArchivePeekId ? (
-              (() => {
-                const peek = rows.find((s) => s.id === receivingArchivePeekId) ?? (data ?? []).find((s) => s.id === receivingArchivePeekId);
-                if (!peek) return null;
-                const plan = peek.items.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0);
-                const fact = peek.items.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0);
-                const diff = fact - plan;
-                return (
-                  <Card className="mt-3 border-slate-200 bg-slate-50/50 shadow-sm">
-                    <CardHeader className="border-b border-slate-100 px-4 py-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <CardTitle className="text-base">Состав задания №{peek.documentNo || "—"}</CardTitle>
-                        <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setReceivingArchivePeekId(null)}>
-                          Закрыть
-                        </Button>
-                      </div>
-                      <CardDescription className="text-slate-600">Просмотр (архив)</CardDescription>
-                    </CardHeader>
-                    <CardContent className="overflow-x-auto p-3">
-                      <div className="mb-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
-                        <div>
-                          <span className="text-slate-500">Юрлицо</span>
-                          <div className="font-medium text-slate-900">{entityName(peek.legalEntityId)}</div>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">Склад</span>
-                          <div className="font-medium text-slate-900">{peek.destinationWarehouse || "—"}</div>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">План</span>
-                          <div className="font-medium tabular-nums text-slate-900">{plan}</div>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">Факт</span>
-                          <div className="font-medium tabular-nums text-slate-900">{fact}</div>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">Разница</span>
-                          <div
-                            className={`font-medium tabular-nums ${
-                              diff === 0 ? "text-slate-900" : diff > 0 ? "text-red-700" : "text-amber-800"
-                            }`}
+            ) : (
+              <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-slate-200">
+                <Table className="min-w-[1180px] table-auto">
+                  <TableHeader>
+                    <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
+                      <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата создания</TableHead>
+                      <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Дата завершения</TableHead>
+                      <TableHead className="h-9 min-w-[140px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">№ задания</TableHead>
+                      <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
+                      <TableHead className="h-9 min-w-[130px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
+                      <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
+                      <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Перерасход</TableHead>
+                      <TableHead className="h-9 w-[110px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((supply) => {
+                      const plan = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+                      const fact = supply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
+                      const rem = Math.max(0, plan - fact);
+                      const over = Math.max(0, fact - plan);
+                      const isSel = selectedId === supply.id;
+                      const diff = fact - plan;
+                      return (
+                        <React.Fragment key={supply.id}>
+                          <TableRow
+                            className={`cursor-pointer border-slate-100 text-sm ${isSel ? "bg-slate-50" : ""}`}
+                            onClick={() => setSelectedId((prev) => (prev === supply.id ? null : supply.id))}
                           >
-                            {diff}
-                          </div>
-                        </div>
-                      </div>
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-slate-100">
-                          <tr>
-                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
-                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
-                            <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
-                            <th className="border-b px-2 py-1.5 text-right text-xs font-medium">Факт</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {peek.items.map((item, index) => (
-                            <tr key={`${peek.id}-${item.barcode}-${index}`} className="odd:bg-white even:bg-slate-50/50">
-                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.name || "—"}</td>
-                              <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{item.barcode || "—"}</td>
-                              <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.plannedQuantity) || 0}</td>
-                              <td className="border-b px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.factualQuantity) || 0}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <p className="mt-2 text-xs text-slate-600">
-                        План {plan} · Факт {fact}
-                      </p>
-                    </CardContent>
-                  </Card>
-                );
-              })()
-            ) : null}
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums">
+                              {formatTaskArchiveDateLabel(inboundSupplyCreatedAtIso(supply))}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-700">
+                              {formatTaskArchiveDateLabel(inboundSupplyCompletedAtIso(supply))}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 font-medium">{supply.documentNo || "—"}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">{entityName(supply.legalEntityId)}</TableCell>
+                            <TableCell className="px-3 py-2">
+                              <StatusBadge status={workflowFromInbound(supply)} />
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2">{supply.destinationWarehouse || "—"}</TableCell>
+                            <TableCell className="px-3 py-2">{supply.marketplace.toUpperCase()}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{plan}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{fact}</TableCell>
+                            <TableCell className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${rem > 0 ? "font-medium text-amber-800" : ""}`}>
+                              {rem}
+                            </TableCell>
+                            <TableCell className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${over > 0 ? "font-medium text-red-700" : ""}`}>
+                              {over}
+                            </TableCell>
+                            <TableCell className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 hover:bg-slate-50"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedId((prev) => (prev === supply.id ? null : supply.id));
+                                }}
+                              >
+                                {isSel ? "Свернуть" : "Открыть"}
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                          {isSel ? (
+                            <TableRow className="border-slate-100 bg-slate-50/90">
+                              <TableCell colSpan={12} className="align-top p-0">
+                                <div className="space-y-4 border-t border-slate-200 p-4">
+                                  <div>
+                                    <h3 className="font-display text-base font-semibold text-slate-900">Приёмка №{supply.documentNo || "—"}</h3>
+                                    <p className="mt-1 text-sm text-slate-600">Просмотр архивной приёмки (только чтение)</p>
+                                  </div>
+                                  <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+                                    <div>
+                                      <span className="text-slate-500">Юрлицо</span>
+                                      <div className="font-medium text-slate-900">{entityName(supply.legalEntityId)}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Склад</span>
+                                      <div className="font-medium text-slate-900">{supply.destinationWarehouse || "—"}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">План</span>
+                                      <div className="font-medium tabular-nums text-slate-900">{plan}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Факт</span>
+                                      <div className="font-medium tabular-nums text-slate-900">{fact}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Разница</span>
+                                      <div className={`font-medium tabular-nums ${diff === 0 ? "text-slate-900" : diff > 0 ? "text-red-700" : "text-amber-800"}`}>
+                                        {diff}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="overflow-x-auto rounded-md border border-slate-200">
+                                    <table className="min-w-full text-sm">
+                                      <thead className="bg-slate-100">
+                                        <tr>
+                                          <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
+                                          <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
+                                          <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
+                                          <th className="border-b px-2 py-1.5 text-right text-xs font-medium">Факт</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {supply.items.map((item, index) => (
+                                          <tr key={`${supply.id}-${item.barcode}-${index}`} className="odd:bg-white even:bg-slate-50/50">
+                                            <td className="border-b border-r px-2 py-1.5 text-xs">{item.name || "—"}</td>
+                                            <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{item.barcode || "—"}</td>
+                                            <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.plannedQuantity) || 0}</td>
+                                            <td className="border-b px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.factualQuantity) || 0}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </CardContent>
         </Card>
       ) : null}
