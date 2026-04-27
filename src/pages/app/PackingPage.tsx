@@ -508,6 +508,7 @@ const PackingPage = () => {
 
   const finalizeAssignment = async () => {
     if (!startedAssignment || progress.totalPlan === 0) return;
+    const fullyPacked = progress.totalFact >= progress.totalPlan || progress.remaining === 0;
     const taskId = startedAssignment.id;
     const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
     if (hasTaskMovements(taskId, "OUTBOUND", invSnapshot)) {
@@ -578,7 +579,7 @@ const PackingPage = () => {
         shortages.push(`${label} (${key.split("::")[2] ?? ""}): нужно ${need}, на остатке ${have}`);
       }
     }
-    if (shortages.length) {
+    if (!fullyPacked && shortages.length) {
       appendOperationLog({
         type: "STOCK_ERROR",
         legalEntityId: startedAssignment.legalEntityId,
