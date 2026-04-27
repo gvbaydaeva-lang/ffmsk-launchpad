@@ -71,15 +71,15 @@ function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiSta
   const perRow = shipments.map((s): ShippingUiStatus => {
     const wf = (s.workflowStatus ?? "pending") as string;
     if (wf === "shipped_with_diff") return "shipped_with_diff";
-    if (wf === "completed" || s.status === "отгружено") return "completed";
+    if (wf === "completed") return "assembled";
     if (wf === "processing" || wf === "assembling" || wf === "assembled" || wf === "shipped") return wf;
+    if (s.status === "отгружено") return "shipped";
     return "pending";
   });
   if (perRow.some((x) => x === "processing")) return "processing";
   if (perRow.some((x) => x === "assembling")) return "assembling";
   if (perRow.every((x) => x === "shipped_with_diff")) return "shipped_with_diff";
   if (perRow.every((x) => x === "shipped")) return "shipped";
-  if (perRow.every((x) => x === "completed")) return "completed";
   if (perRow.every((x) => x === "assembled")) return "assembled";
   return "pending";
 }
@@ -484,7 +484,6 @@ const ShippingPage = () => {
               <SelectItem value="processing">В работе</SelectItem>
               <SelectItem value="assembling">В сборке</SelectItem>
               <SelectItem value="assembled">Собрано</SelectItem>
-              <SelectItem value="completed">Завершено</SelectItem>
               <SelectItem value="shipped">Отгружено</SelectItem>
               <SelectItem value="shipped_with_diff">Отгружено с расхождением</SelectItem>
             </SelectContent>
