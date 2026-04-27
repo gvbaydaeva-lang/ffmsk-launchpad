@@ -173,7 +173,7 @@ const ShippingPage = () => {
   const [pendingDiffDoc, setPendingDiffDoc] = React.useState<ShipmentDoc | null>(null);
   const [selectedDiffReason, setSelectedDiffReason] = React.useState<string>("");
 
-  const openTaskParam = searchParams.get("openTask");
+  const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
   /** Диплинк с дашборда: показать только отгрузки с расхождением (в архиве — терминальный статус). */
   React.useEffect(() => {
     if (searchParams.get("status") !== "shipped_with_diff") return;
@@ -267,32 +267,44 @@ const ShippingPage = () => {
     });
   }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo]);
 
+  const openTaskResolvedId = React.useMemo(() => {
+    if (!openTaskDecoded) return null;
+    const list = Array.isArray(documents) ? documents : [];
+    const trimmed = openTaskDecoded.trim();
+    const byId = list.find((d) => d && d.id === openTaskDecoded);
+    if (byId) return byId.id;
+    const byAssignment = list.find((d) => d && String(d.assignmentNo ?? "").trim() === trimmed);
+    return byAssignment?.id ?? null;
+  }, [openTaskDecoded, documents]);
+
   React.useEffect(() => {
     if (isLoading || error) return;
     if (!openTaskDecoded) {
       urlOpenTaskApplied.current = null;
       return;
     }
-    if (urlOpenTaskApplied.current === openTaskDecoded) return;
-    const list = Array.isArray(documents) ? documents : [];
-    const found = list.find((d) => d && d.id === openTaskDecoded);
-    if (found) {
-      setSelectedId(openTaskDecoded);
-      urlOpenTaskApplied.current = openTaskDecoded;
-    }
-  }, [isLoading, error, openTaskDecoded, documents]);
+    if (!openTaskResolvedId) return;
+    const token = `${openTaskDecoded}\0${openTaskResolvedId}`;
+    if (urlOpenTaskApplied.current === token) return;
+    setSelectedId(openTaskResolvedId);
+    urlOpenTaskApplied.current = token;
+  }, [isLoading, error, openTaskDecoded, openTaskResolvedId, documents]);
 
   React.useEffect(() => {
-    if (!openTaskDecoded) {
+    if (!openTaskParam) {
       openTaskScrollDone.current = null;
     }
+  }, [openTaskParam]);
+
+  React.useEffect(() => {
+    openTaskScrollDone.current = null;
   }, [openTaskDecoded]);
 
   React.useEffect(() => {
-    if (!openTaskDecoded) {
+    if (!openTaskParam) {
       setOpenTaskHighlightId(null);
     }
-  }, [openTaskDecoded]);
+  }, [openTaskParam]);
 
   React.useEffect(() => {
     if (!openTaskHighlightId) return;
@@ -300,10 +312,10 @@ const ShippingPage = () => {
     return () => window.clearTimeout(t);
   }, [openTaskHighlightId]);
 
-  /** После раскрытия состава: прокрутка к центру экрана и краткая подсветка (только openTask). */
+  /** После раскрытия состава: прокрутка к центру экрана и краткая подсветка (openTaskId / openTask). */
   React.useEffect(() => {
-    if (!openTaskDecoded || selectedId !== openTaskDecoded) return;
-    if (openTaskScrollDone.current === openTaskDecoded) return;
+    if (!openTaskResolvedId || selectedId !== openTaskResolvedId) return;
+    if (openTaskScrollDone.current === openTaskResolvedId) return;
     let cancelled = false;
 
     const tryScroll = (): boolean => {
@@ -312,8 +324,8 @@ const ShippingPage = () => {
       if (cancelled) return false;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       if (cancelled) return false;
-      openTaskScrollDone.current = openTaskDecoded;
-      setOpenTaskHighlightId(openTaskDecoded);
+      openTaskScrollDone.current = openTaskResolvedId;
+      setOpenTaskHighlightId(openTaskResolvedId);
       return true;
     };
 
@@ -323,7 +335,7 @@ const ShippingPage = () => {
       if (tryScroll()) return;
       t2 = window.setTimeout(() => {
         if (cancelled) return;
-        if (openTaskScrollDone.current === openTaskDecoded) return;
+        if (openTaskScrollDone.current === openTaskResolvedId) return;
         tryScroll();
       }, 280);
     }, 200);
@@ -333,7 +345,7 @@ const ShippingPage = () => {
       window.clearTimeout(t1);
       if (t2) window.clearTimeout(t2);
     };
-  }, [openTaskDecoded, selectedId, documents.length]);
+  }, [openTaskResolvedId, selectedId, documents.length]);
 
   /**
    * ⚠️ только при наличии строк, где: plan>0, fact<plan, plan>доступно, доступно=max(0, остаток−резерв).
@@ -609,7 +621,7 @@ const ShippingPage = () => {
                       return (
                         <React.Fragment key={doc.id}>
                           <TableRow
-                            ref={openTaskDecoded === doc.id ? openTaskRowRef : undefined}
+                            ref={openTaskResolvedId === doc.id ? openTaskRowRef : undefined}
                             className={cn(
                               "cursor-pointer border-slate-100 text-sm transition-[background-color,box-shadow] duration-300",
                               isSel ? "bg-slate-50" : "",

@@ -463,52 +463,65 @@ const DashboardPage = () => {
             <p className="text-sm text-slate-600">Нет задач для отображения</p>
           ) : (
             <ul className="space-y-1">
-              {startWithTopTasks.map((row, index) => (
+              {startWithTopTasks.map((row, index) => {
+                const openShippingTask = () => {
+                  const id = String(row.label ?? "").trim() || row.groupKey;
+                  navigate(`/shipping?openTaskId=${encodeURIComponent(id)}`);
+                };
+                return (
                 <li key={row.groupKey} className="min-w-0">
                   {index === 0 ? (
                     <p className="mb-1 text-xs font-medium text-slate-500">Рекомендуем начать с:</p>
                   ) : null}
                   <div
-                    role="button"
-                    tabIndex={0}
-                    title="Открыть отгрузки"
-                    onClick={() => navigate(`/shipping?openTask=${encodeURIComponent(row.groupKey)}`)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ")
-                        navigate(`/shipping?openTask=${encodeURIComponent(row.groupKey)}`);
-                    }}
                     className={cn(
-                      "flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2.5 text-sm text-slate-800 transition-colors",
+                      "flex items-stretch gap-2 rounded-lg px-2 py-2.5 text-sm text-slate-800 transition-colors",
                       index === 0
-                        ? "bg-slate-100/90 font-semibold ring-1 ring-slate-200/60 hover:bg-slate-100"
-                        : "hover:bg-slate-50",
+                        ? "bg-slate-100/90 font-semibold ring-1 ring-slate-200/60"
+                        : "",
                     )}
-                    aria-label={`Открыть отгрузки, задание ${row.label}`}
                   >
-                    <span
-                      className="inline-flex w-5 shrink-0 justify-center text-center text-base leading-tight"
-                      aria-hidden
+                    <button
+                      type="button"
+                      title="Открыть отгрузки"
+                      onClick={openShippingTask}
+                      className={cn(
+                        "flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md border-0 bg-transparent text-left text-inherit",
+                        index === 0 ? "hover:bg-slate-100/80" : "hover:bg-slate-50",
+                      )}
+                      aria-label={`Открыть отгрузки, задание ${row.label}`}
                     >
-                      {row.line === "shortage" ? "⚠️" : row.line === "high" ? "🔴" : "\u2003"}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className={cn("tabular-nums text-slate-900", index === 0 ? "font-semibold" : "font-medium")}>
-                        {row.label}
-                      </p>
-                      <p className={cn("mt-0.5 text-slate-600", index === 0 ? "font-semibold" : "font-normal")}>
-                        {row.line === "shortage" && row.shortageUnits != null
-                          ? `Нехватка: ${row.shortageUnits} шт`
-                          : row.line === "high"
-                            ? "Высокий приоритет"
-                            : "В работе"}
-                      </p>
-                    </div>
-                    <span className="shrink-0 self-center text-xs text-slate-400" aria-hidden>
+                      <span
+                        className="inline-flex w-5 shrink-0 justify-center text-center text-base leading-tight"
+                        aria-hidden
+                      >
+                        {row.line === "shortage" ? "⚠️" : row.line === "high" ? "🔴" : "\u2003"}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className={cn("tabular-nums text-slate-900", index === 0 ? "font-semibold" : "font-medium")}>
+                          {row.label}
+                        </p>
+                        <p className={cn("mt-0.5 text-slate-600", index === 0 ? "font-semibold" : "font-normal")}>
+                          {row.line === "shortage" && row.shortageUnits != null
+                            ? `Нехватка: ${row.shortageUnits} шт`
+                            : row.line === "high"
+                              ? "Высокий приоритет"
+                              : "В работе"}
+                        </p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openShippingTask}
+                      className="shrink-0 self-center cursor-pointer rounded-md border border-slate-200/80 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900"
+                      aria-label={`Открыть отгрузки, задание ${row.label}`}
+                    >
                       Открыть отгрузки
-                    </span>
+                    </button>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </CardContent>
