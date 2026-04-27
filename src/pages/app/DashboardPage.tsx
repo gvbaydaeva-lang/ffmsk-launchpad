@@ -106,8 +106,10 @@ const DashboardPage = () => {
   const startWithTopTasks: Array<{
     groupKey: string;
     label: string;
-    line: "shortage" | "high" | "processing";
+    kind: "shortage" | "shipped_with_diff" | "in_work";
     shortageUnits?: number;
+    diffUnits?: number;
+    shippingHref: string;
   }> = (() => {
     if (!Array.isArray(assignments) || assignments.length === 0) {
       return [];
@@ -117,12 +119,12 @@ const DashboardPage = () => {
     const resByKey = reservedQtyByBalanceKey(shipping, catalog);
     const hasMovements = movements.length > 0;
 
-    const groupKey = (rows: (typeof shipping)[number][]) => {
+    const groupKeyOf = (rows: (typeof shipping)[number][]) => {
       if (!Array.isArray(rows) || !rows[0]) return "";
       const r = rows[0];
       return `${r.legalEntityId}::${r.assignmentId ?? r.assignmentNo ?? r.id}`;
     };
-    const label = (rows: (typeof shipping)[number][]) => {
+    const labelOf = (rows: (typeof shipping)[number][]) => {
       if (!Array.isArray(rows) || !rows[0]) return "";
       const r = rows[0];
       return String(r.assignmentNo?.trim() || r.assignmentId?.trim() || r.id);
@@ -145,45 +147,82 @@ const DashboardPage = () => {
       }
       return total;
     };
+    const diffUnitsForGroup = (rows: (typeof shipping)[number][]) => {
+      if (!Array.isArray(rows) || rows.length === 0) return 0;
+      return rows.reduce((sum, sh) => {
+        const plan = Number(sh.plannedUnits) || 0;
+        const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+        return sum + Math.max(0, plan - fact);
+      }, 0);
+    };
 
-    type StartCandidate = {
+    type StartCand = {
       groupKey: string;
       label: string;
-      line: "shortage" | "high" | "processing";
+      kind: "shortage" | "shipped_with_diff" | "in_work";
       shortageUnits: number;
+      diffUnits: number;
       mergedPriority: OutboundTaskPriority;
       assignOrder: number;
       createdTs: number;
     };
 
-    const candidates: StartCandidate[] = [];
+    const tierShortage: StartCand[] = [];
+    const tierDiff: StartCand[] = [];
+    const tierWork: StartCand[] = [];
+
     assignments.forEach((rows, assignOrder) => {
       if (!Array.isArray(rows) || !rows[0]) return;
-      const k = groupKey(rows);
-      if (!k) return;
+      const gk = groupKeyOf(rows);
+      if (!gk) return;
       const st = shortageTotalForGroup(rows);
-      const mergedPriority = mergePriorityFromShipments(rows);
+      const ui = dashboardOutboundGroupUiStatus(rows);
       const wf = workflowFromOutboundGroup(rows);
-      const eligible = st > 0 || mergedPriority === "high" || wf === "processing";
-      if (!eligible) return;
-      let line: StartCandidate["line"] = "processing";
-      if (st > 0) line = "shortage";
-      else if (mergedPriority === "high") line = "high";
+      const mergedPriority = mergePriorityFromShipments(rows);
       const first = rows[0];
       const rawDate = first?.createdAt ?? first?.updatedAt ?? "";
       const parsed = Date.parse(String(rawDate));
-      candidates.push({
-        groupKey: k,
-        label: label(rows),
-        line,
-        shortageUnits: st,
-        mergedPriority,
-        assignOrder,
-        createdTs: Number.isFinite(parsed) ? parsed : 0,
-      });
+      const createdTs = Number.isFinite(parsed) ? parsed : 0;
+      const diffU = diffUnitsForGroup(rows);
+      const label = labelOf(rows);
+
+      if (hasMovements && st > 0) {
+        tierShortage.push({
+          groupKey: gk,
+          label,
+          kind: "shortage",
+          shortageUnits: st,
+          diffUnits: diffU,
+          mergedPriority,
+          assignOrder,
+          createdTs,
+        });
+      } else if (ui === "shipped_with_diff") {
+        tierDiff.push({
+          groupKey: gk,
+          label,
+          kind: "shipped_with_diff",
+          shortageUnits: st,
+          diffUnits: diffU,
+          mergedPriority,
+          assignOrder,
+          createdTs,
+        });
+      } else if (wf === "processing" || wf === "assembling") {
+        tierWork.push({
+          groupKey: gk,
+          label,
+          kind: "in_work",
+          shortageUnits: st,
+          diffUnits: diffU,
+          mergedPriority,
+          assignOrder,
+          createdTs,
+        });
+      }
     });
 
-    candidates.sort((a, b) => {
+    tierShortage.sort((a, b) => {
       if (b.shortageUnits !== a.shortageUnits) return b.shortageUnits - a.shortageUnits;
       const pa = outboundPrioritySortKey(a.mergedPriority);
       const pb = outboundPrioritySortKey(b.mergedPriority);
@@ -191,13 +230,48 @@ const DashboardPage = () => {
       if (a.assignOrder !== b.assignOrder) return a.assignOrder - b.assignOrder;
       return a.createdTs - b.createdTs;
     });
+    tierDiff.sort((a, b) => {
+      if (b.diffUnits !== a.diffUnits) return b.diffUnits - a.diffUnits;
+      return a.createdTs - b.createdTs;
+    });
+    tierWork.sort((a, b) => {
+      const pa = outboundPrioritySortKey(a.mergedPriority);
+      const pb = outboundPrioritySortKey(b.mergedPriority);
+      if (pa !== pb) return pa - pb;
+      if (a.assignOrder !== b.assignOrder) return a.assignOrder - b.assignOrder;
+      return a.createdTs - b.createdTs;
+    });
 
-    return candidates.slice(0, 3).map((c) => ({
-      groupKey: c.groupKey,
-      label: c.label,
-      line: c.line,
-      shortageUnits: c.line === "shortage" && c.shortageUnits > 0 ? c.shortageUnits : undefined,
-    }));
+    const cap = 3;
+    const out: Array<{
+      groupKey: string;
+      label: string;
+      kind: "shortage" | "shipped_with_diff" | "in_work";
+      shortageUnits?: number;
+      diffUnits?: number;
+      shippingHref: string;
+    }> = [];
+
+    const push = (c: StartCand) => {
+      if (out.length >= cap) return;
+      const href =
+        c.kind === "shipped_with_diff"
+          ? `/shipping?status=shipped_with_diff&openTask=${encodeURIComponent(c.groupKey)}`
+          : `/shipping?openTask=${encodeURIComponent(c.groupKey)}`;
+      out.push({
+        groupKey: c.groupKey,
+        label: c.label,
+        kind: c.kind,
+        shortageUnits: c.kind === "shortage" ? c.shortageUnits : undefined,
+        diffUnits: c.kind === "shipped_with_diff" ? c.diffUnits : undefined,
+        shippingHref: href,
+      });
+    };
+
+    for (const c of tierShortage) push(c);
+    for (const c of tierDiff) push(c);
+    for (const c of tierWork) push(c);
+    return out;
   })();
 
   const shippingTotal = assignments.length;
@@ -487,12 +561,20 @@ const DashboardPage = () => {
           ) : (
             <ul className="space-y-1">
               {startWithTopTasks.map((row, index) => {
-                const openShippingTask = () => {
-                  const id = String(row.label ?? "").trim() || row.groupKey;
-                  navigate(`/shipping?openTaskId=${encodeURIComponent(id)}`);
+                const openTask = () => {
+                  if (!row.shippingHref) return;
+                  navigate(row.shippingHref);
                 };
+                const reasonLine =
+                  row.kind === "shortage" && row.shortageUnits != null && row.shortageUnits > 0
+                    ? `Нехватка: ${row.shortageUnits} шт`
+                    : row.kind === "shipped_with_diff"
+                      ? `Расхождение: ${row.diffUnits ?? 0} шт`
+                      : "В работе";
+                const icon =
+                  row.kind === "shortage" ? "⚠️" : row.kind === "shipped_with_diff" ? "⚠️" : "\u2003";
                 return (
-                <li key={row.groupKey} className="min-w-0">
+                <li key={`${row.groupKey}-${row.kind}`} className="min-w-0">
                   {index === 0 ? (
                     <p className="mb-1 text-xs font-medium text-slate-500">Рекомендуем начать с:</p>
                   ) : null}
@@ -504,43 +586,32 @@ const DashboardPage = () => {
                         : "",
                     )}
                   >
-                    <button
-                      type="button"
-                      title="Открыть отгрузки"
-                      onClick={openShippingTask}
-                      className={cn(
-                        "flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md border-0 bg-transparent text-left text-inherit",
-                        index === 0 ? "hover:bg-slate-100/80" : "hover:bg-slate-50",
-                      )}
-                      aria-label={`Открыть отгрузки, задание ${row.label}`}
-                    >
+                    <div className="flex min-w-0 flex-1 items-start gap-2">
                       <span
                         className="inline-flex w-5 shrink-0 justify-center text-center text-base leading-tight"
                         aria-hidden
                       >
-                        {row.line === "shortage" ? "⚠️" : row.line === "high" ? "🔴" : "\u2003"}
+                        {icon}
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className={cn("tabular-nums text-slate-900", index === 0 ? "font-semibold" : "font-medium")}>
                           {row.label}
                         </p>
                         <p className={cn("mt-0.5 text-slate-600", index === 0 ? "font-semibold" : "font-normal")}>
-                          {row.line === "shortage" && row.shortageUnits != null
-                            ? `Нехватка: ${row.shortageUnits} шт`
-                            : row.line === "high"
-                              ? "Высокий приоритет"
-                              : "В работе"}
+                          {reasonLine}
                         </p>
                       </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openShippingTask}
-                      className="shrink-0 self-center cursor-pointer rounded-md border border-slate-200/80 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900"
-                      aria-label={`Открыть отгрузки, задание ${row.label}`}
-                    >
-                      Открыть отгрузки
-                    </button>
+                    </div>
+                    {row.shippingHref ? (
+                      <button
+                        type="button"
+                        onClick={openTask}
+                        className="shrink-0 self-center cursor-pointer rounded-md border border-slate-200/80 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900"
+                        aria-label={`Открыть задачу ${row.label}`}
+                      >
+                        Открыть задачу
+                      </button>
+                    ) : null}
                   </div>
                 </li>
                 );
