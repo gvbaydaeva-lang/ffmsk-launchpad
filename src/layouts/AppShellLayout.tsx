@@ -33,6 +33,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { useScanner } from "@/contexts/ScannerContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
+import GlobalShipmentSearch from "@/components/app/GlobalShipmentSearch";
 import { useInboundSupplies, useOutboundShipments } from "@/hooks/useWmsMock";
 import { cn } from "@/lib/utils";
 
@@ -138,36 +139,39 @@ const AppShellLayout = () => {
       </Sidebar>
       <SidebarRail />
       <SidebarInset className="min-w-0 overflow-x-hidden bg-slate-50">
-        <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 bg-white/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-white/80 md:px-4">
-          <SidebarTrigger className="-ml-0.5 text-slate-700" />
-          <Separator orientation="vertical" className="mr-1 h-6 bg-slate-200" />
-          <div className="min-w-0 flex-1">
+        <header className="sticky top-0 z-20 flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-white/95 px-3 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-white/80 md:flex-nowrap md:px-4 md:py-0">
+          <SidebarTrigger className="-ml-0.5 shrink-0 text-slate-700" />
+          <Separator orientation="vertical" className="mr-1 h-6 shrink-0 bg-slate-200" />
+          <div className="min-w-0 shrink md:max-w-[min(240px,32%)]">
             <h1 className="truncate text-sm font-semibold text-slate-900 md:text-base">{current?.label ?? "Кабинет"}</h1>
             <p className="hidden text-xs text-slate-500 sm:block">Операционный кабинет</p>
           </div>
-          <Select value={role} onValueChange={(v) => setRole(v as typeof role)}>
-            <SelectTrigger className="h-9 w-[160px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ADMIN">ADMIN</SelectItem>
-              <SelectItem value="WAREHOUSE">WAREHOUSE</SelectItem>
-              <SelectItem value="CLIENT">CLIENT</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="inline-flex shrink-0 gap-2 border-slate-200 bg-white shadow-none"
-            onClick={() => openScanner()}
-          >
-            <ScanLine className="h-4 w-4 text-slate-600" />
-            Сканер
-            <kbd className="pointer-events-none rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-600">
-              /
-            </kbd>
-          </Button>
+          <GlobalShipmentSearch />
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Select value={role} onValueChange={(v) => setRole(v as typeof role)}>
+              <SelectTrigger className="h-9 w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ADMIN">ADMIN</SelectItem>
+                <SelectItem value="WAREHOUSE">WAREHOUSE</SelectItem>
+                <SelectItem value="CLIENT">CLIENT</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="inline-flex shrink-0 gap-2 border-slate-200 bg-white shadow-none"
+              onClick={() => openScanner()}
+            >
+              <ScanLine className="h-4 w-4 text-slate-600" />
+              Сканер
+              <kbd className="pointer-events-none rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-600">
+                /
+              </kbd>
+            </Button>
+          </div>
         </header>
         <div className={cn("flex min-w-0 flex-1 flex-col gap-6 overflow-x-hidden p-4 pb-10 md:p-6")}>
           <Outlet />
