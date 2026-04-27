@@ -240,7 +240,12 @@ const DashboardPage = () => {
   ).length;
   const attentionItems = [
     shippingProblematic > 0
-      ? { id: "shipping-problem", text: "Есть отгрузки с нехваткой товара", path: "/shipping", count: shippingProblematic }
+      ? {
+          id: "shipping-problem",
+          text: "Есть отгрузки с нехваткой товара",
+          path: "/shipping?problem=shortage",
+          count: shippingProblematic,
+        }
       : null,
     shippingWithDiscrepancy > 0
       ? {
@@ -251,10 +256,20 @@ const DashboardPage = () => {
         }
       : null,
     inventoryUnavailable > 0
-      ? { id: "inventory-unavailable", text: "Есть товары без доступного остатка", path: "/inventory", count: inventoryUnavailable }
+      ? {
+          id: "inventory-unavailable",
+          text: "Есть товары без доступного остатка",
+          path: "/inventory?available=zero",
+          count: inventoryUnavailable,
+        }
       : null,
     activeAssignmentsInWork > 0
-      ? { id: "active-work", text: "Есть активные задания в работе", path: "/packing", count: activeAssignmentsInWork }
+      ? {
+          id: "active-work",
+          text: "Есть активные задания в работе",
+          path: "/packing?status=processing",
+          count: activeAssignmentsInWork,
+        }
       : null,
   ].filter((item): item is { id: string; text: string; path: string; count: number } => item !== null);
 

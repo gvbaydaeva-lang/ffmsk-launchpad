@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useSearchParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
@@ -44,6 +45,8 @@ function mpDisplay(mp: string): string {
 }
 
 const InventoryPage = () => {
+  const [searchParams] = useSearchParams();
+  const availableZeroFromUrl = searchParams.get("available") === "zero";
   const { data: entities } = useLegalEntities();
   const { balanceRows, data: movementData, isLoading, error } = useInventoryMovements();
   const { data: outboundRows, isLoading: outboundLoading } = useOutboundShipments();
@@ -62,6 +65,11 @@ const InventoryPage = () => {
     [balanceRows],
   );
 
+  const reservedByKey = React.useMemo(
+    () => reservedQtyByBalanceKey(outboundRows, catalogRows),
+    [outboundRows, catalogRows],
+  );
+
   const filtered = React.useMemo(() => {
     let rows = balanceRows;
     if (entityId !== "all") rows = rows.filter((x) => x.legalEntityId === entityId);
@@ -73,19 +81,20 @@ const InventoryPage = () => {
         `${x.legalEntityName} ${x.name} ${x.article} ${x.sku} ${x.barcode}`.toLowerCase().includes(q),
       );
     }
+    if (availableZeroFromUrl) {
+      rows = rows.filter((x) => {
+        const reserveQty = reservedByKey.get(x.key) ?? 0;
+        return x.balanceQty - reserveQty <= 0;
+      });
+    }
     return rows;
-  }, [balanceRows, entityId, warehouse, mp, search]);
+  }, [balanceRows, entityId, warehouse, mp, search, availableZeroFromUrl, reservedByKey]);
 
   const historyMoves = React.useMemo(
     () => (historyKey && movementData ? getMovementsByBalanceKey(movementData, historyKey) : []),
     [historyKey, movementData],
   );
   const historyRow = historyKey ? balanceRows.find((r) => r.key === historyKey) : null;
-
-  const reservedByKey = React.useMemo(
-    () => reservedQtyByBalanceKey(outboundRows, catalogRows),
-    [outboundRows, catalogRows],
-  );
 
   const tableLoading = isLoading || outboundLoading || catalogLoading;
 

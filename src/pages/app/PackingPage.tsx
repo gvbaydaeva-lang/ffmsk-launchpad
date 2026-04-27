@@ -96,6 +96,11 @@ const PackingPage = () => {
   const [mpFilter, setMpFilter] = React.useState<"all" | "wb" | "ozon" | "yandex">("all");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
+  React.useEffect(() => {
+    if (searchParams.get("status") !== "processing") return;
+    setStatusFilter("processing");
+    setViewMode("active");
+  }, [searchParams]);
   const [scanValue, setScanValue] = React.useState("");
   const [isSubmittingScan, setIsSubmittingScan] = React.useState(false);
   const [flashState, setFlashState] = React.useState<"ok" | "error" | null>(null);

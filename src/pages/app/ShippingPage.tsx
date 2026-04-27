@@ -17,7 +17,7 @@ import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
 import { useInventoryMovements, useLegalEntities, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
-import type { Marketplace, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
+import type { InventoryMovement, Marketplace, OutboundShipment, ProductCatalogItem, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCompletedAtIso } from "@/lib/taskArchiveDates";
 import { cn } from "@/lib/utils";
@@ -94,6 +94,36 @@ function shippingAvailableFromBalanceReserve(balance: number, reserve: number): 
 
 function shippingShortage(plan: number, available: number): number {
   return Math.max(0, plan - available);
+}
+
+/** Та же логика, что для ⚠ нехватки: plan>0, fact<plan, plan>доступно, доступно=max(0, остаток−резерв). Без движений — пусто. */
+function shippingStockShortageLinesForDoc(
+  doc: ShipmentDoc,
+  inventoryMovements: InventoryMovement[],
+  outboundRows: OutboundShipment[] | undefined,
+  catalog: ProductCatalogItem[] | undefined,
+): ShippingStockWarnLine[] {
+  if (!inventoryMovements.length) return [];
+  const balanceByKey = getBalanceByKeyMap(inventoryMovements);
+  const reserveByKey = reservedQtyByBalanceKey(outboundRows ?? [], catalog ?? []);
+  const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+  const lines: ShippingStockWarnLine[] = [];
+  for (const sh of doc.shipments) {
+    const plan = Number(sh.plannedUnits) || 0;
+    if (plan <= 0) continue;
+    const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+    if (fact >= plan) continue;
+    const product = byProduct.get(sh.productId) ?? null;
+    const key = balanceKeyFromOutboundShipment(sh, product);
+    const balanceQty = balanceByKey.get(key) ?? 0;
+    const reserveQty = reserveByKey.get(key) ?? 0;
+    const available = shippingAvailableFromBalanceReserve(balanceQty, reserveQty);
+    if (plan > available) {
+      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+      lines.push({ barcode, plan, available, shortage: shippingShortage(plan, available) });
+    }
+  }
+  return lines;
 }
 
 function formatShippingStockTooltip(lines: ShippingStockWarnLine[]): string {
@@ -183,6 +213,7 @@ const ShippingPage = () => {
       return raw;
     }
   }, [searchParams]);
+  const problemFromUrl = React.useMemo(() => searchParams.get("problem"), [searchParams]);
   /** Диплинк с дашборда: показать только отгрузки с расхождением (в архиве — терминальный статус). */
   React.useEffect(() => {
     if (searchParams.get("status") !== "shipped_with_diff") return;
@@ -272,13 +303,31 @@ const ShippingPage = () => {
       }
       return true;
     });
-    return withFilters.sort((a, b) => {
+    const afterProblem =
+      problemFromUrl === "shortage"
+        ? withFilters.filter((d) => shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0)
+        : withFilters;
+    return afterProblem.sort((a, b) => {
       if (viewMode === "archive") {
         return outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments);
       }
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
-  }, [filtered, search, entities, viewMode, statusFilter, warehouseFilter, dateFrom, dateTo, reasonFromUrl]);
+  }, [
+    filtered,
+    search,
+    entities,
+    viewMode,
+    statusFilter,
+    warehouseFilter,
+    dateFrom,
+    dateTo,
+    reasonFromUrl,
+    problemFromUrl,
+    inventoryMovements,
+    data,
+    catalog,
+  ]);
 
   const openTaskResolvedId = React.useMemo(() => {
     if (!openTaskDecoded) return null;
@@ -366,32 +415,8 @@ const ShippingPage = () => {
    */
   const shippingDocStockWarning = React.useMemo(() => {
     const map = new Map<string, { lines: ShippingStockWarnLine[] }>();
-    const empty = () => ({ lines: [] as ShippingStockWarnLine[] });
-    if (!inventoryMovements.length) {
-      for (const doc of documents) map.set(doc.id, empty());
-      return map;
-    }
-    const balanceByKey = getBalanceByKeyMap(inventoryMovements);
-    const reserveByKey = reservedQtyByBalanceKey(data ?? [], catalog ?? []);
-    const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     for (const doc of documents) {
-      const lines: ShippingStockWarnLine[] = [];
-      for (const sh of doc.shipments) {
-        const plan = Number(sh.plannedUnits) || 0;
-        if (plan <= 0) continue;
-        const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
-        if (fact >= plan) continue;
-        const product = byProduct.get(sh.productId) ?? null;
-        const key = balanceKeyFromOutboundShipment(sh, product);
-        const balanceQty = balanceByKey.get(key) ?? 0;
-        const reserveQty = reserveByKey.get(key) ?? 0;
-        const available = shippingAvailableFromBalanceReserve(balanceQty, reserveQty);
-        if (plan > available) {
-          const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
-          lines.push({ barcode, plan, available, shortage: shippingShortage(plan, available) });
-        }
-      }
-      map.set(doc.id, { lines });
+      map.set(doc.id, { lines: shippingStockShortageLinesForDoc(doc, inventoryMovements, data, catalog ?? []) });
     }
     return map;
   }, [documents, inventoryMovements, data, catalog]);
