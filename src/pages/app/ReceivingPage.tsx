@@ -136,6 +136,10 @@ const ReceivingPage = () => {
     const plan = latest.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
     const fact = latest.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
     if (plan <= 0) return;
+    if (fact < plan) {
+      const ok = window.confirm(`Вы завершаете приёмку с расхождением: принято ${fact} из ${plan}. Продолжить?`);
+      if (!ok) return;
+    }
     const hasDiscrepancy = latest.items.some((it) => {
       const p = Number(it.plannedQuantity) || 0;
       const f = Number(it.factualQuantity) || 0;
@@ -180,7 +184,9 @@ const ReceivingPage = () => {
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       setStartedSupplyId(null);
       if (hasDiscrepancy) {
-        toast.warning("Приёмка закрыта с расхождениями", { description: "Проверьте план и факт по строкам." });
+        toast.warning("Приёмка завершена с расхождением", {
+          description: `Приёмка завершена с расхождением (принято ${fact} из ${plan})`,
+        });
       } else {
         toast.success("Приёмка закрыта и убрана из активных.");
       }
@@ -350,6 +356,7 @@ const ReceivingPage = () => {
                 if (!peek) return null;
                 const plan = peek.items.reduce((s, it) => s + (Number(it.plannedQuantity) || 0), 0);
                 const fact = peek.items.reduce((s, it) => s + (Number(it.factualQuantity) || 0), 0);
+                const diff = fact - plan;
                 return (
                   <Card className="mt-3 border-slate-200 bg-slate-50/50 shadow-sm">
                     <CardHeader className="border-b border-slate-100 px-4 py-3">
@@ -362,15 +369,39 @@ const ReceivingPage = () => {
                       <CardDescription className="text-slate-600">Просмотр (архив)</CardDescription>
                     </CardHeader>
                     <CardContent className="overflow-x-auto p-3">
+                      <div className="mb-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+                        <div>
+                          <span className="text-slate-500">Юрлицо</span>
+                          <div className="font-medium text-slate-900">{entityName(peek.legalEntityId)}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Склад</span>
+                          <div className="font-medium text-slate-900">{peek.destinationWarehouse || "—"}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">План</span>
+                          <div className="font-medium tabular-nums text-slate-900">{plan}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Факт</span>
+                          <div className="font-medium tabular-nums text-slate-900">{fact}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Разница</span>
+                          <div
+                            className={`font-medium tabular-nums ${
+                              diff === 0 ? "text-slate-900" : diff > 0 ? "text-red-700" : "text-amber-800"
+                            }`}
+                          >
+                            {diff}
+                          </div>
+                        </div>
+                      </div>
                       <table className="min-w-full text-sm">
                         <thead className="bg-slate-100">
                           <tr>
                             <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
-                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Артикул</th>
                             <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
-                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">МП</th>
-                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Цвет</th>
-                            <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Размер</th>
                             <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
                             <th className="border-b px-2 py-1.5 text-right text-xs font-medium">Факт</th>
                           </tr>
@@ -379,11 +410,7 @@ const ReceivingPage = () => {
                           {peek.items.map((item, index) => (
                             <tr key={`${peek.id}-${item.barcode}-${index}`} className="odd:bg-white even:bg-slate-50/50">
                               <td className="border-b border-r px-2 py-1.5 text-xs">{item.name || "—"}</td>
-                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.supplierArticle || "—"}</td>
                               <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{item.barcode || "—"}</td>
-                              <td className="border-b border-r px-2 py-1.5 text-xs">{peek.marketplace.toUpperCase()}</td>
-                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.color || "—"}</td>
-                              <td className="border-b border-r px-2 py-1.5 text-xs">{item.size || "—"}</td>
                               <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.plannedQuantity) || 0}</td>
                               <td className="border-b px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.factualQuantity) || 0}</td>
                             </tr>
