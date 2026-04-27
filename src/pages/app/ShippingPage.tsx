@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskItemsTable, { type TaskItemRow } from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
@@ -168,6 +169,9 @@ const ShippingPage = () => {
   const openTaskScrollDone = React.useRef<string | null>(null);
   const [openTaskHighlightId, setOpenTaskHighlightId] = React.useState<string | null>(null);
   const [confirmingShipmentId, setConfirmingShipmentId] = React.useState<string | null>(null);
+  const [diffReasonDialogOpen, setDiffReasonDialogOpen] = React.useState(false);
+  const [pendingDiffDoc, setPendingDiffDoc] = React.useState<ShipmentDoc | null>(null);
+  const [selectedDiffReason, setSelectedDiffReason] = React.useState<string>("");
 
   const openTaskParam = searchParams.get("openTask");
   const openTaskDecoded = React.useMemo(() => {
@@ -423,53 +427,59 @@ const ShippingPage = () => {
     async (doc: ShipmentDoc) => {
       if (doc.workflowStatus !== "assembled") return;
       if (confirmingShipmentId === doc.id) return;
+      const hasDiff = doc.fact < doc.planned;
+      if (hasDiff) {
+        setPendingDiffDoc(doc);
+        setSelectedDiffReason("");
+        setDiffReasonDialogOpen(true);
+        return;
+      }
       setConfirmingShipmentId(doc.id);
       const ts = new Date().toISOString();
-      const hasDiff = doc.fact < doc.planned;
-      const nextWorkflowStatus: ShippingUiStatus = hasDiff ? "shipped_with_diff" : "shipped";
-      let differenceReason = "";
-      if (hasDiff) {
-        const answer = window.prompt(
-          `Выберите причину расхождения:\n1. ${DIFF_REASONS[0]}\n2. ${DIFF_REASONS[1]}\n3. ${DIFF_REASONS[2]}\n4. ${DIFF_REASONS[3]}\n5. ${DIFF_REASONS[4]}\n\nВведите номер (1-5) или текст причины:`,
-          "",
-        );
-        if (!answer) {
-          setConfirmingShipmentId(null);
-          return;
-        }
-        const normalized = answer.trim();
-        const idx = Number(normalized);
-        if (Number.isInteger(idx) && idx >= 1 && idx <= DIFF_REASONS.length) {
-          differenceReason = DIFF_REASONS[idx - 1];
-        } else {
-          const byText = DIFF_REASONS.find((r) => r.toLowerCase() === normalized.toLowerCase());
-          if (!byText) {
-            window.alert("Нужно выбрать одну из предложенных причин.");
-            setConfirmingShipmentId(null);
-            return;
-          }
-          differenceReason = byText;
-        }
-      }
       try {
         for (const sh of doc.shipments) {
-          const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
-            workflowStatus: nextWorkflowStatus as TaskWorkflowStatus,
-            completedAt: sh.completedAt ?? ts,
-            updatedAt: ts,
-          };
-          if (hasDiff) patch.differenceReason = differenceReason;
           await updateOutboundDraft({
             id: sh.id,
-            patch,
+            patch: {
+              workflowStatus: "shipped",
+              completedAt: sh.completedAt ?? ts,
+              updatedAt: ts,
+            },
           });
         }
       } finally {
         setConfirmingShipmentId(null);
       }
     },
-    [updateOutboundDraft, confirmingShipmentId, DIFF_REASONS],
+    [updateOutboundDraft, confirmingShipmentId],
   );
+
+  const submitDiffShipmentConfirm = React.useCallback(async () => {
+    if (!pendingDiffDoc || pendingDiffDoc.workflowStatus !== "assembled") return;
+    if (!selectedDiffReason) return;
+    if (confirmingShipmentId === pendingDiffDoc.id) return;
+    setConfirmingShipmentId(pendingDiffDoc.id);
+    const ts = new Date().toISOString();
+    try {
+      for (const sh of pendingDiffDoc.shipments) {
+        const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
+            workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
+            completedAt: sh.completedAt ?? ts,
+            updatedAt: ts,
+            differenceReason: selectedDiffReason,
+          };
+        await updateOutboundDraft({
+          id: sh.id,
+          patch,
+        });
+      }
+      setDiffReasonDialogOpen(false);
+      setPendingDiffDoc(null);
+      setSelectedDiffReason("");
+    } finally {
+      setConfirmingShipmentId(null);
+    }
+  }, [pendingDiffDoc, selectedDiffReason, confirmingShipmentId, updateOutboundDraft]);
 
   return (
     <div className="space-y-4">
@@ -826,6 +836,52 @@ const ShippingPage = () => {
           )}
         </CardContent>
       </Card>
+      <Dialog
+        open={diffReasonDialogOpen}
+        onOpenChange={(open) => {
+          setDiffReasonDialogOpen(open);
+          if (!open) {
+            setPendingDiffDoc(null);
+            setSelectedDiffReason("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Укажите причину расхождения</DialogTitle>
+            <DialogDescription>Факт меньше плана. Перед подтверждением выберите причину.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {DIFF_REASONS.map((reason) => (
+              <button
+                key={reason}
+                type="button"
+                onClick={() => setSelectedDiffReason(reason)}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                  selectedDiffReason === reason
+                    ? "border-violet-300 bg-violet-50 text-violet-900"
+                    : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50",
+                )}
+              >
+                {reason}
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDiffReasonDialogOpen(false)}>
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void submitDiffShipmentConfirm()}
+              disabled={!selectedDiffReason || !pendingDiffDoc || confirmingShipmentId === pendingDiffDoc.id}
+            >
+              Подтвердить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
