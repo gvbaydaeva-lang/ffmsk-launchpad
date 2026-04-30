@@ -202,7 +202,9 @@ export function useInboundSupplies() {
         if (!hasReceivingInboundMovements(row.id, invExisting)) {
           const legalRows = qc.getQueryData<LegalEntity[]>(["wms", "legal"]) ?? (await fetchMockLegalEntities());
           const leName = legalRows.find((e) => e.id === row.legalEntityId)?.shortName ?? row.legalEntityId;
-          const moves = buildInboundReceivingInventoryMovements(row, leName);
+          const locations = qc.getQueryData<Location[]>(["wms", "locations"]) ?? (await fetchMockLocations());
+          const receivingLocation = (Array.isArray(locations) ? locations : []).find((loc) => loc?.type === "receiving");
+          const moves = buildInboundReceivingInventoryMovements(row, leName, receivingLocation?.id);
           if (moves.length > 0) {
             const nextInv = pushInventoryMovements(moves);
             qc.setQueryData(["wms", "inventory-movements"], nextInv);

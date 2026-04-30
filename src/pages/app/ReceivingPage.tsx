@@ -23,6 +23,7 @@ import {
 } from "@/lib/taskArchiveDates";
 import { hasReceivingInboundMovements } from "@/services/mockInventoryMovements";
 import { buildInboundReceivingInventoryMovements } from "@/lib/inventoryMovementsFromInbound";
+import { fetchMockLocations } from "@/services/mockLocations";
 import { toast } from "sonner";
 
 const ReceivingPage = () => {
@@ -151,7 +152,10 @@ const ReceivingPage = () => {
     try {
       if (!hasReceivingInboundMovements(latest.id, invSnapshot)) {
         const leName = entityName(latest.legalEntityId);
-        const moves = buildInboundReceivingInventoryMovements(latest, leName);
+        const cachedLocations = queryClient.getQueryData<{ id: string; type: string }[]>(["wms", "locations"]) ?? [];
+        const locations = cachedLocations.length > 0 ? cachedLocations : await fetchMockLocations();
+        const receivingLocation = (Array.isArray(locations) ? locations : []).find((loc) => loc?.type === "receiving");
+        const moves = buildInboundReceivingInventoryMovements(latest, leName, receivingLocation?.id);
         if (moves.length) {
           await addInventoryMovements(moves);
         }

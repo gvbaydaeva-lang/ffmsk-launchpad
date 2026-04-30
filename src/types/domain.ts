@@ -283,6 +283,7 @@ export type InventoryMovement = {
   legalEntityName: string;
   warehouseId?: string;
   warehouseName?: string;
+  locationId?: string;
   itemId?: string;
   name: string;
   sku?: string;

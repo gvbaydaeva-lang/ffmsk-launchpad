@@ -7,6 +7,7 @@ import type { InboundSupply, InventoryMovement } from "@/types/domain";
 export function buildInboundReceivingInventoryMovements(
   supply: InboundSupply,
   legalEntityName: string,
+  locationId?: string,
 ): InventoryMovement[] {
   const ts = new Date().toISOString();
   const stamp = Date.now();
@@ -28,6 +29,7 @@ export function buildInboundReceivingInventoryMovements(
       legalEntityId: leId,
       legalEntityName: (legalEntityName || "").trim() || leId,
       warehouseName,
+      locationId: (locationId || "").trim() || undefined,
       itemId: it.productId ?? `line-${i}`,
       name: (it.name || it.barcode || "—").trim() || "—",
       sku: (it.supplierArticle || "").trim() || undefined,
