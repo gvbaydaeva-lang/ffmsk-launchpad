@@ -227,6 +227,7 @@ const InventoryPage = () => {
         size: string;
         qty: number;
         receivingLocationId: string;
+        lastMovementAt: string | null;
       }
     >();
     for (const m of rows) {
@@ -256,14 +257,29 @@ const InventoryPage = () => {
           size: m.size ?? "—",
           qty: m.qty,
           receivingLocationId: locId,
+          lastMovementAt: m.createdAt || null,
         });
       } else {
         cur.qty += m.qty;
+        const currentTs = Date.parse(cur.lastMovementAt || "");
+        const nextTs = Date.parse(m.createdAt || "");
+        if (!Number.isFinite(currentTs) || (Number.isFinite(nextTs) && nextTs > currentTs)) {
+          cur.lastMovementAt = m.createdAt || null;
+        }
       }
     }
     return Array.from(byKey.values())
       .filter((x) => x.qty > 0)
-      .sort((a, b) => b.qty - a.qty);
+      .sort((a, b) => {
+        const aTs = Date.parse(a.lastMovementAt || "");
+        const bTs = Date.parse(b.lastMovementAt || "");
+        const aHas = Number.isFinite(aTs);
+        const bHas = Number.isFinite(bTs);
+        if (aHas && bHas) return bTs - aTs;
+        if (aHas) return -1;
+        if (bHas) return 1;
+        return 0;
+      });
   }, [movementDataSafe, receivingLocationIds]);
 
   const resetPlacementForm = () => {
@@ -365,19 +381,22 @@ const InventoryPage = () => {
         </p>
       </div>
 
-      {unplacedRows.length > 0 ? (
-        <Card className="border-slate-200 bg-white shadow-sm">
-          <CardHeader className="border-b border-slate-100 px-4 py-3">
-            <CardTitle className="text-base">Неразмещённые товары</CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 sm:p-4">
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="border-b border-slate-100 px-4 py-3">
+          <CardTitle className="text-base">Неразмещённые товары</CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 sm:p-4">
+          {unplacedRows.length === 0 ? (
+            <p className="text-sm text-slate-600">Неразмещённых товаров нет</p>
+          ) : (
             <div className="overflow-x-auto rounded-md border border-slate-200">
               <Table>
                 <TableHeader>
                   <TableRow className="h-8 bg-slate-50/90 hover:bg-slate-50/90">
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Название товара</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Баркод</TableHead>
-                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Количество в ПРИЕМКА</TableHead>
+                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Место</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Количество</TableHead>
                     <TableHead className="w-[110px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -388,6 +407,7 @@ const InventoryPage = () => {
                       <TableRow key={row.key} className="h-8 text-xs">
                         <TableCell className="max-w-[220px] truncate px-2 py-1 font-medium">{row.name}</TableCell>
                         <TableCell className="max-w-[140px] truncate px-2 py-1 font-mono">{row.barcode || "—"}</TableCell>
+                        <TableCell className="px-2 py-1">{receivingName}</TableCell>
                         <TableCell className="px-2 py-1 text-right tabular-nums font-medium text-slate-900">
                           {row.qty.toLocaleString("ru-RU")}
                         </TableCell>
@@ -426,9 +446,9 @@ const InventoryPage = () => {
                 </TableBody>
               </Table>
             </div>
-          </CardContent>
-        </Card>
-      ) : null}
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader className="border-b border-slate-100 px-4 py-3">

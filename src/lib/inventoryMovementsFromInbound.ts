@@ -15,9 +15,11 @@ export function buildInboundReceivingInventoryMovements(
   const mp = (supply.marketplace || "wb").toString().toUpperCase();
   const warehouseName = (supply.destinationWarehouse || "").trim() || "—";
 
+  const itemsSafe = Array.isArray(supply.items) ? supply.items : [];
+  const receivingLocationId = (locationId || "").trim() || "loc-receiving";
   const moves: InventoryMovement[] = [];
-  for (let i = 0; i < supply.items.length; i++) {
-    const it = supply.items[i];
+  for (let i = 0; i < itemsSafe.length; i++) {
+    const it = itemsSafe[i];
     const q = Number(it.factualQuantity) || 0;
     if (q <= 0) continue;
     moves.push({
@@ -29,7 +31,7 @@ export function buildInboundReceivingInventoryMovements(
       legalEntityId: leId,
       legalEntityName: (legalEntityName || "").trim() || leId,
       warehouseName,
-      locationId: (locationId || "").trim() || undefined,
+      locationId: receivingLocationId,
       itemId: it.productId ?? `line-${i}`,
       name: (it.name || it.barcode || "—").trim() || "—",
       sku: (it.supplierArticle || "").trim() || undefined,

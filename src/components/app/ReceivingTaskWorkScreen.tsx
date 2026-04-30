@@ -260,7 +260,8 @@ export default function ReceivingTaskWorkScreen({
           </div>
         </div>
         <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-          После завершения товар попадёт в: <span className="font-medium text-slate-900">{receivingLocationName || "ПРИЕМКА"}</span>
+          Товары после приёмки будут размещены в:{" "}
+          <span className="font-medium text-slate-900">{receivingLocationName || "ПРИЕМКА"}</span>
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
