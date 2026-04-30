@@ -18,6 +18,7 @@ import FinancePage from "./pages/app/FinancePage.tsx";
 import LegalEntitiesPage from "./pages/app/LegalEntitiesPage.tsx";
 import LegalEntityDetailsPage from "./pages/app/LegalEntityDetailsPage.tsx";
 import UsersPage from "./pages/app/UsersPage.tsx";
+import LocationsPage from "./pages/app/LocationsPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -49,6 +50,7 @@ const App = () => (
                   <Route path="legal-entities" element={<LegalEntitiesPage />} />
                   <Route path="legal-entities/:id" element={<LegalEntityDetailsPage />} />
                   <Route path="users" element={<UsersPage />} />
+                  <Route path="locations" element={<LocationsPage />} />
                 </Route>
                 <Route path="*" element={<NotFound />} />
               </Routes>

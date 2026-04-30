@@ -168,6 +168,15 @@ export type LegalEntity = {
   warehouseUnitsTotal: number;
 };
 
+/** Справочник мест хранения на складе/зоне операций */
+export type Location = {
+  id: string;
+  name: string;
+  type: "storage" | "receiving" | "shipping";
+  warehouseId?: string;
+  createdAt: string;
+};
+
 /** Строка детального складского инвентаря (вариант: цвет / размер / баркод) */
 export type WarehouseInventoryRow = {
   id: string;

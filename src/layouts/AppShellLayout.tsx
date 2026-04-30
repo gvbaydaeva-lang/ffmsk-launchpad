@@ -5,6 +5,7 @@ import {
   History,
   Layers,
   LayoutDashboard,
+  MapPinned,
   Package,
   PackageOpen,
   ScanLine,
@@ -48,6 +49,7 @@ const nav = [
   { to: "/finance", label: "Финансы", icon: Wallet },
   { to: "/legal-entities", label: "Юрлица", icon: Building2 },
   { to: "/users", label: "Пользователи", icon: Users },
+  { to: "/locations", label: "Места хранения", icon: MapPinned },
 ] as const;
 
 function matchNav(pathname: string, to: string, end?: boolean) {

@@ -4,6 +4,7 @@ import type {
   FulfillmentTariffs,
   InboundSupply,
   LegalEntity,
+  Location,
   Marketplace,
   OutboundShipment,
   OperationHistoryEvent,
@@ -43,6 +44,7 @@ import {
 } from "@/services/mockInventoryMovements";
 import { addOperationLog as persistOperationLog, fetchOperationLogs } from "@/services/mockOperationLogs";
 import { mergeLegalWarehouseCounts } from "@/services/scanWorkflow";
+import { appendMockLocation, fetchMockLocations, saveMockLocations } from "@/services/mockLocations";
 
 async function pushLegacyOperationHistory(
   qc: ReturnType<typeof useQueryClient>,
@@ -482,6 +484,28 @@ export function useProductCatalog() {
     isAddingProduct: add.isPending,
     updateProduct: update.mutateAsync,
     isUpdatingProduct: update.isPending,
+  };
+}
+
+export function useLocations() {
+  const qc = useQueryClient();
+  const query = useQuery({ queryKey: ["wms", "locations"], queryFn: fetchMockLocations });
+
+  const add = useMutation({
+    mutationFn: async (draft: Omit<Location, "id" | "createdAt">) => {
+      const cur = qc.getQueryData<Location[]>(["wms", "locations"]) ?? (await fetchMockLocations());
+      return appendMockLocation(cur, draft);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(["wms", "locations"], data);
+      saveMockLocations(data);
+    },
+  });
+
+  return {
+    ...query,
+    addLocation: add.mutateAsync,
+    isAddingLocation: add.isPending,
   };
 }
 
