@@ -33,6 +33,7 @@ type LastScanResult =
 type Props = {
   supply: InboundSupply;
   legalEntityName: string;
+  receivingLocationName: string;
   isUpdatingInboundDraft: boolean;
   isUpdatingInbound: boolean;
   onBack: () => void;
@@ -45,6 +46,7 @@ type Props = {
 export default function ReceivingTaskWorkScreen({
   supply,
   legalEntityName,
+  receivingLocationName,
   isUpdatingInboundDraft,
   isUpdatingInbound,
   onBack,
@@ -64,6 +66,7 @@ export default function ReceivingTaskWorkScreen({
   const scanInputRef = React.useRef<HTMLInputElement | null>(null);
   const rowHighlightTimerRef = React.useRef<number | null>(null);
   const workflow = workflowFromInbound(supply);
+  const itemsSafe = React.useMemo(() => (Array.isArray(supply.items) ? supply.items : []), [supply.items]);
 
   const clearRowHighlightLater = React.useCallback(() => {
     if (rowHighlightTimerRef.current != null) {
@@ -102,32 +105,32 @@ export default function ReceivingTaskWorkScreen({
   }, [workflow, focusScanInput, supply.id]);
 
   const progress = React.useMemo(() => {
-    const plan = supply.items.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
-    const fact = supply.items.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
+    const plan = itemsSafe.reduce((sum, item) => sum + (Number(item.plannedQuantity) || 0), 0);
+    const fact = itemsSafe.reduce((sum, item) => sum + (Number(item.factualQuantity) || 0), 0);
     const remaining = Math.max(0, plan - fact);
     const overrun = Math.max(0, fact - plan);
     const percent = plan > 0 ? Math.min(100, Math.round((fact / plan) * 100)) : 0;
     return { plan, fact, remaining, overrun, percent };
-  }, [supply.items]);
+  }, [itemsSafe]);
 
   const taskNeedsReview = React.useMemo(
     () =>
       progress.plan > 0 &&
-      supply.items.some((it) => {
+      itemsSafe.some((it) => {
         const p = Number(it.plannedQuantity) || 0;
         const f = Number(it.factualQuantity) || 0;
         return p > 0 && p !== f;
       }),
-    [supply.items, progress.plan],
+    [itemsSafe, progress.plan],
   );
 
   const planFactLineItems = React.useMemo(
     () =>
-      supply.items.map((it) => ({
+      itemsSafe.map((it) => ({
         plannedQty: Number(it.plannedQuantity) || 0,
         factQty: Number(it.factualQuantity) || 0,
       })),
-    [supply.items],
+    [itemsSafe],
   );
 
   React.useEffect(() => {
@@ -161,7 +164,7 @@ export default function ReceivingTaskWorkScreen({
   const applyScan = async () => {
     const code = scanValue.trim();
     if (!code) return;
-    const idx = supply.items.findIndex((x) => (x.barcode || "").trim() === code);
+    const idx = itemsSafe.findIndex((x) => (x.barcode || "").trim() === code);
     if (idx < 0) {
       playScanErrorSound();
       triggerFlash("error");
@@ -173,7 +176,7 @@ export default function ReceivingTaskWorkScreen({
       focusScanInput();
       return;
     }
-    const item = supply.items[idx];
+    const item = itemsSafe[idx];
     const rowKey = `${supply.id}-${(item.barcode || "").trim()}-${idx}`;
     if ((Number(item.factualQuantity) || 0) >= (Number(item.plannedQuantity) || 0)) {
       playScanErrorSound();
@@ -189,7 +192,7 @@ export default function ReceivingTaskWorkScreen({
     }
     setIsSubmittingScan(true);
     try {
-      const nextItems = supply.items.map((it, i) =>
+      const nextItems = itemsSafe.map((it, i) =>
         i === idx ? { ...it, factualQuantity: (Number(it.factualQuantity) || 0) + 1 } : it,
       );
       await onSaveItems(nextItems);
@@ -255,6 +258,9 @@ export default function ReceivingTaskWorkScreen({
               {supply.eta ? format(parseISO(supply.eta), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
             </div>
           </div>
+        </div>
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          После завершения товар попадёт в: <span className="font-medium text-slate-900">{receivingLocationName || "ПРИЕМКА"}</span>
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
@@ -345,6 +351,7 @@ export default function ReceivingTaskWorkScreen({
                 <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">МП</th>
                 <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Цвет</th>
                 <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Размер</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Место</th>
                 <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
                 <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Факт</th>
                 <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Осталось</th>
@@ -354,7 +361,7 @@ export default function ReceivingTaskWorkScreen({
               </tr>
             </thead>
             <tbody>
-              {supply.items.map((item, index) => {
+              {itemsSafe.map((item, index) => {
                 const plan = Number(item.plannedQuantity) || 0;
                 const fact = Number(item.factualQuantity) || 0;
                 const rem = planFactRemaining(plan, fact);
@@ -379,6 +386,7 @@ export default function ReceivingTaskWorkScreen({
                     <td className="border-b border-r px-2 py-1.5 text-xs">{supply.marketplace.toUpperCase()}</td>
                     <td className="border-b border-r px-2 py-1.5 text-xs">{item.color || "—"}</td>
                     <td className="border-b border-r px-2 py-1.5 text-xs">{item.size || "—"}</td>
+                    <td className="border-b border-r px-2 py-1.5 text-xs">{receivingLocationName || "ПРИЕМКА"}</td>
                     <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{plan}</td>
                     <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{fact}</td>
                     <td

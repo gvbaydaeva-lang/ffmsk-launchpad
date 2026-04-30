@@ -11,7 +11,7 @@ import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import ReceivingTaskWorkScreen from "@/components/app/ReceivingTaskWorkScreen";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
-import { useAppendOperationLog, useInboundSupplies, useInventoryMovements, useLegalEntities } from "@/hooks/useWmsMock";
+import { useAppendOperationLog, useInboundSupplies, useInventoryMovements, useLegalEntities, useLocations } from "@/hooks/useWmsMock";
 import { filterInboundByMarketplace } from "@/services/mockReceiving";
 import type { InboundSupply, InventoryMovement, Marketplace, TaskWorkflowStatus } from "@/types/domain";
 import { workflowFromInbound } from "@/lib/taskWorkflowUi";
@@ -31,6 +31,7 @@ const ReceivingPage = () => {
   const { data, isLoading, error, updateInboundDraft, setInboundStatus, isUpdatingInboundDraft, isUpdatingInbound } = useInboundSupplies();
   const { addInventoryMovements, data: movementRows } = useInventoryMovements();
   const { data: entities } = useLegalEntities();
+  const { data: locationsData } = useLocations();
   const appendOperationLog = useAppendOperationLog();
   const { legalEntityId } = useAppFilters();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
@@ -42,6 +43,11 @@ const ReceivingPage = () => {
   const [dateTo, setDateTo] = React.useState("");
   const [startedSupplyId, setStartedSupplyId] = React.useState<string | null>(null);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const movementDataSafe = React.useMemo(() => (Array.isArray(movementRows) ? movementRows : []), [movementRows]);
+  const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
+  const receivingLocation = React.useMemo(() => locationsSafe.find((loc) => loc?.type === "receiving"), [locationsSafe]);
+  const receivingLocationId = (receivingLocation?.id || "").trim() || "loc-receiving";
+  const receivingLocationName = receivingLocation?.name ?? "ПРИЕМКА";
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -148,14 +154,15 @@ const ReceivingPage = () => {
       const f = Number(it.factualQuantity) || 0;
       return p !== f;
     });
-    const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementRows) ?? [];
+    const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementDataSafe) ?? [];
     try {
       if (!hasReceivingInboundMovements(latest.id, invSnapshot)) {
         const leName = entityName(latest.legalEntityId);
-        const cachedLocations = queryClient.getQueryData<{ id: string; type: string }[]>(["wms", "locations"]) ?? [];
+        const cachedLocations = queryClient.getQueryData<{ id?: string; type?: string }[]>(["wms", "locations"]) ?? [];
         const locations = cachedLocations.length > 0 ? cachedLocations : await fetchMockLocations();
-        const receivingLocation = (Array.isArray(locations) ? locations : []).find((loc) => loc?.type === "receiving");
-        const moves = buildInboundReceivingInventoryMovements(latest, leName, receivingLocation?.id);
+        const receivingLoc = (Array.isArray(locations) ? locations : []).find((loc) => loc?.type === "receiving");
+        const fallbackReceivingId = (receivingLoc?.id || "").trim() || receivingLocationId;
+        const moves = buildInboundReceivingInventoryMovements(latest, leName, fallbackReceivingId);
         if (moves.length) {
           await addInventoryMovements(moves);
         }
@@ -488,6 +495,7 @@ const ReceivingPage = () => {
           key={startedSupplyId}
           supply={startedSupply}
           legalEntityName={entityName(startedSupply.legalEntityId)}
+          receivingLocationName={receivingLocationName}
           isUpdatingInboundDraft={isUpdatingInboundDraft}
           isUpdatingInbound={isUpdatingInbound}
           onBack={handleBackToList}
