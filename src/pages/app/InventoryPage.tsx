@@ -25,7 +25,7 @@ import {
   useOutboundShipments,
   useProductCatalog,
 } from "@/hooks/useWmsMock";
-import { getMovementsByBalanceKey } from "@/services/mockInventoryMovements";
+import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace } from "@/types/domain";
 import { toast } from "sonner";
@@ -44,6 +44,12 @@ const movementTypeLabel: Record<InventoryMovement["type"], string> = {
 const movementTypeClass: Record<InventoryMovement["type"], string> = {
   INBOUND: "text-emerald-700",
   OUTBOUND: "text-red-600",
+};
+
+type InventoryRowWithLocation = InventoryBalanceRow & {
+  baseKey: string;
+  locationId: string;
+  locationName: string;
 };
 
 function mpDisplay(mp: string): string {
@@ -99,8 +105,48 @@ const InventoryPage = () => {
     [outboundRows, catalogRows],
   );
 
+  const rowsWithLocation = React.useMemo<InventoryRowWithLocation[]>(() => {
+    const rows = Array.isArray(movementData) ? movementData : [];
+    const byKey = new Map<string, { sum: number; sample: InventoryMovement; baseKey: string; locationId: string }>();
+    for (const m of rows) {
+      const baseKey = makeInventoryBalanceKeyFromMovement(m);
+      const locationId = (m.locationId || "").trim();
+      const key = `${baseKey}::${locationId || "no-location"}`;
+      const cur = byKey.get(key);
+      if (!cur) {
+        byKey.set(key, { sum: m.qty, sample: m, baseKey, locationId });
+      } else {
+        cur.sum += m.qty;
+      }
+    }
+    return Array.from(byKey.values())
+      .map(({ sum, sample, baseKey, locationId }) => ({
+        key: `${baseKey}::${locationId || "no-location"}`,
+        baseKey,
+        locationId,
+        locationName: locationId ? (locationById.get(locationId)?.name ?? "Без места") : "Без места",
+        legalEntityId: sample.legalEntityId,
+        legalEntityName: sample.legalEntityName,
+        warehouseName: sample.warehouseName ?? "—",
+        name: sample.name,
+        sku: sample.sku ?? sample.article ?? "",
+        article: sample.article ?? sample.sku ?? "",
+        barcode: sample.barcode,
+        marketplace: sample.marketplace ?? "",
+        color: sample.color ?? "—",
+        size: sample.size ?? "—",
+        balanceQty: sum,
+      }))
+      .sort(
+        (a, b) =>
+          a.legalEntityName.localeCompare(b.legalEntityName, "ru") ||
+          a.name.localeCompare(b.name, "ru") ||
+          a.locationName.localeCompare(b.locationName, "ru"),
+      );
+  }, [movementData, locationById]);
+
   const filtered = React.useMemo(() => {
-    let rows = balanceRows;
+    let rows = rowsWithLocation;
     if (entityId !== "all") rows = rows.filter((x) => x.legalEntityId === entityId);
     if (warehouse !== "all") rows = rows.filter((x) => x.warehouseName === warehouse);
     if (mp !== "all") rows = rows.filter((x) => (x.marketplace || "").toLowerCase() === mp);
@@ -112,18 +158,37 @@ const InventoryPage = () => {
     }
     if (availableZeroFromUrl) {
       rows = rows.filter((x) => {
-        const reserveQty = reservedByKey.get(x.key) ?? 0;
+        const reserveQty = reservedByKey.get(x.baseKey) ?? 0;
         return x.balanceQty - reserveQty <= 0;
       });
     }
     return rows;
-  }, [balanceRows, entityId, warehouse, mp, search, availableZeroFromUrl, reservedByKey]);
+  }, [rowsWithLocation, entityId, warehouse, mp, search, availableZeroFromUrl, reservedByKey]);
+
+  const reserveShownByBaseKey = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of filtered) {
+      if (!map.has(row.baseKey)) map.set(row.baseKey, row.key);
+    }
+    return map;
+  }, [filtered]);
 
   const historyMoves = React.useMemo(
-    () => (historyKey && movementData ? getMovementsByBalanceKey(movementData, historyKey) : []),
-    [historyKey, movementData],
+    () => {
+      if (!historyKey || !movementData) return [];
+      const row = filtered.find((x) => x.key === historyKey);
+      if (!row) return [];
+      return movementData
+        .filter((m) => {
+          const baseKey = makeInventoryBalanceKeyFromMovement(m);
+          const movementLoc = (m.locationId || "").trim();
+          return baseKey === row.baseKey && movementLoc === row.locationId;
+        })
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    },
+    [historyKey, movementData, filtered],
   );
-  const historyRow = historyKey ? balanceRows.find((r) => r.key === historyKey) : null;
+  const historyRow = historyKey ? filtered.find((r) => r.key === historyKey) : null;
 
   const tableLoading = isLoading || outboundLoading || catalogLoading;
   const locations = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
@@ -431,6 +496,7 @@ const InventoryPage = () => {
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">МП</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Цвет</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Размер</TableHead>
+                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Место хранения</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Остаток всего</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Резерв</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
@@ -442,13 +508,13 @@ const InventoryPage = () => {
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="py-6 text-center text-xs text-slate-500">
+                      <TableCell colSpan={13} className="py-6 text-center text-xs text-slate-500">
                         Нет строк по фильтру. Завершите приёмку — товар появится здесь с положительным остатком.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map((row: InventoryBalanceRow) => {
-                      const reserveQty = reservedByKey.get(row.key) ?? 0;
+                    filtered.map((row: InventoryRowWithLocation) => {
+                      const reserveQty = reserveShownByBaseKey.get(row.baseKey) === row.key ? (reservedByKey.get(row.baseKey) ?? 0) : 0;
                       const available = row.balanceQty - reserveQty;
                       return (
                       <TableRow key={row.key} className="h-8 text-xs">
@@ -460,6 +526,7 @@ const InventoryPage = () => {
                         <TableCell className="whitespace-nowrap px-2 py-1">{mpDisplay(row.marketplace)}</TableCell>
                         <TableCell className="px-2 py-1">{row.color}</TableCell>
                         <TableCell className="px-2 py-1">{row.size}</TableCell>
+                        <TableCell className="px-2 py-1">{row.locationName}</TableCell>
                         <TableCell className={`px-2 py-1 ${balanceClass(row.balanceQty)}`}>
                           {row.balanceQty.toLocaleString("ru-RU")}
                         </TableCell>
