@@ -91,6 +91,10 @@ const InventoryPage = () => {
   } | null>(null);
   const [placementQty, setPlacementQty] = React.useState<string>("");
   const [placementLocationId, setPlacementLocationId] = React.useState<string>("");
+  const movementDataSafe = React.useMemo(() => (Array.isArray(movementData) ? movementData : []), [movementData]);
+  const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
+  const productsSafe = React.useMemo(() => (Array.isArray(catalogRows) ? catalogRows : []), [catalogRows]);
+  const legalEntitiesSafe = React.useMemo(() => (Array.isArray(entities) ? entities : []), [entities]);
 
   const warehouses = React.useMemo(
     () =>
@@ -101,12 +105,26 @@ const InventoryPage = () => {
   );
 
   const reservedByKey = React.useMemo(
-    () => reservedQtyByBalanceKey(outboundRows, catalogRows),
-    [outboundRows, catalogRows],
+    () => reservedQtyByBalanceKey(outboundRows, productsSafe),
+    [outboundRows, productsSafe],
   );
 
+  const locations = locationsSafe;
+
+  const storageLocations = React.useMemo(
+    () => locationsSafe.filter((l) => l?.type === "storage"),
+    [locationsSafe],
+  );
+
+  const receivingLocationIds = React.useMemo(
+    () => new Set(locationsSafe.filter((l) => l?.type === "receiving").map((l) => l.id)),
+    [locationsSafe],
+  );
+
+  const locationById = React.useMemo(() => new Map(locationsSafe.map((l) => [l.id, l])), [locationsSafe]);
+
   const rowsWithLocation = React.useMemo<InventoryRowWithLocation[]>(() => {
-    const rows = Array.isArray(movementData) ? movementData : [];
+    const rows = movementDataSafe;
     const byKey = new Map<string, { sum: number; sample: InventoryMovement; baseKey: string; locationId: string }>();
     for (const m of rows) {
       const baseKey = makeInventoryBalanceKeyFromMovement(m);
@@ -143,7 +161,7 @@ const InventoryPage = () => {
           a.name.localeCompare(b.name, "ru") ||
           a.locationName.localeCompare(b.locationName, "ru"),
       );
-  }, [movementData, locationById]);
+  }, [movementDataSafe, locationById]);
 
   const filtered = React.useMemo(() => {
     let rows = rowsWithLocation;
@@ -178,7 +196,7 @@ const InventoryPage = () => {
       if (!historyKey || !movementData) return [];
       const row = filtered.find((x) => x.key === historyKey);
       if (!row) return [];
-      return movementData
+      return movementDataSafe
         .filter((m) => {
           const baseKey = makeInventoryBalanceKeyFromMovement(m);
           const movementLoc = (m.locationId || "").trim();
@@ -186,27 +204,14 @@ const InventoryPage = () => {
         })
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     },
-    [historyKey, movementData, filtered],
+    [historyKey, movementData, movementDataSafe, filtered],
   );
   const historyRow = historyKey ? filtered.find((r) => r.key === historyKey) : null;
 
   const tableLoading = isLoading || outboundLoading || catalogLoading;
-  const locations = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
-
-  const storageLocations = React.useMemo(
-    () => locations.filter((l) => l?.type === "storage"),
-    [locations],
-  );
-
-  const receivingLocationIds = React.useMemo(
-    () => new Set(locations.filter((l) => l?.type === "receiving").map((l) => l.id)),
-    [locations],
-  );
-
-  const locationById = React.useMemo(() => new Map(locations.map((l) => [l.id, l])), [locations]);
 
   const unplacedRows = React.useMemo(() => {
-    const rows = Array.isArray(movementData) ? movementData : [];
+    const rows = movementDataSafe;
     const byKey = new Map<
       string,
       {
@@ -259,7 +264,7 @@ const InventoryPage = () => {
     return Array.from(byKey.values())
       .filter((x) => x.qty > 0)
       .sort((a, b) => b.qty - a.qty);
-  }, [movementData, receivingLocationIds]);
+  }, [movementDataSafe, receivingLocationIds]);
 
   const resetPlacementForm = () => {
     setPlacingRow(null);
@@ -325,7 +330,7 @@ const InventoryPage = () => {
         taskNumber,
         legalEntityId: placingRow.legalEntityId,
         legalEntityName: placingRow.legalEntityName,
-        description: `Размещение: ${placingRow.name} (${placingRow.barcode}) из ${placingRow.receivingLocationName} в ${target.name}, ${qty} шт`,
+        description: `Размещение: ${placingRow.name} (${placingRow.barcode}) из ${placingRow.receivingLocationName} в ${target?.name ?? "Без места"}, ${qty} шт`,
       });
       toast.success("Товар размещён");
       resetPlacementForm();
@@ -437,7 +442,7 @@ const InventoryPage = () => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Все юрлица</SelectItem>
-                {entities?.map((e) => (
+                {legalEntitiesSafe.map((e) => (
                   <SelectItem key={e.id} value={e.id}>
                     {e.shortName}
                   </SelectItem>
@@ -661,7 +666,7 @@ const InventoryPage = () => {
                   <SelectContent>
                     {storageLocations.map((loc: Location) => (
                       <SelectItem key={loc.id} value={loc.id}>
-                        {loc.name}
+                        {loc?.name ?? "Без места"}
                       </SelectItem>
                     ))}
                   </SelectContent>
