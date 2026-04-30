@@ -50,6 +50,8 @@ type InventoryRowWithLocation = InventoryBalanceRow & {
   baseKey: string;
   locationId: string;
   locationName: string;
+  /** ISO дата последнего движения по строке «товар + locationId», для сортировки и отображения */
+  lastMovementIso: string | null;
 };
 
 function mpDisplay(mp: string): string {
@@ -58,6 +60,18 @@ function mpDisplay(mp: string): string {
   if (m === "ozon") return "Ozon";
   if (m === "yandex") return "Яндекс";
   return mp || "—";
+}
+
+function formatLastMovementCell(iso: string | null | undefined): string {
+  const s = (iso ?? "").trim();
+  if (!s) return "—";
+  try {
+    const d = parseISO(s);
+    if (!Number.isFinite(d.getTime())) return "—";
+    return format(d, "dd.MM.yyyy HH:mm", { locale: ru });
+  } catch {
+    return "—";
+  }
 }
 
 const InventoryPage = () => {
@@ -98,7 +112,7 @@ const InventoryPage = () => {
 
   const warehouses = React.useMemo(
     () =>
-      Array.from(new Set(balanceRows.map((r) => r.warehouseName)))
+      Array.from(new Set((balanceRows ?? []).map((r) => r.warehouseName)))
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b, "ru")),
     [balanceRows],
@@ -125,20 +139,42 @@ const InventoryPage = () => {
 
   const rowsWithLocation = React.useMemo<InventoryRowWithLocation[]>(() => {
     const rows = movementDataSafe;
-    const byKey = new Map<string, { sum: number; sample: InventoryMovement; baseKey: string; locationId: string }>();
+    const byKey = new Map<
+      string,
+      {
+        sum: number;
+        sample: InventoryMovement;
+        baseKey: string;
+        locationId: string;
+        lastMovementIso: string | null;
+      }
+    >();
     for (const m of rows) {
       const baseKey = makeInventoryBalanceKeyFromMovement(m);
       const locationId = (m.locationId || "").trim();
       const key = `${baseKey}::${locationId || "no-location"}`;
       const cur = byKey.get(key);
+      const mIso = (m.createdAt ?? "").trim();
+      const mTs = Date.parse(mIso);
+      const mIsoOk = Number.isFinite(mTs);
       if (!cur) {
-        byKey.set(key, { sum: m.qty, sample: m, baseKey, locationId });
+        byKey.set(key, {
+          sum: m.qty,
+          sample: m,
+          baseKey,
+          locationId,
+          lastMovementIso: mIsoOk ? mIso : null,
+        });
       } else {
         cur.sum += m.qty;
+        const curTs = Date.parse(cur.lastMovementIso || "");
+        if (mIsoOk && (!Number.isFinite(curTs) || mTs > curTs)) {
+          cur.lastMovementIso = mIso;
+        }
       }
     }
     return Array.from(byKey.values())
-      .map(({ sum, sample, baseKey, locationId }) => ({
+      .map(({ sum, sample, baseKey, locationId, lastMovementIso }) => ({
         key: `${baseKey}::${locationId || "no-location"}`,
         baseKey,
         locationId,
@@ -154,13 +190,19 @@ const InventoryPage = () => {
         color: sample.color ?? "—",
         size: sample.size ?? "—",
         balanceQty: sum,
+        lastMovementIso:
+          lastMovementIso && Number.isFinite(Date.parse(lastMovementIso)) ? lastMovementIso : null,
       }))
-      .sort(
-        (a, b) =>
-          a.legalEntityName.localeCompare(b.legalEntityName, "ru") ||
-          a.name.localeCompare(b.name, "ru") ||
-          a.locationName.localeCompare(b.locationName, "ru"),
-      );
+      .sort((a, b) => {
+        const aTs = Date.parse(a.lastMovementIso || "");
+        const bTs = Date.parse(b.lastMovementIso || "");
+        const aOk = Number.isFinite(aTs);
+        const bOk = Number.isFinite(bTs);
+        if (aOk && bOk) return bTs - aTs;
+        if (aOk) return -1;
+        if (bOk) return 1;
+        return 0;
+      });
   }, [movementDataSafe, locationById]);
 
   const filtered = React.useMemo(() => {
@@ -522,6 +564,7 @@ const InventoryPage = () => {
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Цвет</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Размер</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Место хранения</TableHead>
+                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Последнее движение</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Остаток всего</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Резерв</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
@@ -533,7 +576,7 @@ const InventoryPage = () => {
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="py-6 text-center text-xs text-slate-500">
+                      <TableCell colSpan={14} className="py-6 text-center text-xs text-slate-500">
                         Нет строк по фильтру. Завершите приёмку — товар появится здесь с положительным остатком.
                       </TableCell>
                     </TableRow>
@@ -552,6 +595,9 @@ const InventoryPage = () => {
                         <TableCell className="px-2 py-1">{row.color}</TableCell>
                         <TableCell className="px-2 py-1">{row.size}</TableCell>
                         <TableCell className="px-2 py-1">{row.locationName}</TableCell>
+                        <TableCell className="whitespace-nowrap px-2 py-1 tabular-nums">
+                          {formatLastMovementCell(row.lastMovementIso)}
+                        </TableCell>
                         <TableCell className={`px-2 py-1 ${balanceClass(row.balanceQty)}`}>
                           {row.balanceQty.toLocaleString("ru-RU")}
                         </TableCell>
