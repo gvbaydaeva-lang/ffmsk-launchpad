@@ -191,18 +191,10 @@ const InventoryPage = () => {
         cur.qty += m.qty;
       }
     }
-    let list = Array.from(byKey.values()).filter((x) => x.qty > 0);
-    if (entityId !== "all") list = list.filter((x) => x.legalEntityId === entityId);
-    if (warehouse !== "all") list = list.filter((x) => x.warehouseName === warehouse);
-    if (mp !== "all") list = list.filter((x) => (x.marketplace || "").toLowerCase() === mp);
-    const q = search.trim().toLowerCase();
-    if (q) {
-      list = list.filter((x) =>
-        `${x.legalEntityName} ${x.name} ${x.article} ${x.barcode}`.toLowerCase().includes(q),
-      );
-    }
-    return list.sort((a, b) => b.qty - a.qty);
-  }, [movementData, receivingLocationIds, entityId, warehouse, mp, search]);
+    return Array.from(byKey.values())
+      .filter((x) => x.qty > 0)
+      .sort((a, b) => b.qty - a.qty);
+  }, [movementData, receivingLocationIds]);
 
   const resetPlacementForm = () => {
     setPlacingRow(null);
@@ -302,6 +294,71 @@ const InventoryPage = () => {
           Остаток по движениям WMS; резерв — план в активных отгрузках (pending/processing); доступно = остаток − резерв.
         </p>
       </div>
+
+      {unplacedRows.length > 0 ? (
+        <Card className="border-slate-200 bg-white shadow-sm">
+          <CardHeader className="border-b border-slate-100 px-4 py-3">
+            <CardTitle className="text-base">Неразмещённые товары</CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 sm:p-4">
+            <div className="overflow-x-auto rounded-md border border-slate-200">
+              <Table>
+                <TableHeader>
+                  <TableRow className="h-8 bg-slate-50/90 hover:bg-slate-50/90">
+                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Название товара</TableHead>
+                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Баркод</TableHead>
+                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Количество в ПРИЕМКА</TableHead>
+                    <TableHead className="w-[110px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {unplacedRows.map((row) => {
+                    const receivingName = locationById.get(row.receivingLocationId)?.name ?? "ПРИЕМКА";
+                    return (
+                      <TableRow key={row.key} className="h-8 text-xs">
+                        <TableCell className="max-w-[220px] truncate px-2 py-1 font-medium">{row.name}</TableCell>
+                        <TableCell className="max-w-[140px] truncate px-2 py-1 font-mono">{row.barcode || "—"}</TableCell>
+                        <TableCell className="px-2 py-1 text-right tabular-nums font-medium text-slate-900">
+                          {row.qty.toLocaleString("ru-RU")}
+                        </TableCell>
+                        <TableCell className="px-2 py-1 text-right">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => {
+                              setPlacingRow({
+                                key: row.key,
+                                legalEntityId: row.legalEntityId,
+                                legalEntityName: row.legalEntityName,
+                                warehouseName: row.warehouseName,
+                                name: row.name,
+                                article: row.article,
+                                barcode: row.barcode,
+                                marketplace: row.marketplace,
+                                color: row.color,
+                                size: row.size,
+                                availableQty: row.qty,
+                                receivingLocationId: row.receivingLocationId,
+                                receivingLocationName: receivingName,
+                              });
+                              setPlacementQty(String(row.qty));
+                              setPlacementLocationId("");
+                            }}
+                          >
+                            Разместить
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader className="border-b border-slate-100 px-4 py-3">
@@ -430,87 +487,6 @@ const InventoryPage = () => {
                         </TableCell>
                       </TableRow>
                     );
-                    })
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader className="border-b border-slate-100 px-4 py-3">
-          <CardTitle className="text-base">Неразмещённые товары</CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 sm:p-4">
-          {tableLoading ? (
-            <Skeleton className="h-24 w-full" />
-          ) : (
-            <div className="overflow-x-auto rounded-md border border-slate-200">
-              <Table>
-                <TableHeader>
-                  <TableRow className="h-8 bg-slate-50/90 hover:bg-slate-50/90">
-                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
-                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Склад</TableHead>
-                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Товар</TableHead>
-                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Баркод</TableHead>
-                    <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Текущее место</TableHead>
-                    <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
-                    <TableHead className="w-[110px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {unplacedRows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="py-6 text-center text-xs text-slate-500">
-                        Неразмещённых товаров в зоне ПРИЕМКА нет.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    unplacedRows.map((row) => {
-                      const receivingName = locationById.get(row.receivingLocationId)?.name ?? "ПРИЕМКА";
-                      return (
-                        <TableRow key={row.key} className="h-8 text-xs">
-                          <TableCell className="max-w-[120px] truncate px-2 py-1">{row.legalEntityName}</TableCell>
-                          <TableCell className="max-w-[100px] truncate px-2 py-1">{row.warehouseName}</TableCell>
-                          <TableCell className="max-w-[180px] truncate px-2 py-1 font-medium">{row.name}</TableCell>
-                          <TableCell className="max-w-[110px] truncate px-2 py-1 font-mono">{row.barcode || "—"}</TableCell>
-                          <TableCell className="px-2 py-1">{receivingName}</TableCell>
-                          <TableCell className="px-2 py-1 text-right tabular-nums font-medium text-slate-900">
-                            {row.qty.toLocaleString("ru-RU")}
-                          </TableCell>
-                          <TableCell className="px-2 py-1 text-right">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 px-2 text-[11px]"
-                              onClick={() => {
-                                setPlacingRow({
-                                  key: row.key,
-                                  legalEntityId: row.legalEntityId,
-                                  legalEntityName: row.legalEntityName,
-                                  warehouseName: row.warehouseName,
-                                  name: row.name,
-                                  article: row.article,
-                                  barcode: row.barcode,
-                                  marketplace: row.marketplace,
-                                  color: row.color,
-                                  size: row.size,
-                                  availableQty: row.qty,
-                                  receivingLocationId: row.receivingLocationId,
-                                  receivingLocationName: receivingName,
-                                });
-                                setPlacementQty(String(row.qty));
-                                setPlacementLocationId("");
-                              }}
-                            >
-                              Разместить
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
                     })
                   )}
                 </TableBody>
