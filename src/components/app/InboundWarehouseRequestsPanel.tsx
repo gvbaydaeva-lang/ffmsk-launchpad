@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
 import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
 import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
-import { parseInboundWarehousePaste } from "@/lib/inboundWarehousePasteImport";
+import { parseInboundWarehousePaste, resolveInboundPasteCodeToProductId } from "@/lib/inboundWarehousePasteImport";
 import { toast } from "sonner";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
@@ -424,11 +424,6 @@ const InboundWarehouseRequestsPanel = () => {
     return filtered.length > 0 ? filtered : all;
   }, [catalog, partnerId]);
 
-  const catalogIdsForInboundPaste = React.useMemo(
-    () => new Set(productsForPartner.map((p) => p.id)),
-    [productsForPartner],
-  );
-
   const resetForm = React.useCallback(() => {
     setPartnerId("");
     setPlannedDate(new Date().toISOString().slice(0, 10));
@@ -613,15 +608,19 @@ const InboundWarehouseRequestsPanel = () => {
       toast.error("Нет данных для загрузки");
       return;
     }
-    for (const r of parsed.rows) {
-      if (!catalogIdsForInboundPaste.has(r.productId)) {
-        toast.error(`Товар не найден в каталоге: ${r.productId}`);
+    const resolved: { productId: string; qty: number }[] = [];
+    for (let i = 0; i < parsed.rows.length; i += 1) {
+      const row = parsed.rows[i];
+      const match = resolveInboundPasteCodeToProductId(row.code, productsForPartner);
+      if (!match.ok) {
+        toast.error(`Строка ${i + 1}: ${match.message}`);
         return;
       }
+      resolved.push({ productId: match.productId, qty: row.qty });
     }
     setLines((prev) => {
       const draft = prev.map((l) => ({ ...l }));
-      for (const { productId, qty } of parsed.rows) {
+      for (const { productId, qty } of resolved) {
         const idx = draft.findIndex((l) => l.productId.trim() === productId);
         if (idx >= 0) {
           const cur = Math.max(0, Math.trunc(Number(draft[idx].plannedQty) || 0));
@@ -638,13 +637,7 @@ const InboundWarehouseRequestsPanel = () => {
     });
     setInboundPasteText("");
     toast.success("Данные загружены");
-  }, [
-    inboundPasteText,
-    inboundPanelBusy,
-    catalogLoading,
-    productsForPartner.length,
-    catalogIdsForInboundPaste,
-  ]);
+  }, [inboundPasteText, inboundPanelBusy, catalogLoading, productsForPartner]);
 
   const completeInboundPlacementFor = React.useCallback(
     async (inboundId: string) => {
@@ -714,8 +707,9 @@ const InboundWarehouseRequestsPanel = () => {
               <div className="min-w-0">
                 <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Одна строка — <span className="font-mono">productId,qty</span>. Пример:{" "}
-                  <span className="font-mono">SKU-001,100</span>
+                  Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая).
+                  Можно также указать внутренний код товара из каталога. Пример:{" "}
+                  <span className="font-mono">WB-A-10452,120</span> или <span className="font-mono">4601234567890,48</span>
                 </p>
               </div>
               <Button
@@ -735,7 +729,7 @@ const InboundWarehouseRequestsPanel = () => {
                   value={inboundPasteText}
                   onChange={(e) => setInboundPasteText(e.target.value)}
                   rows={6}
-                  placeholder={"SKU-001,100\nSKU-002,50"}
+                  placeholder={"WB-A-10452, 120\n4601234567890, 48"}
                   disabled={inboundPanelBusy || catalogLoading}
                   className="font-mono text-sm"
                 />
