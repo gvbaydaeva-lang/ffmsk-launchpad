@@ -5,6 +5,8 @@ import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -53,6 +55,8 @@ import {
   movementLocationTotalsForWarehouseBalanceKey,
 } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
+import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
+import { type ResolvedWarehouseImportRow, resolveWarehouseImportPasteRows } from "@/lib/warehouseImportPaste";
 import {
   outboundPackedQtyAssemblyGate,
   outboundPickedQty,
@@ -154,6 +158,16 @@ function canShowCancelShipmentButton(ui: ShippingUiStatus, shipments: OutboundSh
   if (outboundGroupHasShippedTerminalRow(shipments)) return false;
   if (ui === "shipped" || ui === "shipped_with_diff" || ui === "cancelled") return false;
   return ui === "pending" || ui === "processing" || ui === "assembling" || ui === "assembled";
+}
+
+function assignmentGroupKeyOutbound(sh: OutboundShipment): string {
+  return `${sh.legalEntityId}::${sh.assignmentId ?? sh.assignmentNo ?? sh.id}`;
+}
+
+function canModifyOutboundShipmentPlanForImport(sh: OutboundShipment): boolean {
+  if (String(sh.status ?? "").trim() === "отменено") return false;
+  if (String(sh.workflowStatus ?? "").trim() === "cancelled") return false;
+  return !isOutboundShipmentRowTerminalGate(sh);
 }
 
 /** Финал по workflow: только shipped / shipped_with_diff; при смеси статусов по строкам — задание не считается отгруженным. */
@@ -439,7 +453,15 @@ const ShippingPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { data, isLoading, error, updateOutboundDraft, isUpdatingOutboundDraft } = useOutboundShipments();
+  const {
+    data,
+    isLoading,
+    error,
+    updateOutboundDraft,
+    isUpdatingOutboundDraft,
+    createOutbound,
+    isCreatingOutbound,
+  } = useOutboundShipments();
   const { data: inventoryMovements = [], addInventoryMovements, isAppending: isAppendingMovements } = useInventoryMovements();
   const { data: locationsData } = useLocations();
   const { data: catalog } = useProductCatalog();
@@ -480,10 +502,19 @@ const ShippingPage = () => {
   const [assemblyCompletingId, setAssemblyCompletingId] = React.useState<string | null>(null);
   const [pickDraftByShipment, setPickDraftByShipment] = React.useState<Record<string, { locationId: string; qty: string }>>({});
   const [undoingPickId, setUndoingPickId] = React.useState<string | null>(null);
+  const shippingImportPasteFileRef = React.useRef<HTMLInputElement>(null);
+  const [shippingImportPasteOpen, setShippingImportPasteOpen] = React.useState(false);
+  const [shippingImportPasteText, setShippingImportPasteText] = React.useState("");
+
+  React.useEffect(() => {
+    setShippingImportPasteOpen(false);
+    setShippingImportPasteText("");
+  }, [selectedId]);
 
   /** Любая исходящая операция по отгрузкам — блокируем повторные клики по панели. */
   const shippingDispatchActionsGloballyBusy = Boolean(
     isUpdatingOutboundDraft ||
+      isCreatingOutbound ||
       isAppendingMovements ||
       bulkConfirming ||
       bulkTakingToWork ||
@@ -1052,6 +1083,140 @@ const ShippingPage = () => {
       return next;
     });
   }, [selectedShipmentPickRows]);
+
+  const applyOutboundImportResolved = React.useCallback(
+    async (doc: ShipmentDoc, resolved: ResolvedWarehouseImportRow[]) => {
+      const leader = doc.shipments?.[0];
+      if (!leader) {
+        toast.error("Состав задания пустой");
+        return false;
+      }
+      const leaderKey = assignmentGroupKeyOutbound(leader);
+      const cat = Array.isArray(catalog) ? catalog : [];
+      try {
+        for (const row of resolved) {
+          const fresh = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? data ?? [];
+          const product = cat.find((p) => p.id === row.productId);
+          const match = fresh.find(
+            (s) =>
+              assignmentGroupKeyOutbound(s) === leaderKey &&
+              s.productId === row.productId &&
+              canModifyOutboundShipmentPlanForImport(s),
+          );
+          if (match) {
+            const nextPlan = Math.max(0, Math.trunc(Number(match.plannedUnits) || 0)) + row.qty;
+            await updateOutboundDraft({
+              id: match.id,
+              patch: {
+                plannedUnits: nextPlan,
+                ...(product
+                  ? {
+                      importArticle: product.supplierArticle ?? match.importArticle ?? undefined,
+                      importBarcode: product.barcode ?? match.importBarcode ?? undefined,
+                      importName: product.name ?? match.importName ?? undefined,
+                      importSize: product.size ?? match.importSize ?? undefined,
+                      importColor: product.color ?? match.importColor ?? undefined,
+                    }
+                  : {}),
+              },
+            });
+          } else {
+            await createOutbound({
+              legalEntityId: leader.legalEntityId,
+              productId: row.productId,
+              assignmentId: leader.assignmentId ?? null,
+              assignmentNo: leader.assignmentNo ?? doc.assignmentNo,
+              importArticle: product?.supplierArticle ?? undefined,
+              importBarcode: product?.barcode ?? undefined,
+              importName: product?.name ?? undefined,
+              importSize: product?.size ?? undefined,
+              importColor: product?.color ?? undefined,
+              marketplace: leader.marketplace,
+              sourceWarehouse: leader.sourceWarehouse,
+              shippingMethod: leader.shippingMethod,
+              priority: leader.priority ?? "normal",
+              boxBarcode: leader.boxBarcode,
+              gateBarcode: leader.gateBarcode,
+              supplyNumber: leader.supplyNumber,
+              expiryDate: leader.expiryDate,
+              packedUnits: 0,
+              packedQty: 0,
+              pickedUnits: 0,
+              plannedShipDate: leader.plannedShipDate,
+              plannedUnits: row.qty,
+              shippedUnits: null,
+              status: leader.status,
+              workflowStatus: leader.workflowStatus ?? "pending",
+              boxes: [],
+              activeBoxId: null,
+            });
+          }
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Не удалось применить импорт";
+        toast.error(msg);
+        return false;
+      }
+      return true;
+    },
+    [catalog, queryClient, data, updateOutboundDraft, createOutbound],
+  );
+
+  const handleShippingImportPasteApply = React.useCallback(
+    async (doc: ShipmentDoc) => {
+      if (shippingDispatchActionsGloballyBusy) return;
+      const all = Array.isArray(catalog) ? catalog : [];
+      const scoped = all.filter((p) => p.legalEntityId === doc.legalEntityId);
+      const productScope = scoped.length > 0 ? scoped : all;
+      if (productScope.length === 0) {
+        toast.error("Нет товаров в каталоге для проверки");
+        return;
+      }
+      const resolved = resolveWarehouseImportPasteRows(shippingImportPasteText, productScope);
+      if (!resolved.ok) {
+        toast.error(resolved.message);
+        return;
+      }
+      const ok = await applyOutboundImportResolved(doc, resolved.rows);
+      if (ok) {
+        setShippingImportPasteText("");
+        toast.success("Данные загружены");
+      }
+    },
+    [shippingDispatchActionsGloballyBusy, catalog, shippingImportPasteText, applyOutboundImportResolved],
+  );
+
+  const handleShippingImportExcelFileChange = React.useCallback(
+    async (doc: ShipmentDoc, e: React.ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const file = input.files?.[0];
+      input.value = "";
+      if (!file) return;
+      if (shippingDispatchActionsGloballyBusy) return;
+      const all = Array.isArray(catalog) ? catalog : [];
+      const scoped = all.filter((p) => p.legalEntityId === doc.legalEntityId);
+      const productScope = scoped.length > 0 ? scoped : all;
+      if (productScope.length === 0) {
+        toast.error("Нет товаров в каталоге для проверки");
+        return;
+      }
+      const prep = await inboundImportFileToPasteText(file);
+      if (!prep.ok) {
+        toast.error(prep.message);
+        return;
+      }
+      const resolved = resolveWarehouseImportPasteRows(prep.text, productScope);
+      if (!resolved.ok) {
+        toast.error(resolved.message);
+        return;
+      }
+      const ok = await applyOutboundImportResolved(doc, resolved.rows);
+      if (ok) {
+        toast.success("Файл загружен");
+      }
+    },
+    [shippingDispatchActionsGloballyBusy, catalog, applyOutboundImportResolved],
+  );
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 
@@ -2538,6 +2703,70 @@ const ShippingPage = () => {
                                       })()}
                                     </div>
                                   )}
+                                  {!readOnlyShipment ? (
+                                    <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
+                                      <div className="min-w-0 space-y-2">
+                                        <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
+                                        <p className="text-xs text-slate-600">
+                                          Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая)
+                                          или те же два столбца в файле <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
+                                          (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
+                                          <span className="font-mono">WB-A-10452,120</span>
+                                        </p>
+                                        <div className="flex flex-wrap gap-2">
+                                          <input
+                                            ref={shippingImportPasteFileRef}
+                                            type="file"
+                                            accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                                            className="sr-only"
+                                            aria-label="Выбор файла Excel или CSV для импорта состава отгрузки"
+                                            onChange={(ev) => void handleShippingImportExcelFileChange(doc, ev)}
+                                          />
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 shrink-0"
+                                            disabled={shippingDispatchActionsGloballyBusy}
+                                            onClick={() => shippingImportPasteFileRef.current?.click()}
+                                          >
+                                            Загрузить файл Excel
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            variant="secondary"
+                                            size="sm"
+                                            className="h-8 shrink-0"
+                                            disabled={shippingDispatchActionsGloballyBusy}
+                                            onClick={() => setShippingImportPasteOpen((o) => !o)}
+                                          >
+                                            Вставить данные из Excel
+                                          </Button>
+                                        </div>
+                                      </div>
+                                      {shippingImportPasteOpen ? (
+                                        <div className="space-y-2 pt-1">
+                                          <Textarea
+                                            value={shippingImportPasteText}
+                                            onChange={(e) => setShippingImportPasteText(e.target.value)}
+                                            rows={6}
+                                            placeholder={"WB-A-10452, 120\n4601234567890, 48"}
+                                            disabled={shippingDispatchActionsGloballyBusy}
+                                            className="font-mono text-sm"
+                                          />
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            className="h-8"
+                                            disabled={shippingDispatchActionsGloballyBusy}
+                                            onClick={() => void handleShippingImportPasteApply(doc)}
+                                          >
+                                            Загрузить
+                                          </Button>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                   <div>
                                     <p className="mb-2 text-xs font-medium text-slate-600">Состав задания</p>
                                     {selectedShipmentItemRows.length === 0 ? (
