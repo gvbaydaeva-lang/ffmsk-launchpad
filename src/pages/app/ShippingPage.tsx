@@ -133,12 +133,6 @@ function isShipmentDocArchivedClosed(d: ShipmentDoc): boolean {
   return isShippingTerminal(d.workflowStatus as ShippingUiStatus) || d.workflowStatus === "cancelled";
 }
 
-/** Отмена доступна до финальной отгрузки: новое / в работе / в сборке / собрано. */
-function canShowCancelShipmentButton(ui: ShippingUiStatus): boolean {
-  if (ui === "shipped" || ui === "shipped_with_diff" || ui === "cancelled") return false;
-  return ui === "pending" || ui === "processing" || ui === "assembling" || ui === "assembled";
-}
-
 /**
  * Строка «закрыта отгрузкой» для отмены подбора и т.п.: учитывает legacy status «отгружено».
  * Не использовать для блокировки диспетчерского «Подтвердить отгрузку»: после упаковщика возможно assembled + «отгружено».
@@ -147,6 +141,19 @@ function isOutboundShipmentRowTerminalGate(sh: OutboundShipment | null | undefin
   if (!sh) return false;
   const wf = String(sh.workflowStatus ?? "");
   return wf === "shipped" || wf === "shipped_with_diff" || String(sh.status ?? "").trim() === "отгружено";
+}
+
+/** Любая строка уже отгружено / shipped_with_diff — отмену группы не показываем (нет частичной отмены). */
+function outboundGroupHasShippedTerminalRow(shipments: OutboundShipment[] | undefined | null): boolean {
+  const rows = Array.isArray(shipments) ? shipments : [];
+  return rows.some((s) => isOutboundShipmentRowTerminalGate(s));
+}
+
+/** Отмена доступна до финальной отгрузки всех строк: новое / в работе / в сборке / собрано; без смеси с отгруженными. */
+function canShowCancelShipmentButton(ui: ShippingUiStatus, shipments: OutboundShipment[] | undefined | null): boolean {
+  if (outboundGroupHasShippedTerminalRow(shipments)) return false;
+  if (ui === "shipped" || ui === "shipped_with_diff" || ui === "cancelled") return false;
+  return ui === "pending" || ui === "processing" || ui === "assembling" || ui === "assembled";
 }
 
 /** Финал по workflow: только shipped / shipped_with_diff; при смеси статусов по строкам — задание не считается отгруженным. */
@@ -1082,7 +1089,7 @@ const ShippingPage = () => {
         toast.info("Нельзя отменить уже отгруженное задание");
         return;
       }
-      if (!canShowCancelShipmentButton(ui)) return;
+      if (!canShowCancelShipmentButton(ui, rows)) return;
       if (cancelShipmentInFlightRef.current.has(doc.id)) return;
 
       const rows = Array.isArray(doc.shipments) ? doc.shipments : [];
@@ -1104,7 +1111,7 @@ const ShippingPage = () => {
           return;
         }
         if (isOutboundShipmentRowTerminalGate(latest)) {
-          toast.info("Нельзя отменить уже отгруженное задание");
+          toast.info("В группе есть уже отгруженные строки — отмена задания недоступна");
           return;
         }
         if (hasOutboundShipmentCancelReturnMoves(latest.id, safeMoves)) {
@@ -1165,6 +1172,7 @@ const ShippingPage = () => {
               id: `cancel-ship-${latest.id}-${ts}-${moveSeq++}`,
               type: "INBOUND",
               source: "shipping",
+              movementCause: "outbound_cancel_return",
               taskId: m.taskId,
               taskNumber: m.taskNumber,
               legalEntityId: m.legalEntityId,
@@ -2461,7 +2469,7 @@ const ShippingPage = () => {
                                                   </Button>
                                                 </>
                                               )}
-                                              {canShowCancelShipmentButton(uiStatus) ? (
+                                              {canShowCancelShipmentButton(uiStatus, docShipSafe) ? (
                                                 <Button
                                                   type="button"
                                                   size="sm"

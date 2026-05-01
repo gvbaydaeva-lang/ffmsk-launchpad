@@ -185,10 +185,17 @@ export function hasWarehouseInboundPlacementTransfers(inboundTaskId: string, mov
   );
 }
 
-/** Идемпотентность отмены отгрузки: возврат в ячейки создаётся с id `cancel-ship-{строка outbound}-…` (ShippingPage). */
+/** Возврат при отмене отгрузки: INBOUND + shipping + строка outbound + qty; пометка или legacy-префикс id (старые данные). */
 export function hasOutboundShipmentCancelReturnMoves(shipmentLineId: string, movements: InventoryMovement[]): boolean {
-  const id = (shipmentLineId || "").trim();
-  if (!id) return false;
-  const prefix = `cancel-ship-${id}-`;
-  return movements.some((m) => String(m.id ?? "").startsWith(prefix));
+  const lineId = (shipmentLineId || "").trim();
+  if (!lineId) return false;
+  const legacyPrefix = `cancel-ship-${lineId}-`;
+  return movements.some((m) => {
+    if (m.type !== "INBOUND" || m.source !== "shipping") return false;
+    if ((m.itemId ?? "").trim() !== lineId) return false;
+    const q = Math.trunc(Number(m.qty));
+    if (!Number.isFinite(q) || q <= 0) return false;
+    if (m.movementCause === "outbound_cancel_return") return true;
+    return String(m.id ?? "").startsWith(legacyPrefix);
+  });
 }

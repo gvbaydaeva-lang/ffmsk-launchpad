@@ -324,6 +324,9 @@ export type OutboundShipment = {
 };
 
 /** Движение товара (остаток = сумма qty по согласованным ключам) */
+/** Пометка для идемпотентности и трассировки (не меняет расчёт остатков). */
+export type InventoryMovementCause = "outbound_cancel_return";
+
 export type InventoryMovement = {
   id: string;
   /** TRANSFER: перемещение между locationId (куда) и fromLocationId (откуда), qty > 0 */
@@ -353,6 +356,8 @@ export type InventoryMovement = {
   qty: number;
   createdAt: string;
   source: "receiving" | "packing" | "shipping" | "placement";
+  /** Например, возврат в ячейку при отмене отгрузки — для отличия от «отменить подбор». */
+  movementCause?: InventoryMovementCause;
 };
 
 /** Сводка остатка по нормализованному ключу (для таблиц и проверок) */
