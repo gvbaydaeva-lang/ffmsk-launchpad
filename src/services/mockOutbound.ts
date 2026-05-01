@@ -109,6 +109,7 @@ type OutboundDbRow = {
   supply_number: string;
   expiry_date: string;
   packed_units: number;
+  picked_units?: number | null;
   planned_units: number;
   planned_ship_date: string | null;
   shipped_units: number | null;
@@ -172,6 +173,7 @@ function toDb(row: OutboundShipment): OutboundDbRow {
     supply_number: row.supplyNumber,
     expiry_date: row.expiryDate,
     packed_units: row.packedUnits,
+    picked_units: row.pickedUnits ?? null,
     planned_units: row.plannedUnits,
     planned_ship_date: row.plannedShipDate,
     shipped_units: row.shippedUnits,
@@ -204,6 +206,7 @@ function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipme
     supplyNumber: row.supply_number ?? "",
     expiryDate: row.expiry_date ?? "",
     packedUnits: row.packed_units ?? 0,
+    pickedUnits: row.picked_units != null ? Number(row.picked_units) : undefined,
     plannedUnits: row.planned_units ?? 0,
     plannedShipDate: row.planned_ship_date ?? null,
     shippedUnits: row.shipped_units ?? null,

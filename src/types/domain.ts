@@ -252,6 +252,8 @@ export type OutboundShipment = {
   supplyNumber: string;
   expiryDate: string;
   packedUnits: number;
+  /** Подобрано со склада (экран «Отгрузка»); упаковщик только уменьшает «хвост» через packedUnits. */
+  pickedUnits?: number;
   plannedUnits: number;
   plannedShipDate: string | null;
   shippedUnits: number | null;

@@ -22,8 +22,6 @@ import {
   useOutboundShipments,
   useProductCatalog,
 } from "@/hooks/useWmsMock";
-import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
-import { getBalanceByKeyMap, hasTaskMovements } from "@/services/mockInventoryMovements";
 import type { InventoryMovement, OutboundShipment, TaskWorkflowStatus } from "@/types/domain";
 import { normalizeWorkflowStatus, workflowFromOutboundGroup } from "@/lib/taskWorkflowUi";
 import {
@@ -72,9 +70,37 @@ type ScanLine = {
   color: string;
   size: string;
   plan: number;
-  fact: number;
-  shipmentRefs: Array<{ shipmentId: string; plan: number; fact: number }>;
+  picked: number;
+  packed: number;
+  shipmentRefs: Array<{ shipmentId: string; plan: number; picked: number; packed: number }>;
 };
+
+function outboundPickedUnits(sh: OutboundShipment): number {
+  const n = Number(sh.pickedUnits);
+  if (sh.pickedUnits != null && Number.isFinite(n)) return Math.max(0, Math.trunc(n));
+  const ship = Number(sh.shippedUnits ?? 0) || 0;
+  const pack = Number(sh.packedUnits ?? 0) || 0;
+  /** Совместимость: раньше «факт» писался и в shipped, и в packed одним числом. */
+  return Math.max(0, Math.trunc(Math.max(ship, pack)));
+}
+
+function outboundPackedUnits(sh: OutboundShipment): number {
+  return Math.max(0, Math.trunc(Number(sh.packedUnits ?? 0) || 0));
+}
+
+function outboundPackCapForShipment(sh: OutboundShipment): number {
+  const plan = Number(sh.plannedUnits) || 0;
+  return Math.min(plan, outboundPickedUnits(sh));
+}
+
+function outboundPackRemainingForShipment(sh: OutboundShipment): number {
+  return Math.max(0, outboundPackCapForShipment(sh) - outboundPackedUnits(sh));
+}
+
+function outboundHasShippingPickForShipment(movements: InventoryMovement[], shipmentId: string): boolean {
+  const safe = Array.isArray(movements) ? movements : [];
+  return safe.some((m) => m.type === "OUTBOUND" && m.source === "shipping" && m.itemId === shipmentId);
+}
 
 const PackingPage = () => {
   const { data: outbound, isLoading, error, updateOutboundDraft, setOutboundStatus, isUpdatingOutboundDraft, isUpdatingOutbound } =
@@ -214,9 +240,10 @@ const PackingPage = () => {
   const packingArchivePeekAssignment =
     packingArchivePeekId == null ? null : (assignments.find((a) => a.id === packingArchivePeekId) ?? null);
   const packingArchivePeekRows = React.useMemo<TaskItemRow[]>(() => {
-    if (!packingArchivePeekAssignment?.shipments.length) return [];
+    const peekShipments = Array.isArray(packingArchivePeekAssignment?.shipments) ? packingArchivePeekAssignment.shipments : [];
+    if (!peekShipments.length) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
-    return packingArchivePeekAssignment.shipments.map((sh) => {
+    return peekShipments.map((sh) => {
       const product = byProduct.get(sh.productId) ?? null;
       const name = (sh.importName || product?.name || "").trim() || "—";
       const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
@@ -224,7 +251,7 @@ const PackingPage = () => {
       const color = (sh.importColor || product?.color || "").trim() || "—";
       const size = (sh.importSize || product?.size || "").trim() || "—";
       const plan = Number(sh.plannedUnits) || 0;
-      const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      const fact = outboundPackedUnits(sh);
       return {
         id: sh.id,
         name,
@@ -251,7 +278,7 @@ const PackingPage = () => {
     }
     const items = startedAssignment.shipments.map((sh) => ({
       plannedQty: Number(sh.plannedUnits) || 0,
-      factQty: Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0,
+      factQty: outboundPackedUnits(sh),
     }));
     const v = getTaskValidation(items);
     if (v.totalRemaining === 0 && v.totalOver === 0) setFinalizePlanFactWarning(null);
@@ -261,7 +288,7 @@ const PackingPage = () => {
     if (!startedAssignment) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     const lineMap = new Map<string, ScanLine>();
-    for (const sh of startedAssignment.shipments) {
+    for (const sh of startedAssignment.shipments ?? []) {
       const product = byProduct.get(sh.productId) ?? null;
       const article = (sh.importArticle || product?.supplierArticle || "").trim();
       const name = (sh.importName || product?.name || "").trim();
@@ -271,7 +298,8 @@ const PackingPage = () => {
       const lineKey = `${article}|${color}|${size}|${barcode}`;
       const existing = lineMap.get(lineKey);
       const plan = Number(sh.plannedUnits) || 0;
-      const fact = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+      const picked = outboundPickedUnits(sh);
+      const packed = outboundPackedUnits(sh);
       if (!existing) {
         lineMap.set(lineKey, {
           key: lineKey,
@@ -283,13 +311,15 @@ const PackingPage = () => {
           color,
           size,
           plan,
-          fact,
-          shipmentRefs: [{ shipmentId: sh.id, plan, fact }],
+          picked,
+          packed,
+          shipmentRefs: [{ shipmentId: sh.id, plan, picked, packed }],
         });
       } else {
         existing.plan += plan;
-        existing.fact += fact;
-        existing.shipmentRefs.push({ shipmentId: sh.id, plan, fact });
+        existing.picked += picked;
+        existing.packed += packed;
+        existing.shipmentRefs.push({ shipmentId: sh.id, plan, picked, packed });
       }
     }
     return Array.from(lineMap.values()).sort((a, b) => a.article.localeCompare(b.article, "ru"));
@@ -297,20 +327,32 @@ const PackingPage = () => {
 
   const progress = React.useMemo(() => {
     const totalPlan = scanLines.reduce((sum, line) => sum + line.plan, 0);
-    const totalFact = scanLines.reduce((sum, line) => sum + line.fact, 0);
-    const remaining = Math.max(0, totalPlan - totalFact);
-    const overrun = Math.max(0, totalFact - totalPlan);
+    /** Сколько максимально можно упаковать при текущих подбор (min(план, подобрано) по строкам). */
+    const totalPackCap = scanLines.reduce(
+      (sum, line) =>
+        sum +
+        line.shipmentRefs.reduce((s, r) => s + Math.min(r.plan, r.picked), 0),
+      0,
+    );
+    const totalPacked = scanLines.reduce((sum, line) => sum + line.packed, 0);
+    const totalPicked = scanLines.reduce((sum, line) => sum + line.picked, 0);
+    const remainingPack = Math.max(0, totalPackCap - totalPacked);
+    const remainingToPlan = Math.max(0, totalPlan - totalPacked);
+    const overrun = Math.max(0, totalPacked - totalPlan);
     return {
       totalPlan,
-      totalFact,
-      remaining,
+      totalPackCap,
+      totalPicked,
+      totalPacked,
+      remaining: remainingToPlan,
+      remainingPack,
       overrun,
-      percent: totalPlan > 0 ? Math.min(100, Math.round((totalFact / totalPlan) * 100)) : 0,
+      percent: totalPlan > 0 ? Math.min(100, Math.round((totalPacked / totalPlan) * 100)) : 0,
     };
   }, [scanLines]);
 
   const taskNeedsReview = React.useMemo(
-    () => progress.totalPlan > 0 && scanLines.some((line) => line.plan !== line.fact),
+    () => progress.totalPlan > 0 && scanLines.some((line) => line.plan !== line.packed),
     [scanLines, progress.totalPlan],
   );
 
@@ -354,13 +396,13 @@ const PackingPage = () => {
       focusScanInput();
       return;
     }
-    if (lineByBarcode.fact >= lineByBarcode.plan) {
+    if (lineByBarcode.picked <= 0) {
       playScanErrorSound();
       triggerFlash("error");
       setHighlightedLineKey(lineByBarcode.key);
       setLineHighlightTone("error");
       clearLineHighlightLater();
-      setLastScanResult({ status: "error", message: "Уже выполнено" });
+      setLastScanResult({ status: "error", message: "Товар не подобран. Сначала выполните подбор." });
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
       const noErr =
         startedAssignment.shipments[0]?.assignmentNo?.trim() ||
@@ -373,25 +415,50 @@ const PackingPage = () => {
         legalEntityName: leNameErr,
         taskId: startedAssignment.id,
         taskNumber: noErr,
-        description: `Ошибка: превышено количество по товару (штрихкод: ${code})`,
+        description: `Ошибка: товар не подобран (штрихкод: ${code}). Сначала подбор из ячейки на отгрузке.`,
       });
-      toast.error("Количество по товару уже выполнено");
+      toast.error("Товар не подобран");
       focusScanInput();
       return;
     }
-    const target = lineByBarcode.shipmentRefs.find((r) => r.fact < r.plan);
-    if (!target) {
+    const remainingForPackedLine = lineByBarcode.shipmentRefs.reduce(
+      (s, r) => s + Math.max(0, Math.min(r.plan, r.picked) - r.packed),
+      0,
+    );
+    if (remainingForPackedLine <= 0) {
       playScanErrorSound();
       triggerFlash("error");
       setHighlightedLineKey(lineByBarcode.key);
       setLineHighlightTone("error");
       clearLineHighlightLater();
-      setLastScanResult({ status: "error", message: "Уже выполнено" });
-      toast.error("Количество по товару уже выполнено");
+      setLastScanResult({ status: "error", message: "Подобранное по этому товару уже отсканировано" });
+      const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const noErr =
+        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
+        startedAssignment.shipments[0]?.assignmentId?.trim() ||
+        startedAssignment.shipments[0]?.id ||
+        "—";
+      appendOperationLog({
+        type: "SCAN_ERROR",
+        legalEntityId: startedAssignment.legalEntityId,
+        legalEntityName: leNameErr,
+        taskId: startedAssignment.id,
+        taskNumber: noErr,
+        description: `Ошибка: лимит упаковки по подбору (штрихкод: ${code})`,
+      });
+      toast.error("Подобранное количество уже отсканировано");
       focusScanInput();
       return;
     }
-    const shipment = startedAssignment.shipments.find((x) => x.id === target.shipmentId);
+    let shipment: OutboundShipment | undefined;
+    const shipmentsSafe = Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : [];
+    for (const r of lineByBarcode.shipmentRefs) {
+      const sh = shipmentsSafe.find((x) => x.id === r.shipmentId);
+      if (sh && outboundPackRemainingForShipment(sh) > 0) {
+        shipment = sh;
+        break;
+      }
+    }
     if (!shipment) {
       playScanErrorSound();
       triggerFlash("error");
@@ -399,77 +466,25 @@ const PackingPage = () => {
       focusScanInput();
       return;
     }
-    const invSnapshotForScan =
-      (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
-    const balanceMapForScan = getBalanceByKeyMap(invSnapshotForScan);
-    const byProductForScan = new Map((catalog ?? []).map((p) => [p.id, p]));
-    const simulatePackedAfterThisScan = (sh: OutboundShipment) => {
-      const cur = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
-      return sh.id === shipment.id ? cur + 1 : cur;
-    };
-    const needByKeyAfterScan = new Map<string, number>();
-    for (const sh of startedAssignment.shipments) {
-      const product = byProductForScan.get(sh.productId) ?? null;
-      const plan = Number(sh.plannedUnits) || 0;
-      const packed = simulatePackedAfterThisScan(sh);
-      const shipQty = Math.min(packed, plan);
-      if (shipQty <= 0) continue;
-      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
-      const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
-      const color = (sh.importColor || product?.color || "").trim() || "—";
-      const size = (sh.importSize || product?.size || "").trim() || "—";
-      const wh = (sh.sourceWarehouse || "").trim() || "—";
-      const balKey = makeInventoryBalanceKey({
-        legalEntityId: sh.legalEntityId,
-        warehouseName: wh,
-        barcode,
-        article,
-        color,
-        size,
-      });
-      needByKeyAfterScan.set(balKey, (needByKeyAfterScan.get(balKey) ?? 0) + shipQty);
-    }
-    let packingScanStockInsufficient = false;
-    for (const [balKey, need] of needByKeyAfterScan) {
-      const have = balanceMapForScan.get(balKey) ?? 0;
-      if (have < need) {
-        packingScanStockInsufficient = true;
-        break;
-      }
-    }
-    if (packingScanStockInsufficient) {
+    const capScan = outboundPackCapForShipment(shipment);
+    if (outboundPackedUnits(shipment) >= capScan || capScan <= 0) {
       playScanErrorSound();
       triggerFlash("error");
       setHighlightedLineKey(lineByBarcode.key);
       setLineHighlightTone("error");
       clearLineHighlightLater();
-      setLastScanResult({ status: "error", message: "Недостаточно товара на остатке" });
-      const leNameStock = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
-      const noStock =
-        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
-        startedAssignment.shipments[0]?.assignmentId?.trim() ||
-        startedAssignment.shipments[0]?.id ||
-        "—";
-      appendOperationLog({
-        type: "STOCK_ERROR",
-        legalEntityId: startedAssignment.legalEntityId,
-        legalEntityName: leNameStock,
-        taskId: startedAssignment.id,
-        taskNumber: noStock,
-        description: `Ошибка: недостаточно товара на остатке при сканировании (штрихкод: ${code})`,
-      });
-      toast.error("Недостаточно товара на остатке");
+      setLastScanResult({ status: "error", message: "Нельзя отсканировать больше, чем подобрано" });
+      toast.error("Лимит по подбору исчерпан");
       focusScanInput();
       return;
     }
     setIsSubmittingScan(true);
     try {
-      const nextFact = (shipment.packedUnits ?? shipment.shippedUnits ?? 0) + 1;
+      const nextPacked = outboundPackedUnits(shipment) + 1;
       await updateOutboundDraft({
         id: shipment.id,
         patch: {
-          packedUnits: nextFact,
-          shippedUnits: nextFact,
+          packedUnits: nextPacked,
         },
       });
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
@@ -493,14 +508,14 @@ const PackingPage = () => {
       const hint = (lineByBarcode.name || lineByBarcode.article || lineByBarcode.barcode || "").trim();
       setLastScanResult({
         status: "success",
-        title: "Собрано +1",
+        title: "Упаковано +1",
         hint: hint || undefined,
       });
       setHighlightedLineKey(lineByBarcode.key);
       setLineHighlightTone("success");
       clearLineHighlightLater();
       focusScanInput();
-      toast.success(`Пик принят: ${lineByBarcode.article || lineByBarcode.barcode}`);
+      toast.success(`Упаковано: ${lineByBarcode.article || lineByBarcode.barcode}`);
     } catch {
       playScanErrorSound();
       triggerFlash("error");
@@ -513,17 +528,13 @@ const PackingPage = () => {
 
   const finalizeAssignment = async () => {
     if (!startedAssignment || progress.totalPlan === 0) return;
-    const fullyPacked = progress.totalFact >= progress.totalPlan || progress.remaining === 0;
+    const fullyPacked = progress.totalPacked >= progress.totalPlan || progress.remaining === 0;
     const taskId = startedAssignment.id;
-    const invSnapshot = (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
-    if (hasTaskMovements(taskId, "OUTBOUND", invSnapshot)) {
-      setStartedAssignmentId(null);
-      await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
-      return;
-    }
-    const planFactLineItems = startedAssignment.shipments.map((sh) => ({
+    const invSnapshot =
+      (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
+    const planFactLineItems = (Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : []).map((sh) => ({
       plannedQty: Number(sh.plannedUnits) || 0,
-      factQty: Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0,
+      factQty: outboundPackedUnits(sh),
     }));
     const planFactValidation = getTaskValidation(planFactLineItems);
     const firstShForLog = startedAssignment.shipments[0];
@@ -549,63 +560,10 @@ const PackingPage = () => {
       setFinalizePlanFactWarning(null);
     }
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
-    const balanceMap = getBalanceByKeyMap(invSnapshot);
-    const needByKey = new Map<string, { need: number; label: string }>();
-    for (const sh of startedAssignment.shipments) {
-      const product = byProduct.get(sh.productId) ?? null;
-      const name = (sh.importName || product?.name || "").trim() || "—";
-      const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
-      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
-      const color = (sh.importColor || product?.color || "").trim() || "—";
-      const size = (sh.importSize || product?.size || "").trim() || "—";
-      const wh = (sh.sourceWarehouse || "").trim() || "—";
+    const totalShipQty = (Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : []).reduce((s, sh) => {
       const plan = Number(sh.plannedUnits) || 0;
-      const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
-      const shipQty = Math.min(packed, plan);
-      if (shipQty <= 0) continue;
-      const key = makeInventoryBalanceKey({
-        legalEntityId: sh.legalEntityId,
-        warehouseName: wh,
-        barcode,
-        article,
-        color,
-        size,
-      });
-      const prev = needByKey.get(key);
-      needByKey.set(key, {
-        need: (prev?.need ?? 0) + shipQty,
-        label: name,
-      });
-    }
-    const shortages: string[] = [];
-    for (const [key, { need, label }] of needByKey) {
-      const have = balanceMap.get(key) ?? 0;
-      if (have < need) {
-        shortages.push(`${label} (${key.split("::")[2] ?? ""}): нужно ${need}, на остатке ${have}`);
-      }
-    }
-    if (!fullyPacked && shortages.length) {
-      appendOperationLog({
-        type: "STOCK_ERROR",
-        legalEntityId: startedAssignment.legalEntityId,
-        legalEntityName: legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId,
-        taskId,
-        taskNumber:
-          startedAssignment.shipments[0]?.assignmentNo?.trim() ||
-          startedAssignment.shipments[0]?.assignmentId?.trim() ||
-          startedAssignment.shipments[0]?.id ||
-          "—",
-        description: "Ошибка: недостаточно товара на остатке",
-      });
-      setLastScanResult({ status: "error", message: "Недостаточно остатка" });
-      focusScanInput();
-      toast.error("Недостаточно товара на остатке", { description: shortages.join("\n") });
-      return;
-    }
-    const totalShipQty = startedAssignment.shipments.reduce((s, sh) => {
-      const plan = Number(sh.plannedUnits) || 0;
-      const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
-      return s + Math.min(packed, plan);
+      const pack = outboundPackedUnits(sh);
+      return s + Math.min(pack, plan);
     }, 0);
     if (totalShipQty <= 0) {
       appendOperationLog({
@@ -629,7 +587,7 @@ const PackingPage = () => {
     const ts = new Date().toISOString();
     const hasDiscrepancy = startedAssignment.shipments.some((sh) => {
       const p = Number(sh.plannedUnits) || 0;
-      const f = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+      const f = outboundPackedUnits(sh);
       return p !== f;
     });
     const currentAssignmentId = startedAssignment.id;
@@ -640,8 +598,9 @@ const PackingPage = () => {
         return w === "pending" || w === "processing" || w === "assembling";
       }) ?? null;
     try {
-      const moves: InventoryMovement[] = startedAssignment.shipments
+      const moves: InventoryMovement[] = (Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : [])
         .map((sh) => {
+          if (outboundHasShippingPickForShipment(invSnapshot, sh.id)) return null;
           const product = byProduct.get(sh.productId) ?? null;
           const name = (sh.importName || product?.name || "").trim() || "—";
           const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
@@ -650,7 +609,7 @@ const PackingPage = () => {
           const size = (sh.importSize || product?.size || "").trim() || "—";
           const wh = (sh.sourceWarehouse || "").trim() || "—";
           const plan = Number(sh.plannedUnits) || 0;
-          const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+          const packed = outboundPackedUnits(sh);
           const shipQty = Math.min(packed, plan);
           if (shipQty <= 0) return null;
           return {
@@ -674,13 +633,13 @@ const PackingPage = () => {
             source: "packing" as const,
           };
         })
-        .filter((x): x is InventoryMovement => x !== null);
+        .filter((x) => x != null) as InventoryMovement[];
       if (moves.length) {
         await addInventoryMovements(moves);
       }
-      for (const sh of startedAssignment.shipments) {
+      for (const sh of Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : []) {
         const plan = Number(sh.plannedUnits) || 0;
-        const packed = Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0;
+        const packed = outboundPackedUnits(sh);
         const shipQty = Math.min(packed, plan);
         await updateOutboundDraft({
           id: sh.id,
@@ -927,7 +886,8 @@ const PackingPage = () => {
                   const dateLabel = formatTaskArchiveDateLabel(createdIso);
                   const completedLabel = formatTaskArchiveDateLabel(outboundShipmentsCompletedAtIso(assignment.shipments));
                   const totalPlan = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.plannedUnits) || 0), 0);
-                  const totalFact = assignment.shipments.reduce((sum, sh) => sum + (Number(sh.packedUnits ?? sh.shippedUnits ?? 0) || 0), 0);
+                  const shipmentsReg = Array.isArray(assignment.shipments) ? assignment.shipments : [];
+                  const totalFact = shipmentsReg.reduce((sum, sh) => sum + outboundPackedUnits(sh), 0);
                   const wf = normalizeWorkflowStatus(assignment.workflowStatus);
                   const overrun = Math.max(0, totalFact - totalPlan);
                   const requiresReview = totalPlan > 0 && totalPlan !== totalFact;
@@ -1068,11 +1028,13 @@ const PackingPage = () => {
             <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="font-medium text-slate-900">
-                  План {progress.totalPlan} · Факт {progress.totalFact} ·{" "}
+                  План {progress.totalPlan} · Упаковано {progress.totalPacked} · Подобрано {progress.totalPicked}
+                  · К упаковке из подбора {progress.remainingPack}
+                  ·{" "}
                   {progress.remaining === 0 ? (
                     <span className="font-semibold text-emerald-600">Готово</span>
                   ) : (
-                    <span className="font-semibold text-amber-600">Осталось {progress.remaining}</span>
+                    <span className="font-semibold text-amber-600">До плана {progress.remaining}</span>
                   )}
                   {progress.overrun > 0 ? (
                     <span className="text-slate-700">{` · Перерасход ${progress.overrun}`}</span>
@@ -1109,7 +1071,8 @@ const PackingPage = () => {
                     <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Цвет</th>
                     <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Размер</th>
                     <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
-                    <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Факт</th>
+                    <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Подобр.</th>
+                    <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Упак.</th>
                     <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Осталось</th>
                     <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">Перерасход</th>
                     <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Расхождение</th>
@@ -1118,10 +1081,10 @@ const PackingPage = () => {
                 </thead>
                 <tbody>
                   {scanLines.map((line) => {
-                    const rem = planFactRemaining(line.plan, line.fact);
-                    const over = planFactOverrun(line.plan, line.fact);
-                    const disc = planFactDiscrepancyText(line.plan, line.fact);
-                    const rowBg = planFactRowBgClass(line.plan, line.fact);
+                    const rem = planFactRemaining(line.plan, line.packed);
+                    const over = planFactOverrun(line.plan, line.packed);
+                    const disc = planFactDiscrepancyText(line.plan, line.packed);
+                    const rowBg = planFactRowBgClass(line.plan, line.packed);
                     const flashRow =
                       highlightedLineKey === line.key && lineHighlightTone === "success"
                         ? "bg-emerald-100 ring-2 ring-inset ring-emerald-400/90"
@@ -1137,7 +1100,8 @@ const PackingPage = () => {
                       <td className="border-b border-r px-2 py-1.5 text-xs">{line.color || "—"}</td>
                       <td className="border-b border-r px-2 py-1.5 text-xs">{line.size || "—"}</td>
                       <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{line.plan}</td>
-                      <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{line.fact}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{line.picked}</td>
+                      <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{line.packed}</td>
                       <td className={`border-b border-r px-2 py-1.5 text-right tabular-nums text-xs ${rem > 0 ? "font-medium text-amber-800" : ""}`}>
                         {rem}
                       </td>
@@ -1146,8 +1110,8 @@ const PackingPage = () => {
                       </td>
                       <td className="border-b border-r px-2 py-1.5 text-xs text-slate-700">{disc ?? "—"}</td>
                       <td className="border-b px-2 py-1.5">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${planFactLineBadgeClass(line.plan, line.fact)}`}>
-                          {planFactLineStatusLabel(line.plan, line.fact)}
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${planFactLineBadgeClass(line.plan, line.packed)}`}>
+                          {planFactLineStatusLabel(line.plan, line.packed)}
                         </span>
                       </td>
                     </tr>
@@ -1173,10 +1137,12 @@ const PackingPage = () => {
               </div>
               {!finalizePlanFactWarning && taskNeedsReview ? (
                 <p className="text-xs font-medium text-amber-800">
-                  Есть расхождения план/факт. Завершение доступно с предупреждением; со склада спишется min(план, факт) по строке.
+                  Есть расхождения план/упаковано. Завершение доступно с предупреждением; при отсутствии подбора со склада создаётся движение по min(план, упаковано).
                 </p>
-              ) : !finalizePlanFactWarning && progress.totalFact < progress.totalPlan ? (
-                <p className="text-xs text-slate-600">Осталось отсканировать: {progress.remaining} шт.</p>
+              ) : !finalizePlanFactWarning && progress.totalPacked < progress.totalPlan ? (
+                <p className="text-xs text-slate-600">
+                  До плана по упаковке: {progress.remaining} шт. · Отсканировать из подбора: {progress.remainingPack} шт.
+                </p>
               ) : null}
             </div>
             <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>

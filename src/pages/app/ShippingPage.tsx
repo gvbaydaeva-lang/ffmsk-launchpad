@@ -221,7 +221,7 @@ function shippingStockShortageLinesForDoc(
   for (const sh of doc.shipments) {
     const plan = Number(sh.plannedUnits) || 0;
     if (plan <= 0) continue;
-    const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+    const fact = Number(sh.pickedUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
     if (fact >= plan) continue;
     const product = byProduct.get(sh.productId) ?? null;
     const key = balanceKeyFromOutboundShipment(sh, product);
@@ -681,7 +681,7 @@ const ShippingPage = () => {
       const color = (sh.importColor || product?.color || "").trim() || "—";
       const size = (sh.importSize || product?.size || "").trim() || "—";
       const plan = Number(sh.plannedUnits) || 0;
-      const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      const fact = Number(sh.pickedUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
       let shippingStock: TaskItemRow["shippingStock"] = undefined;
       let shippingLocations: TaskItemRow["shippingLocations"] = undefined;
       if (showStock && reserveByKey) {
@@ -745,7 +745,7 @@ const ShippingPage = () => {
         warehouseName: sh.sourceWarehouse || "",
         reserveQty,
       });
-      const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      const fact = Number(sh.pickedUnits ?? sh.shippedUnits ?? 0) || 0;
       const plan = Number(sh.plannedUnits) || 0;
       const remaining = Math.max(0, plan - fact);
       const name = (sh.importName || product?.name || "").trim() || "—";
@@ -1020,8 +1020,6 @@ const ShippingPage = () => {
       }
       const ts = new Date().toISOString();
       const nextFact = line.fact + qty;
-      const plan = line.plan;
-      const lineDone = nextFact >= plan && plan > 0;
       try {
         await addInventoryMovements([
           {
@@ -1049,10 +1047,9 @@ const ShippingPage = () => {
         await updateOutboundDraft({
           id: shipmentId,
           patch: {
-            packedUnits: nextFact,
+            pickedUnits: nextFact,
             shippedUnits: nextFact,
             updatedAt: ts,
-            ...(lineDone ? { workflowStatus: "completed" as const } : {}),
           },
         });
         setPickDraftByShipment((prev) => ({
