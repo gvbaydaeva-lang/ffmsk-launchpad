@@ -213,7 +213,9 @@ const InventoryPage = () => {
     const q = search.trim().toLowerCase();
     if (q) {
       rows = rows.filter((x) =>
-        `${x.legalEntityName} ${x.name} ${x.article} ${x.sku} ${x.barcode}`.toLowerCase().includes(q),
+        `${x.legalEntityName} ${x.name} ${x.article} ${x.sku} ${x.barcode} ${x.locationName}`
+          .toLowerCase()
+          .includes(q),
       );
     }
     if (availableZeroFromUrl) {
@@ -540,7 +542,7 @@ const InventoryPage = () => {
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Поиск: название, артикул, баркод, юрлицо"
+                placeholder="Поиск: название, артикул, баркод, юрлицо, место"
                 className="h-9 border-slate-200 pl-9"
               />
             </div>

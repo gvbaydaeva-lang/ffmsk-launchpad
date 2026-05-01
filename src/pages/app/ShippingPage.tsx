@@ -16,10 +16,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
-import { useInventoryMovements, useLegalEntities, useOperationLogs, useOutboundShipments, useProductCatalog } from "@/hooks/useWmsMock";
+import {
+  useInventoryMovements,
+  useLegalEntities,
+  useLocations,
+  useOperationLogs,
+  useOutboundShipments,
+  useProductCatalog,
+} from "@/hooks/useWmsMock";
 import { filterOutboundByMarketplace } from "@/services/mockOutbound";
 import type {
   InventoryMovement,
+  Location,
   Marketplace,
   OperationLog,
   OutboundShipment,
@@ -36,6 +44,7 @@ import {
   type OutboundTaskPriority,
 } from "@/lib/outboundTaskPriority";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
+import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { formatOperationLogDescription, formatOperationLogShortStatus } from "@/lib/operationLogDisplay";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
@@ -133,6 +142,45 @@ function shippingShortage(plan: number, available: number): number {
   return Math.max(0, plan - available);
 }
 
+/** Доступно по местам для отображения в карточке отгрузки: остаток по locationId из движений, резерв списывается последовательно с крупнейших остатков (без изменения расчёта резерва в целом). */
+function shipmentLineAvailableByLocations(params: {
+  movements: InventoryMovement[];
+  locationById: Map<string, Location>;
+  balanceKey: string;
+  warehouseName: string;
+  reserveQty: number;
+}): { label: string; available: number }[] {
+  const movementsSafe = Array.isArray(params.movements) ? params.movements : [];
+  const wh = (params.warehouseName || "").trim() || "—";
+  const byLoc = new Map<string, number>();
+  for (const m of movementsSafe) {
+    const mWh = (m.warehouseName ?? "—").trim() || "—";
+    if (mWh !== wh) continue;
+    if (makeInventoryBalanceKeyFromMovement(m) !== params.balanceKey) continue;
+    const lid = (m.locationId || "").trim();
+    const k = lid || "__no_location__";
+    byLoc.set(k, (byLoc.get(k) ?? 0) + m.qty);
+  }
+  const entries = [...byLoc.entries()]
+    .map(([k, balance]) => ({
+      k,
+      balance,
+      label: k === "__no_location__" ? "Без места" : (params.locationById.get(k)?.name ?? "Без места"),
+    }))
+    .filter((e) => e.balance > 0)
+    .sort((a, b) => b.balance - a.balance);
+
+  let rem = Math.max(0, Number(params.reserveQty) || 0);
+  const out: { label: string; available: number }[] = [];
+  for (const e of entries) {
+    const take = Math.min(Math.max(0, e.balance), rem);
+    const available = Math.max(0, e.balance - take);
+    rem -= take;
+    if (available > 0) out.push({ label: e.label, available });
+  }
+  return out;
+}
+
 /** Та же логика, что для ⚠ нехватки: plan>0, fact<plan, plan>доступно, доступно=max(0, остаток−резерв). Без движений — пусто. */
 function shippingStockShortageLinesForDoc(
   doc: ShipmentDoc,
@@ -219,6 +267,7 @@ const ShippingPage = () => {
   const [searchParams] = useSearchParams();
   const { data, isLoading, error, updateOutboundDraft, isUpdatingOutboundDraft } = useOutboundShipments();
   const { data: inventoryMovements = [] } = useInventoryMovements();
+  const { data: locationsData } = useLocations();
   const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
   const { data: operationLogsRaw } = useOperationLogs();
@@ -247,6 +296,13 @@ const ShippingPage = () => {
   const [selectedShipmentIds, setSelectedShipmentIds] = React.useState<string[]>([]);
   const [bulkConfirming, setBulkConfirming] = React.useState(false);
   const [bulkTakingToWork, setBulkTakingToWork] = React.useState(false);
+
+  const movementDataSafe = React.useMemo(
+    () => (Array.isArray(inventoryMovements) ? inventoryMovements : []),
+    [inventoryMovements],
+  );
+  const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
+  const locationById = React.useMemo(() => new Map(locationsSafe.map((l) => [l.id, l])), [locationsSafe]);
 
   const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
   const reasonFromUrl = React.useMemo(() => {
@@ -350,7 +406,7 @@ const ShippingPage = () => {
       return true;
     });
     return problemFromUrl === "shortage"
-      ? withFilters.filter((d) => shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0)
+      ? withFilters.filter((d) => shippingStockShortageLinesForDoc(d, movementDataSafe, data, catalog ?? []).length > 0)
       : withFilters;
   }, [
     filtered,
@@ -363,7 +419,7 @@ const ShippingPage = () => {
     dateTo,
     reasonFromUrl,
     problemFromUrl,
-    inventoryMovements,
+    movementDataSafe,
     data,
     catalog,
   ]);
@@ -377,7 +433,7 @@ const ShippingPage = () => {
     for (const d of base) {
       const ui = shippingWorkflowFromGroup(d.shipments);
       const hasShortage =
-        shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0;
+        shippingStockShortageLinesForDoc(d, movementDataSafe, data, catalog ?? []).length > 0;
       if (hasShortage || ui === "shipped_with_diff") problematic += 1;
       if (hasShortage) shortage += 1;
       if (ui === "shipped_with_diff") shippedWithDiff += 1;
@@ -390,7 +446,7 @@ const ShippingPage = () => {
       shipped_with_diff: shippedWithDiff,
       assembled,
     };
-  }, [documentsBeforeQuickFilter, inventoryMovements, data, catalog]);
+  }, [documentsBeforeQuickFilter, movementDataSafe, data, catalog]);
 
   const documents = React.useMemo(() => {
     const afterProblem = Array.isArray(documentsBeforeQuickFilter) ? documentsBeforeQuickFilter : [];
@@ -400,7 +456,7 @@ const ShippingPage = () => {
         : afterProblem.filter((d) => {
             const ui = shippingWorkflowFromGroup(d.shipments);
             const hasShortage =
-              shippingStockShortageLinesForDoc(d, inventoryMovements, data, catalog ?? []).length > 0;
+              shippingStockShortageLinesForDoc(d, movementDataSafe, data, catalog ?? []).length > 0;
             if (shippingQuickFilter === "problematic") return hasShortage || ui === "shipped_with_diff";
             if (shippingQuickFilter === "shortage") return hasShortage;
             if (shippingQuickFilter === "shipped_with_diff") return ui === "shipped_with_diff";
@@ -413,7 +469,7 @@ const ShippingPage = () => {
       }
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
-  }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, inventoryMovements, data, catalog]);
+  }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, movementDataSafe, data, catalog]);
 
   const documentIdsOnPage = React.useMemo(() => documents.map((d) => d.id), [documents]);
 
@@ -509,10 +565,10 @@ const ShippingPage = () => {
   const shippingDocStockWarning = React.useMemo(() => {
     const map = new Map<string, { lines: ShippingStockWarnLine[] }>();
     for (const doc of documents) {
-      map.set(doc.id, { lines: shippingStockShortageLinesForDoc(doc, inventoryMovements, data, catalog ?? []) });
+      map.set(doc.id, { lines: shippingStockShortageLinesForDoc(doc, movementDataSafe, data, catalog ?? []) });
     }
     return map;
-  }, [documents, inventoryMovements, data, catalog]);
+  }, [documents, movementDataSafe, data, catalog]);
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
 
@@ -531,11 +587,12 @@ const ShippingPage = () => {
   /** Строки отгрузки из хранилища часто без import* — подставляем поля из каталога по productId (как в упаковщике). */
   const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
     if (!selectedDoc?.shipments?.length) return [];
-    const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+    const catalogSafe = Array.isArray(catalog) ? catalog : [];
+    const byProduct = new Map(catalogSafe.map((p) => [p.id, p]));
     const showStock = !isShippingTerminal(selectedDoc.workflowStatus);
-    const movementsReady = inventoryMovements.length > 0;
-    const balanceByKey = showStock && movementsReady ? getBalanceByKeyMap(inventoryMovements) : null;
-    const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalog ?? []) : null;
+    const movementsReady = movementDataSafe.length > 0;
+    const balanceByKey = showStock && movementsReady ? getBalanceByKeyMap(movementDataSafe) : null;
+    const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalogSafe) : null;
     return selectedDoc.shipments.map((sh) => {
       const product = byProduct.get(sh.productId) ?? null;
       const name = (sh.importName || product?.name || "").trim() || "—";
@@ -546,6 +603,7 @@ const ShippingPage = () => {
       const plan = Number(sh.plannedUnits) || 0;
       const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
       let shippingStock: TaskItemRow["shippingStock"] = undefined;
+      let shippingLocations: TaskItemRow["shippingLocations"] = undefined;
       if (showStock && balanceByKey && reserveByKey) {
         const key = balanceKeyFromOutboundShipment(sh, product);
         const balanceQty = balanceByKey.get(key) ?? 0;
@@ -558,6 +616,13 @@ const ShippingPage = () => {
         } else {
           shippingStock = { state: "sufficient" };
         }
+        shippingLocations = shipmentLineAvailableByLocations({
+          movements: movementDataSafe,
+          locationById,
+          balanceKey: key,
+          warehouseName: sh.sourceWarehouse || "",
+          reserveQty,
+        });
       }
       return {
         id: sh.id,
@@ -572,9 +637,10 @@ const ShippingPage = () => {
         warehouse: sh.sourceWarehouse || "—",
         status: sh.workflowStatus ?? "pending",
         shippingStock,
+        shippingLocations,
       };
     });
-  }, [selectedDoc, catalog, inventoryMovements, data]);
+  }, [selectedDoc, catalog, movementDataSafe, data, locationById]);
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 

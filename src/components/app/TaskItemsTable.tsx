@@ -40,6 +40,8 @@ export type TaskItemRow = {
   status?: TaskWorkflowStatus;
   /** Только экран «Отгрузки»: доступно по WMS (остаток − резерв) vs план строки */
   shippingStock?: { state: "sufficient" } | { state: "short"; available: number; shortage: number };
+  /** Только экран «Отгрузки»: распределение доступного остатка по местам (только отображение) */
+  shippingLocations?: Array<{ label: string; available: number }>;
 };
 
 type TaskItemsTableProps = {
@@ -59,9 +61,19 @@ export default function TaskItemsTable({
 }: TaskItemsTableProps) {
   const outbound = variant === "outboundLines";
   const showShippingStock = outbound && rows.some((r) => r.shippingStock !== undefined);
+  const showShippingLocations = outbound && rows.some((r) => r.shippingLocations !== undefined);
   return (
     <div className="w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
-    <Table className={cn("table-auto", showShippingStock ? "min-w-[1280px]" : "min-w-[1100px]")}>
+    <Table
+      className={cn(
+        "table-auto",
+        showShippingStock && showShippingLocations
+          ? "min-w-[1480px]"
+          : showShippingStock || showShippingLocations
+            ? "min-w-[1280px]"
+            : "min-w-[1100px]",
+      )}
+    >
       <TableHeader>
         <TableRow className="border-slate-200 bg-white">
           <TableHead className="h-9 min-w-[220px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Название</TableHead>
@@ -79,6 +91,9 @@ export default function TaskItemsTable({
           )}
           {showShippingStock ? (
             <TableHead className="h-9 min-w-[200px] px-3 py-2 text-xs font-semibold text-slate-600">Доступно</TableHead>
+          ) : null}
+          {showShippingLocations ? (
+            <TableHead className="h-9 min-w-[220px] px-3 py-2 text-xs font-semibold text-slate-600">По местам</TableHead>
           ) : null}
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
         </TableRow>
@@ -124,6 +139,23 @@ export default function TaskItemsTable({
                     <span className="text-emerald-800">Доступно достаточно</span>
                   ) : (
                     "—"
+                  )}
+                </TableCell>
+              ) : null}
+              {showShippingLocations ? (
+                <TableCell className="px-3 py-2 align-top text-xs text-slate-800">
+                  {row.shippingLocations === undefined ? (
+                    "—"
+                  ) : row.shippingLocations.length > 0 ? (
+                    <ul className="list-none space-y-0.5">
+                      {row.shippingLocations.map((line, idx) => (
+                        <li key={`${line.label}-${idx}`} className="tabular-nums">
+                          {line.label} — {line.available.toLocaleString("ru-RU")} шт
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="text-slate-500">Нет доступных остатков по местам</span>
                   )}
                 </TableCell>
               ) : null}
