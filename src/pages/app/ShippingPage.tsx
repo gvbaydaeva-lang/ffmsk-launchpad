@@ -1213,17 +1213,16 @@ const ShippingPage = () => {
       toast.info("Отгрузка отменена");
       return;
     }
-    if (doc.workflowStatus !== "assembled") return;
-    if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
-      toast.info("Отгрузка уже завершена");
-      return;
-    }
     if (!canShipmentDiffFinalize(doc)) {
       toast.error(
         shipmentDocPackedTotal(doc) <= 0
           ? "Нельзя отгрузить: ничего не упаковано"
           : "Нельзя завершить отгрузку с расхождением для этого задания.",
       );
+      return;
+    }
+    if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
+      toast.info("Отгрузка уже завершена");
       return;
     }
     setPendingBulkDiffDocs([]);
@@ -1375,7 +1374,7 @@ const ShippingPage = () => {
       return;
     }
 
-    if (!pendingDiffDoc || pendingDiffDoc.workflowStatus !== "assembled") return;
+    if (!pendingDiffDoc || !canShipmentDiffFinalize(pendingDiffDoc)) return;
     if (isShipmentFinalizeBlockedAlreadyDone(pendingDiffDoc)) {
       toast.info("Отгрузка уже завершена");
       setDiffReasonDialogOpen(false);
@@ -1386,10 +1385,6 @@ const ShippingPage = () => {
     if (finalizeInFlightIdsRef.current.has(pendingDiffDoc.id)) return;
     if (shipmentDocPackedTotal(pendingDiffDoc) <= 0) {
       toast.error("Нельзя отгрузить: ничего не упаковано");
-      return;
-    }
-    if (!canShipmentDiffFinalize(pendingDiffDoc)) {
-      toast.error("Нельзя завершить отгрузку с расхождением для этого задания.");
       return;
     }
     const pendRowsRaw = pendingDiffDoc?.shipments ?? [];
@@ -1451,17 +1446,11 @@ const ShippingPage = () => {
         description: `Пропущено: ${terminalSkippedFromSelection}.`,
       });
     }
-    const nonAssembled = actionableSelected.filter((d) => d.workflowStatus !== "assembled");
-    const assembled = actionableSelected.filter((d) => d.workflowStatus === "assembled");
-    if (nonAssembled.length > 0) {
-      toast.warning("Подтвердить можно только отгрузки со статусом 'Собрано'.");
-    }
-    if (assembled.length === 0) return;
-    const stalled = assembled.filter((d) => !canShipmentExactFinalize(d) && !canShipmentDiffFinalize(d));
-    const exactEligible = assembled.filter((d) => canShipmentExactFinalize(d));
-    const diffEligible = assembled.filter((d) => canShipmentDiffFinalize(d));
+    const exactEligible = actionableSelected.filter((d) => canShipmentExactFinalize(d));
+    const diffEligible = actionableSelected.filter((d) => canShipmentDiffFinalize(d));
+    const stalled = actionableSelected.filter((d) => !canShipmentExactFinalize(d) && !canShipmentDiffFinalize(d));
     if (stalled.length > 0) {
-      toast.warning("Часть заданий исключена: нечего отгружать (ничего не упаковано).");
+      toast.warning("Часть заданий исключена: нечего отгружать (ничего не упаковано или нет условий для подтверждения).");
     }
     if (exactEligible.length === 0 && diffEligible.length === 0) return;
     if (diffEligible.length > 0) {
@@ -2420,13 +2409,51 @@ const ShippingPage = () => {
                                                   {uiStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
                                                 </Button>
                                               ) : uiStatus === "processing" || uiStatus === "assembling" ? (
-                                                <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                                  {hasShippingProblem ? "Продолжить с расхождением" : "Продолжить сборку"}
-                                                </Button>
+                                                <>
+                                                  {canShipmentDiffFinalize(doc) ? (
+                                                    <Button
+                                                      type="button"
+                                                      size="sm"
+                                                      variant="secondary"
+                                                      onClick={() => openShipmentDiffFinalizeDialog(doc)}
+                                                      disabled={
+                                                        confirmingShipmentId === doc.id ||
+                                                        isUpdatingOutboundDraft ||
+                                                        bulkConfirming ||
+                                                        bulkTakingToWork ||
+                                                        Boolean(diffReasonDialogOpen)
+                                                      }
+                                                    >
+                                                      Завершить с расхождением
+                                                    </Button>
+                                                  ) : null}
+                                                  <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                                    {hasShippingProblem ? "Продолжить с расхождением" : "Продолжить сборку"}
+                                                  </Button>
+                                                </>
                                               ) : (
-                                                <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                                  Открыть в упаковщике
-                                                </Button>
+                                                <>
+                                                  {canShipmentDiffFinalize(doc) ? (
+                                                    <Button
+                                                      type="button"
+                                                      size="sm"
+                                                      variant="secondary"
+                                                      onClick={() => openShipmentDiffFinalizeDialog(doc)}
+                                                      disabled={
+                                                        confirmingShipmentId === doc.id ||
+                                                        isUpdatingOutboundDraft ||
+                                                        bulkConfirming ||
+                                                        bulkTakingToWork ||
+                                                        Boolean(diffReasonDialogOpen)
+                                                      }
+                                                    >
+                                                      Завершить с расхождением
+                                                    </Button>
+                                                  ) : null}
+                                                  <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                                    Открыть в упаковщике
+                                                  </Button>
+                                                </>
                                               )}
                                               {canShowCancelShipmentButton(uiStatus) ? (
                                                 <Button
@@ -2448,7 +2475,7 @@ const ShippingPage = () => {
                                                   {cancellingShipmentId === doc.id ? "Отмена…" : "Отменить отгрузку"}
                                                 </Button>
                                               ) : null}
-                                              {showCompleteAssemblyUi ? (
+                                              {showCompleteAssemblyUi && !canShipmentDiffFinalize(doc) ? (
                                                 <Button
                                                   type="button"
                                                   size="sm"
@@ -2672,7 +2699,6 @@ const ShippingPage = () => {
                       (d) => shipmentDocPackedTotal(d) <= 0 || !canShipmentDiffFinalize(d),
                     ) || pendingBulkExactDocs.some((d) => !canShipmentExactFinalize(d))
                   : !pendingDiffDoc ||
-                    pendingDiffDoc.workflowStatus !== "assembled" ||
                     confirmingShipmentId === pendingDiffDoc.id ||
                     shipmentDocPackedTotal(pendingDiffDoc) <= 0 ||
                     !canShipmentDiffFinalize(pendingDiffDoc))
