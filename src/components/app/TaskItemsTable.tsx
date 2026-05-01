@@ -114,7 +114,7 @@ export default function TaskItemsTable({
         {rows.map((row) => {
           const mismatch = row.plan !== row.fact;
           const remaining = planFactRemaining(row.plan, row.fact);
-          const packedCell = outbound ? row.shippingPackedQty ?? row.fact ?? 0 : row.fact;
+          const packedCell = outbound ? Number(row.shippingPackedQty ?? 0) : row.fact;
           const validation = getLineValidation({ plannedQty: row.plan, factQty: row.fact });
           const rowBg = outbound ? planFactRowBgClass(row.plan, row.fact) : mismatch ? "bg-red-50/50" : "";
           const isFlash = highlightedRowId != null && row.id === highlightedRowId && rowHighlight != null;

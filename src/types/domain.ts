@@ -252,7 +252,7 @@ export type OutboundShipment = {
   supplyNumber: string;
   expiryDate: string;
   packedUnits: number;
-  /** Упаковано (скан упаковщика); в UI при отсутствии считается равным подобранному. */
+  /** Упаковано (скан упаковщика); отдельно от подбора, при отсутствии поля в UI = 0. */
   packedQty?: number | null;
   /** Подобрано со склада (экран «Отгрузка»). */
   pickedUnits?: number;

@@ -48,6 +48,7 @@ import { formatTaskArchiveDateLabel, outboundArchiveSortKey, outboundShipmentsCo
 import {
   outboundPackCapForShipment,
   outboundPackRemainingForShipment,
+  outboundPackedQtyAssemblyGate,
   outboundPackedQtyDisplay,
   outboundPackedQtyStoredOrZero,
   outboundPickedQty,
@@ -236,7 +237,8 @@ const PackingPage = () => {
   const packingArchivePeekAssignment =
     packingArchivePeekId == null ? null : (assignments.find((a) => a.id === packingArchivePeekId) ?? null);
   const packingArchivePeekRows = React.useMemo<TaskItemRow[]>(() => {
-    const peekShipments = Array.isArray(packingArchivePeekAssignment?.shipments) ? packingArchivePeekAssignment.shipments : [];
+    const peekRaw = packingArchivePeekAssignment?.shipments ?? [];
+    const peekShipments = Array.isArray(peekRaw) ? peekRaw : [];
     if (!peekShipments.length) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     return peekShipments.map((sh) => {
@@ -246,8 +248,8 @@ const PackingPage = () => {
       const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
       const color = (sh.importColor || product?.color || "").trim() || "—";
       const size = (sh.importSize || product?.size || "").trim() || "—";
-      const plan = Number(sh.plannedUnits) || 0;
-      const fact = outboundPackedQtyDisplay(sh);
+      const plan = Number(sh.plannedUnits ?? 0) || 0;
+      const fact = Number(outboundPickedQty(sh) ?? 0) || 0;
       return {
         id: sh.id,
         name,
@@ -258,6 +260,7 @@ const PackingPage = () => {
         size,
         plan,
         fact,
+        shippingPackedQty: outboundPackedQtyAssemblyGate(sh),
         warehouse: sh.sourceWarehouse || "—",
         status: sh.workflowStatus ?? "pending",
       };
@@ -308,7 +311,7 @@ const PackingPage = () => {
       const plan = Number(sh.plannedUnits) || 0;
       const picked = outboundPickedQty(sh);
       const packed = outboundPackedQtyStoredOrZero(sh);
-      const packedDisplay = outboundPackedQtyDisplay(sh);
+      const packedDisplay = packed;
       if (!existing) {
         lineMap.set(lineKey, {
           key: lineKey,
@@ -340,9 +343,7 @@ const PackingPage = () => {
     const totalPlan = scanLines.reduce((sum, line) => sum + line.plan, 0);
     /** Сколько максимально можно упаковать при текущих подбор (min(план, подобрано) по строкам). */
     const totalPackCap = scanLines.reduce(
-      (sum, line) =>
-        sum +
-        line.shipmentRefs.reduce((s, r) => s + Math.min(r.plan, r.picked), 0),
+      (sum, line) => sum + line.shipmentRefs.reduce((s, r) => s + r.picked, 0),
       0,
     );
     const totalPacked = scanLines.reduce((sum, line) => sum + line.packed, 0);
@@ -440,7 +441,7 @@ const PackingPage = () => {
       return;
     }
     const remainingForPackedLine = lineByBarcode.shipmentRefs.reduce(
-      (s, r) => s + Math.max(0, Math.min(r.plan, r.picked) - r.packed),
+      (s, r) => s + Math.max(0, r.picked - r.packed),
       0,
     );
     if (remainingForPackedLine <= 0) {

@@ -50,7 +50,6 @@ import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
 import {
   outboundPackedQtyAssemblyGate,
-  outboundPackedQtyDisplay,
   outboundPickedQty,
   outboundShipmentsPackedQtyPlanSatisfied,
 } from "@/lib/outboundPickPackQty";
@@ -444,7 +443,7 @@ const ShippingPage = () => {
       const createdAt = rows.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
       const planned = rows.reduce((s, sh) => s + (Number(sh.plannedUnits ?? 0) || 0), 0);
       const fact = rows.reduce((s, sh) => s + Number(outboundPickedQty(sh) ?? 0), 0);
-      const packed = rows.reduce((s, sh) => s + outboundPackedQtyDisplay(sh), 0);
+      const packed = rows.reduce((s, sh) => s + outboundPackedQtyAssemblyGate(sh), 0);
       const workflowStatus = shippingWorkflowFromGroup(rows);
       const priority = mergePriorityFromShipments(rows);
       const groupId = `${first.legalEntityId}::${first.assignmentId ?? first.assignmentNo ?? first.id}`;
@@ -771,7 +770,7 @@ const ShippingPage = () => {
         size,
         plan,
         fact,
-        shippingPackedQty: outboundPackedQtyDisplay(sh),
+        shippingPackedQty: outboundPackedQtyAssemblyGate(sh),
         warehouse: sh.sourceWarehouse || "—",
         status: sh.workflowStatus ?? "pending",
         shippingStock,
