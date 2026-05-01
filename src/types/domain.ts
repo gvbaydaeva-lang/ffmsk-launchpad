@@ -140,7 +140,7 @@ export type InboundLineItem = {
 };
 
 /** Статус заявки на приёмку (API /inbounds), отдельно от операционной InboundSupply */
-export type InboundWarehouseRequestStatus = "new" | "receiving" | "received";
+export type InboundWarehouseRequestStatus = "new" | "receiving" | "received" | "placed";
 
 /** Режим фиксации факта (следующий шаг разработки) */
 export type InboundWarehouseReceivingMode = "manual" | "scan";
@@ -158,6 +158,13 @@ export type InboundWarehouseRequest = {
   items: InboundWarehouseItem[];
 };
 
+/** Размещение принятого количества по ячейке (после статуса received) */
+export type InboundWarehousePlacement = {
+  id: string;
+  locationId: string;
+  qty: number;
+};
+
 /** Позиция заявки на приёмку (аналог InboundItem в ТЗ) */
 export type InboundWarehouseItem = {
   id: string;
@@ -166,6 +173,8 @@ export type InboundWarehouseItem = {
   plannedQty: number;
   /** Фактически принято по строке (без движений остатков до завершения приёмки) */
   receivedQty: number;
+  /** Распределение по ячейкам до completeInboundPlacement */
+  placements: InboundWarehousePlacement[];
 };
 
 /** Тарифы фулфилмента по клиенту (договорные ставки) */
@@ -315,14 +324,18 @@ export type OutboundShipment = {
 /** Движение товара (остаток = сумма qty по согласованным ключам) */
 export type InventoryMovement = {
   id: string;
-  type: "INBOUND" | "OUTBOUND";
+  /** TRANSFER: перемещение между locationId (куда) и fromLocationId (откуда), qty > 0 */
+  type: "INBOUND" | "OUTBOUND" | "TRANSFER";
   taskId: string;
   taskNumber: string;
   legalEntityId: string;
   legalEntityName: string;
   warehouseId?: string;
   warehouseName?: string;
+  /** Для TRANSFER — ячейка назначения; для INBOUND/OUTBOUND — место операции */
   locationId?: string;
+  /** Для TRANSFER — зона/ячейка списания (напр. RECEIVING_AREA) */
+  fromLocationId?: string;
   /** Ид строки источника (строка заявки inbound, строка outbound и т.д.) — не подменять sku/productId */
   itemId?: string;
   /** Каталог: id товара; заполнять отдельно от itemId, если строка документа ≠ товар */
@@ -337,7 +350,7 @@ export type InventoryMovement = {
   /** INBOUND: положительный; OUTBOUND: отрицательный */
   qty: number;
   createdAt: string;
-  source: "receiving" | "packing" | "shipping";
+  source: "receiving" | "packing" | "shipping" | "placement";
 };
 
 /** Сводка остатка по нормализованному ключу (для таблиц и проверок) */

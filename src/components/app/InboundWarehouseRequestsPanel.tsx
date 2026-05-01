@@ -18,8 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { useLegalEntities, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
+import { useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
 import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
+import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
@@ -35,9 +36,201 @@ function receivingModeLabel(mode: InboundWarehouseReceivingMode): string {
 }
 
 function statusLabel(row: InboundWarehouseRequest): string {
+  if (row.status === "placed") return "Размещено";
   if (row.status === "received") return "Принято";
   if (row.status === "receiving") return "Приёмка";
   return "Новая";
+}
+
+function sumPlacementsQty(item: InboundWarehouseItem): number {
+  return item.placements.reduce((s, p) => s + Math.max(0, Math.trunc(Number(p.qty) || 0)), 0);
+}
+
+function isInboundPlacementFullyDistributed(row: InboundWarehouseRequest): boolean {
+  return row.items.every((it) => {
+    const rq = Math.max(0, Math.trunc(Number(it.receivedQty) || 0));
+    return sumPlacementsQty(it) === rq;
+  });
+}
+
+function InboundLinePlacementsBlock({
+  item,
+  productName,
+  readOnly,
+  storageLocations,
+  locationName,
+  onPersist,
+  persistBusy,
+}: {
+  item: InboundWarehouseItem;
+  productName: string;
+  readOnly: boolean;
+  storageLocations: { id: string; name: string }[];
+  locationName: (id: string) => string;
+  onPersist: (pl: InboundPlacementInput[]) => Promise<void>;
+  persistBusy: boolean;
+}) {
+  type DraftPl = { rowKey: string; id: string; locationId: string; qty: string };
+  const [lines, setLines] = React.useState<DraftPl[]>([]);
+  React.useEffect(() => {
+    setLines(
+      item.placements.map((p, i) => ({
+        rowKey: p.id || `k-${i}`,
+        id: p.id,
+        locationId: p.locationId,
+        qty: String(Math.max(1, Math.trunc(Number(p.qty) || 0))),
+      })),
+    );
+  }, [item.placements, item.id]);
+
+  const receivedQty = Math.max(0, Math.trunc(Number(item.receivedQty) || 0));
+  const distributed = sumPlacementsQty(item);
+
+  const applyLines = async () => {
+    const payload: InboundPlacementInput[] = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const ln = lines[i];
+      const loc = (ln.locationId || "").trim();
+      const q = Math.trunc(Number(ln.qty) || 0);
+      if (!loc && q <= 0) continue;
+      if (!loc) {
+        toast.error(`Строка ${i + 1}: выберите ячейку`);
+        return;
+      }
+      if (!Number.isFinite(q) || q < 1) {
+        toast.error(`Строка ${i + 1}: укажите количество > 0`);
+        return;
+      }
+      const idTrim = (ln.id || "").trim();
+      payload.push({
+        ...(idTrim ? { id: idTrim } : {}),
+        locationId: loc,
+        qty: q,
+      });
+    }
+    const sumDraft = payload.reduce((s, p) => s + p.qty, 0);
+    if (sumDraft > receivedQty) {
+      toast.error("Сумма по строкам размещения не может превышать принятое количество");
+      return;
+    }
+    await onPersist(payload);
+  };
+
+  if (readOnly) {
+    return (
+      <div className="rounded-md border border-slate-200 bg-white p-3">
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <span className="text-sm font-medium text-slate-900">{productName}</span>
+          <span className="text-xs tabular-nums text-slate-600">
+            Принято: {receivedQty} · Распределено: {distributed}
+          </span>
+        </div>
+        {receivedQty <= 0 ? (
+          <p className="text-xs text-slate-500">Нет принятого количества.</p>
+        ) : item.placements.length === 0 ? (
+          <p className="text-xs text-slate-500">—</p>
+        ) : (
+          <ul className="space-y-1 text-xs text-slate-700">
+            {item.placements.map((p) => (
+              <li key={p.id} className="tabular-nums">
+                {locationName(p.locationId)} · {p.qty} шт.
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
+  if (receivedQty <= 0) {
+    return (
+      <div className="rounded-md border border-slate-200 bg-white p-3">
+        <div className="text-sm font-medium text-slate-900">{productName}</div>
+        <p className="mt-1 text-xs text-slate-500">Нет принятого количества — размещение не требуется.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-sm font-medium text-slate-900">{productName}</span>
+        <span className="text-xs tabular-nums text-slate-600">
+          Принято: {receivedQty} · Распределено: {distributed} / {receivedQty}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {lines.map((ln) => (
+          <div key={ln.rowKey} className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[160px] flex-1">
+              <Label className="text-xs text-slate-500">Ячейка</Label>
+              <Select
+                value={ln.locationId || undefined}
+                onValueChange={(v) =>
+                  setLines((prev) => prev.map((x) => (x.rowKey === ln.rowKey ? { ...x, locationId: v } : x)))
+                }
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Выберите" />
+                </SelectTrigger>
+                <SelectContent>
+                  {storageLocations.map((loc) => (
+                    <SelectItem key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-[100px]">
+              <Label className="text-xs text-slate-500">Кол-во</Label>
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                className="h-9 tabular-nums"
+                value={ln.qty}
+                onChange={(e) =>
+                  setLines((prev) => prev.map((x) => (x.rowKey === ln.rowKey ? { ...x, qty: e.target.value } : x)))
+                }
+              />
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 shrink-0 text-slate-600"
+              onClick={() => setLines((prev) => prev.filter((x) => x.rowKey !== ln.rowKey))}
+              disabled={persistBusy}
+            >
+              Убрать
+            </Button>
+          </div>
+        ))}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8"
+            disabled={persistBusy}
+            onClick={() =>
+              setLines((prev) => [
+                ...prev,
+                { rowKey: `n-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, id: "", locationId: "", qty: "1" },
+              ])
+            }
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            Размещение
+          </Button>
+          <Button type="button" size="sm" className="h-8" disabled={persistBusy} onClick={() => void applyLines()}>
+            {persistBusy ? "Сохранение…" : "Сохранить распределение"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function InboundReceivingQtyRow({
@@ -118,6 +311,7 @@ function InboundReceivingQtyRow({
 const InboundWarehouseRequestsPanel = () => {
   const { data: entities } = useLegalEntities();
   const { data: catalog, isLoading: catalogLoading } = useProductCatalog();
+  const { data: locationsData } = useLocations();
   const {
     data: inboundList,
     isLoading: listLoading,
@@ -133,6 +327,12 @@ const InboundWarehouseRequestsPanel = () => {
     completeWarehouseInboundReceiving,
     isCompletingWarehouseInboundReceiving,
     completingWarehouseInboundId,
+    updateWarehouseInboundPlacement,
+    isUpdatingWarehouseInboundPlacement,
+    updatingWarehouseInboundPlacementVars,
+    completeWarehouseInboundPlacement,
+    isCompletingWarehouseInboundPlacement,
+    completingWarehouseInboundPlacementId,
   } = useWarehouseInboundRequests();
 
   const [modeDialogInboundId, setModeDialogInboundId] = React.useState<string | null>(null);
@@ -156,6 +356,20 @@ const InboundWarehouseRequestsPanel = () => {
   }, [catalog]);
 
   const productDisplayName = React.useCallback((productId: string) => productNameById.get(productId) ?? productId, [productNameById]);
+
+  const storageLocations = React.useMemo(() => {
+    const list = Array.isArray(locationsData) ? locationsData : [];
+    return list.filter((l) => l?.type === "storage").map((l) => ({ id: l.id, name: l.name || l.id }));
+  }, [locationsData]);
+
+  const locationNameById = React.useCallback(
+    (id: string) => {
+      const list = Array.isArray(locationsData) ? locationsData : [];
+      const hit = list.find((l) => l.id === id);
+      return hit?.name ?? id;
+    },
+    [locationsData],
+  );
 
   const persistReceivedQty = React.useCallback(
     async (inboundId: string, itemId: string, receivedQty: number) => {
@@ -258,6 +472,45 @@ const InboundWarehouseRequestsPanel = () => {
       }
     },
     [completeWarehouseInboundReceiving],
+  );
+
+  const persistPlacementForLine = React.useCallback(
+    async (inboundId: string, itemId: string, placements: InboundPlacementInput[]) => {
+      try {
+        await updateWarehouseInboundPlacement({ inboundId, itemId, placements });
+        toast.success("Распределение сохранено");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Не удалось сохранить размещение";
+        toast.error(msg);
+      }
+    },
+    [updateWarehouseInboundPlacement],
+  );
+
+  const placementLineBusy = React.useCallback(
+    (inboundId: string, itemId: string) =>
+      Boolean(
+        isUpdatingWarehouseInboundPlacement &&
+          updatingWarehouseInboundPlacementVars?.inboundId === inboundId &&
+          updatingWarehouseInboundPlacementVars?.itemId === itemId,
+      ),
+    [isUpdatingWarehouseInboundPlacement, updatingWarehouseInboundPlacementVars],
+  );
+
+  const completePlacementBusy = (rowId: string) =>
+    Boolean(isCompletingWarehouseInboundPlacement && completingWarehouseInboundPlacementId === rowId);
+
+  const completeInboundPlacementFor = React.useCallback(
+    async (inboundId: string) => {
+      try {
+        await completeWarehouseInboundPlacement(inboundId);
+        toast.success("Размещение завершено, движения созданы");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Не удалось завершить размещение";
+        toast.error(msg);
+      }
+    },
+    [completeWarehouseInboundPlacement],
   );
 
   return (
@@ -403,18 +656,21 @@ const InboundWarehouseRequestsPanel = () => {
                         <TableCell>
                           <span
                             className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
-                              row.status === "received"
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                                : row.status === "receiving"
-                                  ? "border-violet-200 bg-violet-50 text-violet-900"
-                                  : "border-slate-200 bg-slate-50 text-slate-700"
+                              row.status === "placed"
+                                ? "border-sky-200 bg-sky-50 text-sky-900"
+                                : row.status === "received"
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                  : row.status === "receiving"
+                                    ? "border-violet-200 bg-violet-50 text-violet-900"
+                                    : "border-slate-200 bg-slate-50 text-slate-700"
                             }`}
                           >
                             {statusLabel(row)}
                           </span>
                         </TableCell>
                         <TableCell className="text-sm text-slate-700">
-                          {(row.status === "receiving" || row.status === "received") && row.receivingMode
+                          {(row.status === "receiving" || row.status === "received" || row.status === "placed") &&
+                          row.receivingMode
                             ? receivingModeLabel(row.receivingMode)
                             : "—"}
                         </TableCell>
@@ -436,13 +692,17 @@ const InboundWarehouseRequestsPanel = () => {
                           )}
                         </TableCell>
                       </TableRow>
-                      {row.status === "receiving" || row.status === "received" ? (
+                      {row.status === "receiving" || row.status === "received" || row.status === "placed" ? (
                         <TableRow className="border-t-0 bg-slate-50/70 hover:bg-slate-50/70">
                           <TableCell colSpan={7} className="p-0 align-top">
                             <div className="space-y-2 p-3">
                               {row.status === "received" ? (
                                 <p className="text-xs text-slate-600">
                                   Приёмка завершена. Факт зафиксирован, движения созданы, правки недоступны.
+                                </p>
+                              ) : row.status === "placed" ? (
+                                <p className="text-xs text-slate-600">
+                                  Размещение завершено. Движения из зоны приёмки в ячейки созданы, заявка закрыта.
                                 </p>
                               ) : (
                                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -480,7 +740,7 @@ const InboundWarehouseRequestsPanel = () => {
                                         key={item.id}
                                         item={item}
                                         productName={productDisplayName(item.productId)}
-                                        editable={row.status !== "received"}
+                                        editable={row.status === "receiving"}
                                         disabled={lineReceivedQtyBusy(row.id, item.id)}
                                         onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
                                       />
@@ -488,6 +748,44 @@ const InboundWarehouseRequestsPanel = () => {
                                   </TableBody>
                                 </Table>
                               </div>
+                              {row.status === "received" || row.status === "placed" ? (
+                                <div className="space-y-3 pt-2">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                    Размещение по ячейкам
+                                  </p>
+                                  {!storageLocations.length ? (
+                                    <p className="text-xs text-amber-800">В справочнике нет ячеек хранения — добавьте места типа «Хранение».</p>
+                                  ) : null}
+                                  {row.items.map((item) => (
+                                    <InboundLinePlacementsBlock
+                                      key={item.id}
+                                      item={item}
+                                      productName={productDisplayName(item.productId)}
+                                      readOnly={row.status === "placed"}
+                                      storageLocations={storageLocations}
+                                      locationName={locationNameById}
+                                      persistBusy={placementLineBusy(row.id, item.id)}
+                                      onPersist={(pl) => persistPlacementForLine(row.id, item.id, pl)}
+                                    />
+                                  ))}
+                                  {row.status === "received" ? (
+                                    <div className="pt-1">
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        disabled={
+                                          completePlacementBusy(row.id) ||
+                                          !isInboundPlacementFullyDistributed(row) ||
+                                          !storageLocations.length
+                                        }
+                                        onClick={() => void completeInboundPlacementFor(row.id)}
+                                      >
+                                        {completePlacementBusy(row.id) ? "Завершение…" : "Завершить размещение"}
+                                      </Button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                           </TableCell>
                         </TableRow>

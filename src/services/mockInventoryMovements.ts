@@ -45,6 +45,16 @@ export function addInventoryMovements(movements: InventoryMovement[]): Inventory
     if (m.type === "OUTBOUND" && m.qty >= 0) {
       throw new Error("outbound_qty_must_be_negative");
     }
+    if (m.type === "TRANSFER") {
+      if (m.qty <= 0 || !Number.isFinite(m.qty) || Math.trunc(m.qty) !== m.qty) {
+        throw new Error("transfer_qty_must_be_positive_integer");
+      }
+      const from = (m.fromLocationId ?? "").trim();
+      const to = (m.locationId ?? "").trim();
+      if (!from || !to) {
+        throw new Error("transfer_locations_required");
+      }
+    }
   }
   const next = [...movements, ...current];
   writeStorage(next);
@@ -54,6 +64,7 @@ export function addInventoryMovements(movements: InventoryMovement[]): Inventory
 export function getInventoryBalance(movements: InventoryMovement[]): InventoryBalanceRow[] {
   const byKey = new Map<string, { sum: number; sample: InventoryMovement }>();
   for (const m of movements) {
+    if (m.type === "TRANSFER") continue;
     const key = makeInventoryBalanceKeyFromMovement(m);
     const cur = byKey.get(key);
     if (!cur) {
@@ -114,8 +125,16 @@ export function hasReceivingInboundMovements(inboundSourceTaskId: string, moveme
 export function getBalanceByKeyMap(movements: InventoryMovement[]): Map<string, number> {
   const m = new Map<string, number>();
   for (const mov of movements) {
+    if (mov.type === "TRANSFER") continue;
     const key = makeInventoryBalanceKeyFromMovement(mov);
     m.set(key, (m.get(key) ?? 0) + mov.qty);
   }
   return m;
+}
+
+/** Размещение по заявке /inbounds уже зафиксировано TRANSFER-движениями (идемпотентность). */
+export function hasWarehouseInboundPlacementTransfers(inboundTaskId: string, movements: InventoryMovement[]): boolean {
+  return movements.some(
+    (m) => m.taskId === inboundTaskId && m.type === "TRANSFER" && m.source === "placement",
+  );
 }

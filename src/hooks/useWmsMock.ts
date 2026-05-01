@@ -51,7 +51,10 @@ import {
   startInboundReceiving,
   completeInboundReceiving,
   updateInboundReceivedQty,
+  updateInboundPlacement,
+  completeInboundPlacement,
   type PostInboundsPayload,
+  type InboundPlacementInput,
 } from "@/services/warehouseInboundApi";
 import type { InboundWarehouseReceivingMode } from "@/types/domain";
 
@@ -649,6 +652,22 @@ export function useWarehouseInboundRequests() {
     },
   });
 
+  const updatePlacement = useMutation({
+    mutationFn: (vars: { inboundId: string; itemId: string; placements: InboundPlacementInput[] }) =>
+      updateInboundPlacement(vars.inboundId, vars.itemId, vars.placements),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
+    },
+  });
+
+  const completePlacement = useMutation({
+    mutationFn: (inboundId: string) => completeInboundPlacement(inboundId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
+      void qc.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
+    },
+  });
+
   return {
     ...query,
     /** POST /inbounds */
@@ -663,6 +682,12 @@ export function useWarehouseInboundRequests() {
     completeWarehouseInboundReceiving: completeReceiving.mutateAsync,
     isCompletingWarehouseInboundReceiving: completeReceiving.isPending,
     completingWarehouseInboundId: completeReceiving.variables,
+    updateWarehouseInboundPlacement: updatePlacement.mutateAsync,
+    isUpdatingWarehouseInboundPlacement: updatePlacement.isPending,
+    updatingWarehouseInboundPlacementVars: updatePlacement.variables,
+    completeWarehouseInboundPlacement: completePlacement.mutateAsync,
+    isCompletingWarehouseInboundPlacement: completePlacement.isPending,
+    completingWarehouseInboundPlacementId: completePlacement.variables,
   };
 }
 

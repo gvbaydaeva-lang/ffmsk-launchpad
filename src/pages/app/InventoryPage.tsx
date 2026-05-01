@@ -28,22 +28,26 @@ import {
 import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace } from "@/types/domain";
+import { WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID } from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
 
 const sourceLabel: Record<InventoryMovement["source"], string> = {
   receiving: "Приёмка",
   packing: "Упаковщик",
   shipping: "Отгрузка",
+  placement: "Размещение",
 };
 
 const movementTypeLabel: Record<InventoryMovement["type"], string> = {
   INBOUND: "Приёмка",
   OUTBOUND: "Отгрузка",
+  TRANSFER: "Перемещение",
 };
 
 const movementTypeClass: Record<InventoryMovement["type"], string> = {
   INBOUND: "text-emerald-700",
   OUTBOUND: "text-red-600",
+  TRANSFER: "text-sky-700",
 };
 
 type InventoryRowWithLocation = InventoryBalanceRow & {
@@ -134,6 +138,7 @@ const InventoryPage = () => {
     const ids = new Set(locationsSafe.filter((l) => l?.type === "receiving").map((l) => l.id));
     // Fallback для старых/неполных данных справочника: дефолтная зона приёмки.
     ids.add("loc-receiving");
+    ids.add(WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID);
     return ids;
   }, [locationsSafe]);
 
@@ -153,6 +158,43 @@ const InventoryPage = () => {
     >();
     for (const m of rows) {
       const baseKey = makeInventoryBalanceKeyFromMovement(m);
+      if (m.type === "TRANSFER") {
+        const qtyTr = Math.trunc(Number(m.qty) || 0);
+        if (qtyTr <= 0 || !Number.isFinite(qtyTr)) continue;
+        const fromId = (m.fromLocationId || "").trim();
+        const toId = (m.locationId || "").trim();
+        const bump = (
+          locationId: string,
+          delta: number,
+          sample: InventoryMovement,
+          isoCandidate: string,
+        ) => {
+          const lid = locationId.trim();
+          const key = `${baseKey}::${lid || "no-location"}`;
+          const curBump = byKey.get(key);
+          const mIso = (isoCandidate ?? "").trim();
+          const mTs = Date.parse(mIso);
+          const mIsoOk = Number.isFinite(mTs);
+          if (!curBump) {
+            byKey.set(key, {
+              sum: delta,
+              sample,
+              baseKey,
+              locationId: lid,
+              lastMovementIso: mIsoOk ? mIso : null,
+            });
+          } else {
+            curBump.sum += delta;
+            const curTs = Date.parse(curBump.lastMovementIso || "");
+            if (mIsoOk && (!Number.isFinite(curTs) || mTs > curTs)) {
+              curBump.lastMovementIso = mIso;
+            }
+          }
+        };
+        bump(fromId, -qtyTr, m, m.createdAt);
+        bump(toId, qtyTr, m, m.createdAt);
+        continue;
+      }
       const locationId = (m.locationId || "").trim();
       const key = `${baseKey}::${locationId || "no-location"}`;
       const cur = byKey.get(key);
@@ -257,6 +299,12 @@ const InventoryPage = () => {
       return movementDataSafe
         .filter((m) => {
           const baseKey = makeInventoryBalanceKeyFromMovement(m);
+          const rowLoc = (row.locationId || "").trim();
+          if (m.type === "TRANSFER") {
+            const from = (m.fromLocationId || "").trim();
+            const to = (m.locationId || "").trim();
+            return baseKey === row.baseKey && (rowLoc === from || rowLoc === to);
+          }
           const movementLoc = (m.locationId || "").trim();
           return baseKey === row.baseKey && movementLoc === row.locationId;
         })
@@ -658,11 +706,26 @@ const InventoryPage = () => {
                       <TableCell className="max-w-[100px] truncate px-2 py-1">{m.warehouseName ?? "—"}</TableCell>
                       <TableCell
                         className={`px-2 py-1 text-right tabular-nums font-medium ${
-                          m.qty < 0 ? "text-red-600" : "text-emerald-700"
+                          m.type === "TRANSFER" && historyRow
+                            ? (m.fromLocationId || "").trim() === (historyRow.locationId || "").trim()
+                              ? "text-red-600"
+                              : "text-emerald-700"
+                            : m.qty < 0
+                              ? "text-red-600"
+                              : "text-emerald-700"
                         }`}
                       >
-                        {m.qty > 0 ? "+" : ""}
-                        {m.qty}
+                        {m.type === "TRANSFER" && historyRow ? (
+                          <>
+                            {(m.fromLocationId || "").trim() === (historyRow.locationId || "").trim() ? "−" : "+"}
+                            {m.qty}
+                          </>
+                        ) : (
+                          <>
+                            {m.qty > 0 ? "+" : ""}
+                            {m.qty}
+                          </>
+                        )}
                       </TableCell>
                       <TableCell className="px-2 py-1">{sourceLabel[m.source]}</TableCell>
                     </TableRow>

@@ -1,5 +1,6 @@
 import type {
   InboundWarehouseItem,
+  InboundWarehousePlacement,
   InboundWarehouseRequest,
   InboundWarehouseRequestStatus,
   InboundWarehouseReceivingMode,
@@ -11,12 +12,28 @@ import {
   addInventoryMovements,
   getInventoryMovementsSync,
   hasReceivingInboundMovements,
+  hasWarehouseInboundPlacementTransfers,
 } from "@/services/mockInventoryMovements";
+import { fetchMockLocations } from "@/services/mockLocations";
 
 const STORAGE_KEY = "ffmsk.api.inbounds";
 
 function delay(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
+}
+
+function normalizePlacementsFromRaw(raw: unknown): InboundWarehousePlacement[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out: InboundWarehousePlacement[] = [];
+  for (const p of arr) {
+    const o = p as { id?: string; locationId?: string; qty?: number };
+    const locationId = String(o.locationId ?? "").trim();
+    const q = Math.trunc(Number(o.qty) || 0);
+    if (!locationId || q <= 0) continue;
+    const id = String(o.id ?? "").trim() || `plc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    out.push({ id, locationId, qty: q });
+  }
+  return out;
 }
 
 function normalizeInboundItem(it: InboundWarehouseItem): InboundWarehouseItem {
@@ -26,6 +43,7 @@ function normalizeInboundItem(it: InboundWarehouseItem): InboundWarehouseItem {
     ...it,
     plannedQty: Math.max(0, Math.trunc(Number(it.plannedQty) || 0)),
     receivedQty,
+    placements: normalizePlacementsFromRaw((it as InboundWarehouseItem).placements),
   };
 }
 
@@ -34,11 +52,13 @@ export const WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID = "RECEIVING_AREA";
 
 function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): InboundWarehouseRequest {
   const status: InboundWarehouseRequestStatus =
-    raw.status === "received"
-      ? "received"
-      : raw.status === "receiving"
-        ? "receiving"
-        : "new";
+    raw.status === "placed"
+      ? "placed"
+      : raw.status === "received"
+        ? "received"
+        : raw.status === "receiving"
+          ? "receiving"
+          : "new";
   let receivingMode: InboundWarehouseReceivingMode | null = null;
   if (raw.receivingMode === "manual" || raw.receivingMode === "scan") {
     receivingMode = raw.receivingMode;
@@ -218,6 +238,174 @@ export async function completeInboundReceiving(inboundId: string): Promise<Inbou
   return updated;
 }
 
+/** Обновление плана размещения по строке (только статус «Принято», без движений и без смены receivedQty). */
+export type InboundPlacementInput = { id?: string; locationId: string; qty: number };
+
+async function assertStorageLocation(locationId: string): Promise<void> {
+  const locs = await fetchMockLocations();
+  const loc = locs.find((l) => l.id === (locationId || "").trim());
+  if (!loc || loc.type !== "storage") {
+    throw new Error("Выберите ячейку хранения из справочника");
+  }
+}
+
+function normalizeInboundPlacementWrites(placements: InboundPlacementInput[]): InboundWarehousePlacement[] {
+  const stamp = Date.now();
+  const out: InboundWarehousePlacement[] = [];
+  for (let i = 0; i < placements.length; i += 1) {
+    const p = placements[i];
+    const locationId = String(p.locationId ?? "").trim();
+    const q = Math.trunc(Number(p.qty));
+    if (!locationId) {
+      throw new Error(`Размещение ${i + 1}: укажите место`);
+    }
+    if (!Number.isFinite(q) || q < 1) {
+      throw new Error(`Размещение ${i + 1}: количество должно быть целым числом больше 0`);
+    }
+    const pid = String(p.id ?? "").trim() || `plc-${stamp}-${i}-${Math.random().toString(36).slice(2, 7)}`;
+    out.push({ id: pid, locationId, qty: q });
+  }
+  return out;
+}
+
+export async function updateInboundPlacement(
+  inboundId: string,
+  itemId: string,
+  placements: InboundPlacementInput[],
+): Promise<InboundWarehouseRequest> {
+  await delay(90);
+  const rows = readStored();
+  const idx = rows.findIndex((r) => r.id === inboundId);
+  if (idx < 0) throw new Error("Заявка не найдена");
+  const row = rows[idx];
+  if (row.status === "placed") {
+    throw new Error("Заявка уже размещена, изменения недоступны");
+  }
+  if (row.status !== "received") {
+    throw new Error("Размещение можно вносить только для заявки в статусе «Принято»");
+  }
+  const lineIdx = row.items.findIndex((it) => it.id === itemId);
+  if (lineIdx < 0) throw new Error("Строка заявки не найдена");
+
+  const line = row.items[lineIdx];
+  const receivedQty = Math.max(0, Math.trunc(Number(line.receivedQty) || 0));
+  const nextPlacements = normalizeInboundPlacementWrites(Array.isArray(placements) ? placements : []);
+  for (const np of nextPlacements) {
+    await assertStorageLocation(np.locationId);
+  }
+  if (receivedQty === 0 && nextPlacements.length > 0) {
+    throw new Error("Для строки без приёмки размещение недоступно");
+  }
+  const sumPl = nextPlacements.reduce((s, p) => s + p.qty, 0);
+  if (sumPl > receivedQty) {
+    throw new Error("Сумма по размещениям не может превышать принятое количество по строке");
+  }
+
+  const nextItems = row.items.map((it, i) => (i === lineIdx ? { ...it, placements: nextPlacements } : it));
+  const updated: InboundWarehouseRequest = { ...row, items: nextItems };
+  const next = [...rows];
+  next[idx] = updated;
+  writeStored(next);
+  return updated;
+}
+
+/**
+ * Завершить размещение: TRANSFER из RECEIVING_AREA в ячейки, сумма placements = receivedQty по каждой строке с приёмкой.
+ */
+export async function completeInboundPlacement(inboundId: string): Promise<InboundWarehouseRequest> {
+  await delay(170);
+  const rows = readStored();
+  const idx = rows.findIndex((r) => r.id === inboundId);
+  if (idx < 0) throw new Error("Заявка не найдена");
+  const row = rows[idx];
+  if (row.status === "placed") {
+    throw new Error("Размещение уже завершено");
+  }
+  if (row.status !== "received") {
+    throw new Error("Завершить размещение можно только для заявки в статусе «Принято»");
+  }
+
+  const invSnapshot = typeof window !== "undefined" ? getInventoryMovementsSync() : [];
+  if (hasWarehouseInboundPlacementTransfers(inboundId, invSnapshot)) {
+    throw new Error("По этой заявке размещение уже отражено в движениях");
+  }
+
+  const locs = await fetchMockLocations();
+  const assertLoc = (lid: string) => {
+    const loc = locs.find((l) => l.id === lid.trim());
+    if (!loc || loc.type !== "storage") throw new Error("Некорректная ячейка размещения в заявке");
+  };
+
+  for (const it of row.items) {
+    const rq = Math.max(0, Math.trunc(Number(it.receivedQty) || 0));
+    const sumPl = it.placements.reduce((s, p) => s + p.qty, 0);
+    if (rq === 0) {
+      if (sumPl !== 0) throw new Error("Для непринятых строк не должно быть размещения");
+      continue;
+    }
+    if (sumPl !== rq) {
+      throw new Error("Распределите ровно всё принятое количество по ячейкам по каждой строке с приёмом");
+    }
+    for (const p of it.placements) {
+      assertLoc(p.locationId);
+    }
+  }
+
+  const [catalog, entities] = await Promise.all([fetchMockProductCatalog(), fetchMockLegalEntities()]);
+  const leName = entities.find((e) => e.id === row.partnerId)?.shortName ?? row.partnerId;
+  const ts = new Date().toISOString();
+  const stamp = Date.now();
+  const moves: InventoryMovement[] = [];
+
+  let moveIdx = 0;
+  for (const it of row.items) {
+    const rq = Math.max(0, Math.trunc(Number(it.receivedQty) || 0));
+    if (rq <= 0) continue;
+    const product = catalog.find((p) => p.id === it.productId);
+    for (const p of it.placements) {
+      moves.push({
+        id: `im-whplc-${row.id}-${it.id}-${p.id}-${stamp}-${moveIdx}`,
+        type: "TRANSFER",
+        source: "placement",
+        taskId: row.id,
+        taskNumber: row.id,
+        legalEntityId: row.partnerId,
+        legalEntityName: leName,
+        warehouseName: "Зона приёмки",
+        fromLocationId: WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID,
+        locationId: p.locationId,
+        itemId: it.id,
+        productId: it.productId,
+        name: (product?.name ?? "—").trim() || "—",
+        sku: product?.supplierArticle,
+        article: (product?.supplierArticle ?? "").trim() || "—",
+        barcode: (product?.barcode ?? "").trim() || "—",
+        marketplace: "WB",
+        color: (product?.color ?? "—").trim() || "—",
+        size: (product?.size ?? "—").trim() || "—",
+        qty: p.qty,
+        createdAt: ts,
+      });
+      moveIdx += 1;
+    }
+  }
+
+  if (moves.length === 0) {
+    throw new Error("Нет размещений для создания движений");
+  }
+
+  addInventoryMovements(moves);
+
+  const updated: InboundWarehouseRequest = {
+    ...row,
+    status: "placed",
+  };
+  const next = [...rows];
+  next[idx] = updated;
+  writeStored(next);
+  return updated;
+}
+
 /** GET /inbounds */
 export async function fetchInboundsWarehouseRequests(): Promise<InboundWarehouseRequest[]> {
   await delay(80);
@@ -238,6 +426,7 @@ export async function postInboundWarehouseRequest(body: PostInboundsPayload): Pr
     productId: it.productId.trim(),
     plannedQty: Math.trunc(Number(it.plannedQty)),
     receivedQty: 0,
+    placements: [],
   }));
   const row: InboundWarehouseRequest = {
     id,
