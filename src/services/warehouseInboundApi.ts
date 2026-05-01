@@ -2,6 +2,7 @@ import type {
   InboundWarehouseItem,
   InboundWarehouseRequest,
   InboundWarehouseRequestStatus,
+  InboundWarehouseReceivingMode,
 } from "@/types/domain";
 
 const STORAGE_KEY = "ffmsk.api.inbounds";
@@ -10,13 +11,29 @@ function delay(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
+function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): InboundWarehouseRequest {
+  const status: InboundWarehouseRequestStatus =
+    raw.status === "receiving" ? "receiving" : "new";
+  let receivingMode: InboundWarehouseReceivingMode | null = null;
+  if (raw.receivingMode === "manual" || raw.receivingMode === "scan") {
+    receivingMode = raw.receivingMode;
+  }
+  return {
+    ...raw,
+    status,
+    receivingMode,
+    items: Array.isArray(raw.items) ? raw.items : [],
+  };
+}
+
 function readStored(): InboundWarehouseRequest[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as InboundWarehouseRequest[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((row) => normalizeInboundWarehouseRequest(row as InboundWarehouseRequest));
   } catch {
     return [];
   }
@@ -48,6 +65,30 @@ function validatePayload(body: PostInboundsPayload): void {
   }
 }
 
+/** старт операции приёмки по заявке (демо backend) */
+export async function startInboundReceiving(id: string, mode: InboundWarehouseReceivingMode): Promise<InboundWarehouseRequest> {
+  if (mode !== "manual" && mode !== "scan") {
+    throw new Error("Режим должен быть «manual» или «scan»");
+  }
+  await delay(90);
+  const rows = readStored();
+  const idx = rows.findIndex((r) => r.id === id);
+  if (idx < 0) throw new Error("Заявка не найдена");
+  const row = rows[idx];
+  if (row.status !== "new") {
+    throw new Error("Приёмку можно начать только для заявки в статусе «Новая»");
+  }
+  const updated: InboundWarehouseRequest = {
+    ...row,
+    status: "receiving",
+    receivingMode: mode,
+  };
+  const next = [...rows];
+  next[idx] = updated;
+  writeStored(next);
+  return updated;
+}
+
 /** GET /inbounds */
 export async function fetchInboundsWarehouseRequests(): Promise<InboundWarehouseRequest[]> {
   await delay(80);
@@ -73,6 +114,7 @@ export async function postInboundWarehouseRequest(body: PostInboundsPayload): Pr
     partnerId: body.partnerId.trim(),
     plannedDate: (body.plannedDate || "").trim().slice(0, 10) || createdAt.slice(0, 10),
     status,
+    receivingMode: null,
     comment: (body.comment ?? "").trim(),
     createdAt,
     items: lines,

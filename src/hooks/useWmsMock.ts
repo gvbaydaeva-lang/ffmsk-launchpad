@@ -48,8 +48,10 @@ import { appendMockLocation, fetchMockLocations, saveMockLocations } from "@/ser
 import {
   fetchInboundsWarehouseRequests,
   postInboundWarehouseRequest,
+  startInboundReceiving,
   type PostInboundsPayload,
 } from "@/services/warehouseInboundApi";
+import type { InboundWarehouseReceivingMode } from "@/types/domain";
 
 async function pushLegacyOperationHistory(
   qc: ReturnType<typeof useQueryClient>,
@@ -621,11 +623,22 @@ export function useWarehouseInboundRequests() {
       void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
     },
   });
+
+  const startReceiving = useMutation({
+    mutationFn: (vars: { id: string; mode: InboundWarehouseReceivingMode }) => startInboundReceiving(vars.id, vars.mode),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
+    },
+  });
+
   return {
     ...query,
     /** POST /inbounds */
     postInbounds: create.mutateAsync,
     isPostingInbounds: create.isPending,
+    startInboundReceiving: startReceiving.mutateAsync,
+    isStartingInboundReceiving: startReceiving.isPending,
+    startingInboundReceivingVars: startReceiving.variables,
   };
 }
 

@@ -140,7 +140,10 @@ export type InboundLineItem = {
 };
 
 /** Статус заявки на приёмку (API /inbounds), отдельно от операционной InboundSupply */
-export type InboundWarehouseRequestStatus = "new";
+export type InboundWarehouseRequestStatus = "new" | "receiving";
+
+/** Режим фиксации факта (следующий шаг разработки) */
+export type InboundWarehouseReceivingMode = "manual" | "scan";
 
 /** Заявка на приёмку: планируемое поступление (POST /inbounds) */
 export type InboundWarehouseRequest = {
@@ -148,6 +151,8 @@ export type InboundWarehouseRequest = {
   partnerId: string;
   plannedDate: string;
   status: InboundWarehouseRequestStatus;
+  /** До «Начать приёмку» — null */
+  receivingMode: InboundWarehouseReceivingMode | null;
   comment: string;
   createdAt: string;
   items: InboundWarehouseItem[];

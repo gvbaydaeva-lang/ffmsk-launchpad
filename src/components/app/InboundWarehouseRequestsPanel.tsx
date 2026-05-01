@@ -4,6 +4,14 @@ import { ru } from "date-fns/locale";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useLegalEntities, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
+import type { InboundWarehouseReceivingMode, InboundWarehouseRequest } from "@/types/domain";
 import { toast } from "sonner";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
@@ -21,11 +30,30 @@ function formatPlannedDate(value: string): string {
   return format(new Date(t), "dd.MM.yyyy", { locale: ru });
 }
 
+function receivingModeLabel(mode: InboundWarehouseReceivingMode): string {
+  return mode === "manual" ? "Ручной ввод" : "Сканирование";
+}
+
+function statusLabel(row: InboundWarehouseRequest): string {
+  if (row.status === "receiving") return "Приёмка";
+  return "Новая";
+}
+
 const InboundWarehouseRequestsPanel = () => {
   const { data: entities } = useLegalEntities();
   const { data: catalog, isLoading: catalogLoading } = useProductCatalog();
-  const { data: inboundList, isLoading: listLoading, error: listError, postInbounds, isPostingInbounds } =
-    useWarehouseInboundRequests();
+  const {
+    data: inboundList,
+    isLoading: listLoading,
+    error: listError,
+    postInbounds,
+    isPostingInbounds,
+    startInboundReceiving,
+    isStartingInboundReceiving,
+    startingInboundReceivingVars,
+  } = useWarehouseInboundRequests();
+
+  const [modeDialogInboundId, setModeDialogInboundId] = React.useState<string | null>(null);
 
   const [partnerId, setPartnerId] = React.useState("");
   const [plannedDate, setPlannedDate] = React.useState(() => new Date().toISOString().slice(0, 10));
@@ -85,6 +113,22 @@ const InboundWarehouseRequestsPanel = () => {
       toast.error(msg);
     }
   };
+
+  const confirmStartReceiving = async (mode: InboundWarehouseReceivingMode) => {
+    const id = modeDialogInboundId;
+    if (!id) return;
+    try {
+      await startInboundReceiving({ id, mode });
+      toast.success(`Приёмка начата (${receivingModeLabel(mode)})`);
+      setModeDialogInboundId(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Не удалось начать приёмку";
+      toast.error(msg);
+    }
+  };
+
+  const rowReceivingBusy = (rowId: string) =>
+    isStartingInboundReceiving && startingInboundReceivingVars?.id === rowId;
 
   return (
     <div className="space-y-4">
@@ -214,22 +258,62 @@ const InboundWarehouseRequestsPanel = () => {
                     <TableHead className="text-xs font-semibold">Партнёр</TableHead>
                     <TableHead className="text-xs font-semibold">Дата план</TableHead>
                     <TableHead className="text-xs font-semibold">Статус</TableHead>
+                    <TableHead className="text-xs font-semibold">Режим</TableHead>
                     <TableHead className="text-right text-xs font-semibold">Позиций</TableHead>
+                    <TableHead className="text-xs font-semibold">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {inboundList.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="max-w-[140px] truncate font-mono text-xs tabular-nums">{row.id}</TableCell>
-                      <TableCell className="text-sm">{entityName(row.partnerId)}</TableCell>
-                      <TableCell className="text-sm tabular-nums">{formatPlannedDate(row.plannedDate)}</TableCell>
-                      <TableCell>
-                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">
-                          {row.status === "new" ? "Новая" : row.status}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{row.items.length}</TableCell>
-                    </TableRow>
+                    <React.Fragment key={row.id}>
+                      <TableRow>
+                        <TableCell className="max-w-[140px] truncate font-mono text-xs tabular-nums">{row.id}</TableCell>
+                        <TableCell className="text-sm">{entityName(row.partnerId)}</TableCell>
+                        <TableCell className="text-sm tabular-nums">{formatPlannedDate(row.plannedDate)}</TableCell>
+                        <TableCell>
+                          <span
+                            className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              row.status === "receiving"
+                                ? "border-violet-200 bg-violet-50 text-violet-900"
+                                : "border-slate-200 bg-slate-50 text-slate-700"
+                            }`}
+                          >
+                            {statusLabel(row)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-sm text-slate-700">
+                          {row.status === "receiving" && row.receivingMode
+                            ? receivingModeLabel(row.receivingMode)
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{row.items.length}</TableCell>
+                        <TableCell>
+                          {row.status === "new" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-8"
+                              disabled={rowReceivingBusy(row.id)}
+                              onClick={() => setModeDialogInboundId(row.id)}
+                            >
+                              {rowReceivingBusy(row.id) ? "Запрос…" : "Начать приёмку"}
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                      {row.status === "receiving" ? (
+                        <TableRow className="border-t-0 bg-slate-50/70 hover:bg-slate-50/70">
+                          <TableCell colSpan={7} className="py-3 text-sm text-slate-600">
+                            <div className="rounded-md border border-dashed border-slate-300 bg-white px-3 py-2 text-center text-slate-500">
+                              Фактическая приёмка будет добавлена следующим шагом
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                    </React.Fragment>
                   ))}
                 </TableBody>
               </Table>
@@ -237,6 +321,34 @@ const InboundWarehouseRequestsPanel = () => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={modeDialogInboundId !== null} onOpenChange={(open) => !open && setModeDialogInboundId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Начало приёмки</DialogTitle>
+            <DialogDescription>Выберите режим работы. Факт и движения остатков на этом шаге не изменяются.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-start">
+            <Button
+              type="button"
+              className="w-full sm:w-auto"
+              disabled={isStartingInboundReceiving}
+              onClick={() => void confirmStartReceiving("manual")}
+            >
+              Ручной ввод
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={isStartingInboundReceiving}
+              onClick={() => void confirmStartReceiving("scan")}
+            >
+              Сканирование
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
