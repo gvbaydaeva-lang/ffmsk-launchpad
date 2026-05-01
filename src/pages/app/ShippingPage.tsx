@@ -48,6 +48,10 @@ import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { formatOperationLogDescription, formatOperationLogShortStatus } from "@/lib/operationLogDisplay";
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
+import {
+  outboundPackedQtyDisplay,
+  outboundPickedQty,
+} from "@/lib/outboundPickPackQty";
 
 type ShipmentDoc = {
   id: string;
@@ -58,7 +62,10 @@ type ShipmentDoc = {
   sourceWarehouse: string;
   marketplace: Marketplace;
   planned: number;
+  /** Подобрано (picked / legacy shipped без packedQty). */
   fact: number;
+  /** Упаковано: packedQty с fallback (= fact). */
+  packed: number;
   differenceReason?: string;
   shipments: OutboundShipment[];
   workflowStatus: TaskWorkflowStatus | "shipped_with_diff";
@@ -132,11 +139,6 @@ function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiSta
   return "pending";
 }
 
-/** Упаковано по строке (поле упаковщика). */
-function shippingLinePackedQty(sh: OutboundShipment): number {
-  return Math.max(0, Math.trunc(Number(sh.packedUnits ?? 0) || 0));
-}
-
 /** Все строки с планом > 0: упаковано >= план. */
 function shippingGroupAllLinesPacked(shipments: OutboundShipment[] | undefined | null): boolean {
   const rows = Array.isArray(shipments) ? shipments : [];
@@ -144,7 +146,7 @@ function shippingGroupAllLinesPacked(shipments: OutboundShipment[] | undefined |
   return rows.every((sh) => {
     const plan = Number(sh.plannedUnits) || 0;
     if (plan <= 0) return true;
-    return shippingLinePackedQty(sh) >= plan;
+    return outboundPackedQtyDisplay(sh) >= plan;
   });
 }
 
@@ -237,8 +239,8 @@ function shippingStockShortageLinesForDoc(
   for (const sh of doc.shipments) {
     const plan = Number(sh.plannedUnits) || 0;
     if (plan <= 0) continue;
-    const fact = Number(sh.pickedUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
-    if (fact >= plan) continue;
+    const picked = outboundPickedQty(sh);
+    if (picked >= plan) continue;
     const product = byProduct.get(sh.productId) ?? null;
     const key = balanceKeyFromOutboundShipment(sh, product);
     const reserveQty = reserveByKey.get(key) ?? 0;
@@ -408,28 +410,32 @@ const ShippingPage = () => {
     }
     const docs: ShipmentDoc[] = [];
     for (const [, shipments] of groups) {
-      const first = shipments[0];
-      const createdAt = shipments.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
-      const planned = shipments.reduce((s, sh) => s + (Number(sh.plannedUnits) || 0), 0);
-      const fact = shipments.reduce((s, sh) => s + (Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0), 0);
-      const workflowStatus = shippingWorkflowFromGroup(shipments);
-      const priority = mergePriorityFromShipments(shipments);
+      const rows = Array.isArray(shipments) ? shipments : [];
+      const first = rows[0];
+      if (!first) continue;
+      const createdAt = rows.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
+      const planned = rows.reduce((s, sh) => s + (Number(sh.plannedUnits) || 0), 0);
+      const fact = rows.reduce((s, sh) => s + outboundPickedQty(sh), 0);
+      const packed = rows.reduce((s, sh) => s + outboundPackedQtyDisplay(sh), 0);
+      const workflowStatus = shippingWorkflowFromGroup(rows);
+      const priority = mergePriorityFromShipments(rows);
       const groupId = `${first.legalEntityId}::${first.assignmentId ?? first.assignmentNo ?? first.id}`;
       docs.push({
         id: groupId,
         legalEntityId: first.legalEntityId,
         assignmentNo: first.assignmentNo?.trim() || first.assignmentId?.trim() || first.id,
         createdAt,
-        completedAtIso: outboundShipmentsCompletedAtIso(shipments),
+        completedAtIso: outboundShipmentsCompletedAtIso(rows),
         sourceWarehouse: first.sourceWarehouse,
         marketplace: first.marketplace,
         planned,
         fact,
+        packed,
         differenceReason:
-          shipments
+          rows
             .map((s) => ((s as OutboundShipment & { differenceReason?: string }).differenceReason ?? "").trim())
             .find(Boolean) || undefined,
-        shipments,
+        shipments: rows,
         workflowStatus,
         priority,
       });
@@ -698,7 +704,7 @@ const ShippingPage = () => {
       const color = (sh.importColor || product?.color || "").trim() || "—";
       const size = (sh.importSize || product?.size || "").trim() || "—";
       const plan = Number(sh.plannedUnits) || 0;
-      const fact = Number(sh.pickedUnits ?? sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      const fact = outboundPickedQty(sh);
       let shippingStock: TaskItemRow["shippingStock"] = undefined;
       let shippingLocations: TaskItemRow["shippingLocations"] = undefined;
       if (showStock && reserveByKey) {
@@ -736,6 +742,7 @@ const ShippingPage = () => {
         size,
         plan,
         fact,
+        shippingPackedQty: outboundPackedQtyDisplay(sh),
         warehouse: sh.sourceWarehouse || "—",
         status: sh.workflowStatus ?? "pending",
         shippingStock,
@@ -762,7 +769,7 @@ const ShippingPage = () => {
         warehouseName: sh.sourceWarehouse || "",
         reserveQty,
       });
-      const fact = Number(sh.pickedUnits ?? sh.shippedUnits ?? 0) || 0;
+      const fact = outboundPickedQty(sh);
       const plan = Number(sh.plannedUnits) || 0;
       const remaining = Math.max(0, plan - fact);
       const name = (sh.importName || product?.name || "").trim() || "—";
@@ -1261,7 +1268,7 @@ const ShippingPage = () => {
           ) : (
             <>
               <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-slate-200">
-                <Table className="min-w-[1320px] table-auto">
+                <Table className="min-w-[1440px] table-auto">
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
                       <TableHead className="h-9 w-10 px-2 py-2">
@@ -1301,7 +1308,8 @@ const ShippingPage = () => {
                       <TableHead className="h-9 min-w-[180px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
                       <TableHead className="h-9 min-w-[120px] whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">Маркетплейс</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
-                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Подобрано</TableHead>
+                      <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Упаковано</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Осталось</TableHead>
                       <TableHead className="h-9 whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Перерасход</TableHead>
                       <TableHead className="h-9 w-[110px] whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
@@ -1396,6 +1404,7 @@ const ShippingPage = () => {
                             <TableCell className="px-3 py-2">{doc.marketplace.toUpperCase()}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.planned}</TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.fact}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{doc.packed}</TableCell>
                             <TableCell
                               className={`whitespace-nowrap px-3 py-2 text-right tabular-nums ${
                                 doc.planned > doc.fact ? "font-medium text-amber-800" : doc.planned < doc.fact ? "font-medium text-red-700" : ""
@@ -1418,7 +1427,7 @@ const ShippingPage = () => {
                           </TableRow>
                           {isSel ? (
                             <TableRow className="border-slate-100 bg-slate-50/90">
-                              <TableCell colSpan={14} className="align-top p-0">
+                              <TableCell colSpan={15} className="align-top p-0">
                                 <div className="space-y-4 border-t border-slate-200 p-4">
                                   <div>
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
@@ -1530,8 +1539,12 @@ const ShippingPage = () => {
                                       <div className="font-medium tabular-nums text-slate-900">{doc.planned}</div>
                                     </div>
                                     <div>
-                                      <span className="text-slate-500">Факт</span>
+                                      <span className="text-slate-500">Подобрано</span>
                                       <div className="font-medium tabular-nums text-slate-900">{doc.fact}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-500">Упаковано</span>
+                                      <div className="font-medium tabular-nums text-slate-900">{doc.packed}</div>
                                     </div>
                                     <div>
                                       <span className="text-slate-500">Осталось</span>
@@ -1542,6 +1555,11 @@ const ShippingPage = () => {
                                       <div className={`font-medium tabular-nums ${over > 0 ? "text-red-700" : "text-slate-900"}`}>{over}</div>
                                     </div>
                                   </div>
+                                  {doc.fact > 0 && doc.packed < doc.fact ? (
+                                    <p className="text-xs font-medium text-amber-800">Упаковка не завершена: упаковано меньше подобранного.</p>
+                                  ) : doc.fact > 0 ? (
+                                    <p className="text-xs font-medium text-emerald-800">Товар по подобранному объёму полностью упакован.</p>
+                                  ) : null}
                                   {(doc.planned > doc.fact || doc.fact > doc.planned) && (
                                     <div className="flex flex-wrap gap-3 text-sm">
                                       {doc.planned > doc.fact ? (

@@ -36,6 +36,8 @@ export type TaskItemRow = {
   size: string;
   plan: number;
   fact: number;
+  /** outboundLines: упаковано (packedQty с fallback подобрано). */
+  shippingPackedQty?: number;
   warehouse: string;
   status?: TaskWorkflowStatus;
   /** Только экран «Отгрузки»: доступно по WMS (остаток − резерв) vs план строки */
@@ -71,10 +73,12 @@ export default function TaskItemsTable({
       className={cn(
         "table-auto",
         showShippingStock && showShippingLocations
-          ? "min-w-[1480px]"
+          ? "min-w-[1600px]"
           : showShippingStock || showShippingLocations
-            ? "min-w-[1280px]"
-            : "min-w-[1100px]",
+            ? "min-w-[1400px]"
+            : outbound
+              ? "min-w-[1260px]"
+              : "min-w-[1100px]",
       )}
     >
       <TableHeader>
@@ -86,7 +90,12 @@ export default function TaskItemsTable({
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Цвет</TableHead>
           <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Размер</TableHead>
           <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">План</TableHead>
-          <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Факт</TableHead>
+          <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">
+            {outbound ? "Подобрано" : "Факт"}
+          </TableHead>
+          {outbound ? (
+            <TableHead className="h-9 px-3 py-2 text-right text-xs font-semibold text-slate-600">Упаковано</TableHead>
+          ) : null}
           {!outbound ? (
             <TableHead className="h-9 px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
           ) : (
@@ -105,6 +114,7 @@ export default function TaskItemsTable({
         {rows.map((row) => {
           const mismatch = row.plan !== row.fact;
           const remaining = planFactRemaining(row.plan, row.fact);
+          const packedCell = outbound ? row.shippingPackedQty ?? row.fact ?? 0 : row.fact;
           const validation = getLineValidation({ plannedQty: row.plan, factQty: row.fact });
           const rowBg = outbound ? planFactRowBgClass(row.plan, row.fact) : mismatch ? "bg-red-50/50" : "";
           const isFlash = highlightedRowId != null && row.id === highlightedRowId && rowHighlight != null;
@@ -124,6 +134,18 @@ export default function TaskItemsTable({
               <TableCell className="px-3 py-2">{row.size || "—"}</TableCell>
               <TableCell className="px-3 py-2 text-right tabular-nums">{row.plan}</TableCell>
               <TableCell className="px-3 py-2 text-right tabular-nums">{row.fact}</TableCell>
+              {outbound ? (
+                <TableCell className="px-3 py-2 text-right align-top tabular-nums">
+                  <div>{packedCell}</div>
+                  {row.fact > 0 ? (
+                    packedCell < row.fact ? (
+                      <div className="mt-0.5 text-[10px] font-medium text-amber-800">не завершена</div>
+                    ) : (
+                      <div className="mt-0.5 text-[10px] font-medium text-emerald-700">полностью</div>
+                    )
+                  ) : null}
+                </TableCell>
+              ) : null}
               {!outbound ? (
                 <TableCell className="whitespace-nowrap px-3 py-2">{row.warehouse || "—"}</TableCell>
               ) : (

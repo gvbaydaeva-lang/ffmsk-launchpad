@@ -109,6 +109,7 @@ type OutboundDbRow = {
   supply_number: string;
   expiry_date: string;
   packed_units: number;
+  packed_qty?: number | null;
   picked_units?: number | null;
   planned_units: number;
   planned_ship_date: string | null;
@@ -173,6 +174,7 @@ function toDb(row: OutboundShipment): OutboundDbRow {
     supply_number: row.supplyNumber,
     expiry_date: row.expiryDate,
     packed_units: row.packedUnits,
+    packed_qty: row.packedQty ?? null,
     picked_units: row.pickedUnits ?? null,
     planned_units: row.plannedUnits,
     planned_ship_date: row.plannedShipDate,
@@ -206,6 +208,7 @@ function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipme
     supplyNumber: row.supply_number ?? "",
     expiryDate: row.expiry_date ?? "",
     packedUnits: row.packed_units ?? 0,
+    packedQty: row.packed_qty != null && Number.isFinite(Number(row.packed_qty)) ? Math.max(0, Math.trunc(Number(row.packed_qty))) : undefined,
     pickedUnits: row.picked_units != null ? Number(row.picked_units) : undefined,
     plannedUnits: row.planned_units ?? 0,
     plannedShipDate: row.planned_ship_date ?? null,
@@ -242,6 +245,7 @@ function stripExtendedForLegacySupabase(row: OutboundDbRow): Omit<
   | "import_name"
   | "import_size"
   | "import_color"
+  | "packed_qty"
 > {
   const {
     assignment_id: _a,
@@ -251,6 +255,7 @@ function stripExtendedForLegacySupabase(row: OutboundDbRow): Omit<
     import_name: _in,
     import_size: _is,
     import_color: _ic,
+    packed_qty: _pq,
     ...rest
   } = row;
   return rest;

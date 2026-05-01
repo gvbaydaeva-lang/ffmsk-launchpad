@@ -413,7 +413,10 @@ export function useOutboundShipments() {
           comment: "Задание взято в работу",
         });
       }
-      const hasScanUpdate = typeof vars.patch.packedUnits === "number" || typeof vars.patch.shippedUnits === "number";
+      const hasScanUpdate =
+        typeof vars.patch.packedUnits === "number" ||
+        typeof vars.patch.packedQty === "number" ||
+        typeof vars.patch.shippedUnits === "number";
       if (hasScanUpdate) {
         await pushLegacyOperationHistory(qc, {
           dateIso: new Date().toISOString(),
