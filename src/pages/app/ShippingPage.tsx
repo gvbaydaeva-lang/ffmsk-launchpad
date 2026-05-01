@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
@@ -172,6 +173,21 @@ function outboundShipmentsShippedAtIso(shipments: OutboundShipment[] | undefined
     if (raw && raw > max) max = raw;
   }
   return max || undefined;
+}
+
+/** Запись журнала: подбор или отмена из ячейки (безопасные подписи по ТЗ). */
+function buildShippingCellPickLogDescription(
+  title: string,
+  itemName: string | undefined,
+  quantity: number | undefined,
+  locationLabel: string | undefined,
+  shipmentNumber: string | undefined,
+): string {
+  const n = (itemName ?? "").trim() || "Товар";
+  const q = Math.max(0, Math.trunc(Number(quantity ?? 0) || 0));
+  const loc = (locationLabel ?? "").trim() || "Без места";
+  const num = (shipmentNumber ?? "").trim() || "—";
+  return `${title}. Товар: ${n}; количество: ${q}; ячейка: ${loc}; № отгрузки: ${num}`;
 }
 
 function shipmentDocsPackedGateOk(docs: ShipmentDoc[] | null | undefined): boolean {
@@ -357,6 +373,7 @@ const ShippingPage = () => {
   );
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const { data, isLoading, error, updateOutboundDraft, isUpdatingOutboundDraft } = useOutboundShipments();
   const { data: inventoryMovements = [], addInventoryMovements, isAppending: isAppendingMovements } = useInventoryMovements();
   const { data: locationsData } = useLocations();
@@ -724,6 +741,14 @@ const ShippingPage = () => {
 
   const appendShipmentConfirmedLog = React.useCallback(
     (doc: ShipmentDoc) => {
+      const logsRaw = queryClient.getQueryData<OperationLog[]>(["wms", "operation-logs"]);
+      const logs = Array.isArray(logsRaw) ? logsRaw : [];
+      const hasDup = logs.some(
+        (log) =>
+          operationLogBelongsToShipmentDoc(doc, log) && String(log.description ?? "").trim() === "Отгрузка подтверждена",
+      );
+      if (hasDup) return;
+
       const leName = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
       appendOperationLog({
         type: "SHIPMENT_CONFIRMED",
@@ -734,7 +759,7 @@ const ShippingPage = () => {
         description: "Отгрузка подтверждена",
       });
     },
-    [appendOperationLog, entities],
+    [appendOperationLog, entities, queryClient],
   );
 
   const operationLogsList = React.useMemo(
@@ -1248,12 +1273,41 @@ const ShippingPage = () => {
             qty: "",
           },
         }));
+        const fromCellLbl = (selectedCell?.label ?? "").trim();
+        const fromLocName = (locationById.get(locationId)?.name ?? "").trim();
+        const cellLabel = (fromCellLbl || fromLocName) || "Без места";
+        const shipNo =
+          ((selectedDoc?.assignmentNo ?? "").trim() ||
+            (line.taskNumber ?? "").trim() ||
+            "—");
+        appendOperationLog({
+          type: "SHIPPING_PICK",
+          legalEntityId: line.legalEntityId,
+          legalEntityName: line.legalEntityName,
+          taskId: (selectedDoc?.id ?? line.taskId ?? "").trim() || line.taskId,
+          taskNumber: shipNo,
+          description: buildShippingCellPickLogDescription(
+            "Товар подобран из ячейки",
+            line.name,
+            qty,
+            cellLabel,
+            shipNo,
+          ),
+        });
         toast.success("Подбор выполнен");
       } catch {
         toast.error("Не удалось выполнить подбор");
       }
     },
-    [selectedShipmentPickRows, pickDraftByShipment, addInventoryMovements, updateOutboundDraft],
+    [
+      selectedShipmentPickRows,
+      pickDraftByShipment,
+      addInventoryMovements,
+      updateOutboundDraft,
+      locationById,
+      selectedDoc,
+      appendOperationLog,
+    ],
   );
 
   const undoPickFromCell = React.useCallback(
@@ -1363,6 +1417,33 @@ const ShippingPage = () => {
             updatedAt: ts,
           },
         });
+        const locLabels = [
+          ...new Set(
+            pickMoves.map((m) => {
+              const lid = (m.locationId ?? "").trim();
+              return lid ? (locationById.get(lid)?.name ?? lid) : "Без места";
+            }),
+          ),
+        ];
+        const cellCombined = locLabels.filter(Boolean).join(", ") || "Без места";
+        const itemLabel = (pickMoves[0]?.name ?? "").trim() || "Товар";
+        const shipNo =
+          ((pickMoves[0]?.taskNumber ?? selectedDoc?.assignmentNo) ?? "").trim() ||
+          ((selectedDoc?.assignmentNo ?? "").trim() || "—");
+        appendOperationLog({
+          type: "SHIPPING_PICK_CANCEL",
+          legalEntityId: pickMoves[0]?.legalEntityId ?? latestShipment.legalEntityId,
+          legalEntityName: pickMoves[0]?.legalEntityName ?? (entities?.find((e) => e.id === latestShipment.legalEntityId)?.shortName ?? latestShipment.legalEntityId),
+          taskId: (selectedDoc?.id ?? pickMoves[0]?.taskId ?? "").trim() || pickMoves[0]?.taskId,
+          taskNumber: shipNo,
+          description: buildShippingCellPickLogDescription(
+            "Подбор отменён",
+            itemLabel,
+            totalOutAbs,
+            cellCombined,
+            shipNo,
+          ),
+        });
         toast.success("Подбор отменён");
       } catch {
         toast.error("Не удалось отменить подбор");
@@ -1379,6 +1460,9 @@ const ShippingPage = () => {
       isAppendingMovements,
       addInventoryMovements,
       updateOutboundDraft,
+      locationById,
+      appendOperationLog,
+      entities,
     ],
   );
 

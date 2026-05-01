@@ -515,13 +515,21 @@ const PackingPage = () => {
         scanFirst?.assignmentId?.trim() ||
         scanFirst?.id ||
         "—";
+      const packedProductName = (lineByBarcode?.name ?? "").trim() || "Товар";
+      const packedQtySafe = Math.max(0, Math.trunc(1));
+      const shipmentNoPack =
+        (shipment?.assignmentNo ?? "").trim() ||
+        (shipment?.assignmentId ?? "").trim() ||
+        (shipment?.id ?? "").trim() ||
+        noScan.trim() ||
+        "—";
       appendOperationLog({
-        type: "ITEM_SCANNED",
+        type: "PACK_ITEM",
         legalEntityId: startedAssignment.legalEntityId,
         legalEntityName: leNameScan,
         taskId: startedAssignment.id,
-        taskNumber: noScan,
-        description: `Отсканирован товар (штрихкод: ${code})`,
+        taskNumber: (noScan ?? "").trim() || "—",
+        description: `Товар упакован. Товар: ${packedProductName}; количество: ${packedQtySafe}; № отгрузки: ${shipmentNoPack}`,
       });
       setScanValue("");
       playScanSuccessSound();
