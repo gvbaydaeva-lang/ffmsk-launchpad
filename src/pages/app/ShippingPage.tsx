@@ -46,9 +46,8 @@ import {
   type OutboundTaskPriority,
 } from "@/lib/outboundTaskPriority";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
-import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { formatOperationLogDescription, formatOperationLogShortStatus } from "@/lib/operationLogDisplay";
-import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
+import { getBalanceByKeyMap, movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
 import {
   outboundPackedQtyAssemblyGate,
@@ -290,15 +289,7 @@ function shipmentLineAvailableByLocations(params: {
   void params.reserveQty;
   const movementsSafe = Array.isArray(params.movements) ? params.movements : [];
   const wh = (params.warehouseName || "").trim() || "—";
-  const byLoc = new Map<string, number>();
-  for (const m of movementsSafe) {
-    const mWh = (m.warehouseName ?? "—").trim() || "—";
-    if (mWh !== wh) continue;
-    if (makeInventoryBalanceKeyFromMovement(m) !== params.balanceKey) continue;
-    const lid = (m.locationId || "").trim();
-    const k = lid || "__no_location__";
-    byLoc.set(k, (byLoc.get(k) ?? 0) + m.qty);
-  }
+  const byLoc = movementLocationTotalsForWarehouseBalanceKey(movementsSafe, wh, params.balanceKey);
   const allEntries = [...byLoc.entries()]
     .map(([k, balance]) => ({
       k,

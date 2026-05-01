@@ -3,6 +3,52 @@ import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 
 const STORAGE_KEY = "ffmsk.mock.inventoryMovements";
 
+/** Вклад в сумму по SKU-ключу (без ячейки). TRANSFER явно даёт −qty и +qty по тому же ключу (итого 0 на товар). */
+function forEachMovementBalanceKeyDelta(m: InventoryMovement, cb: (key: string, delta: number) => void): void {
+  const key = makeInventoryBalanceKeyFromMovement(m);
+  if (m.type === "TRANSFER") {
+    const q = Math.trunc(Number(m.qty) || 0);
+    if (!Number.isFinite(q) || q <= 0) return;
+    cb(key, -q);
+    cb(key, q);
+    return;
+  }
+  cb(key, m.qty);
+}
+
+/**
+ * Остатки по физическим местам для движений, уже отфильтрованных по warehouseName и ключу SKU.
+ * INBOUND/OUTBOUND — на locationId; TRANSFER — списание с fromLocationId, приход на locationId.
+ */
+export function movementLocationTotalsForWarehouseBalanceKey(
+  movements: InventoryMovement[],
+  warehouseName: string,
+  balanceKey: string,
+): Map<string, number> {
+  const byLoc = new Map<string, number>();
+  const wh = (warehouseName || "").trim() || "—";
+  const bump = (rawLocId: string, delta: number) => {
+    const lid = (rawLocId || "").trim();
+    const k = lid || "__no_location__";
+    byLoc.set(k, (byLoc.get(k) ?? 0) + delta);
+  };
+  const list = Array.isArray(movements) ? movements : [];
+  for (const m of list) {
+    const mWh = (m.warehouseName ?? "—").trim() || "—";
+    if (mWh !== wh) continue;
+    if (makeInventoryBalanceKeyFromMovement(m) !== balanceKey) continue;
+    if (m.type === "TRANSFER") {
+      const q = Math.trunc(Number(m.qty) || 0);
+      if (!Number.isFinite(q) || q <= 0) continue;
+      bump(m.fromLocationId ?? "", -q);
+      bump(m.locationId ?? "", q);
+      continue;
+    }
+    bump(m.locationId ?? "", m.qty);
+  }
+  return byLoc;
+}
+
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -64,14 +110,14 @@ export function addInventoryMovements(movements: InventoryMovement[]): Inventory
 export function getInventoryBalance(movements: InventoryMovement[]): InventoryBalanceRow[] {
   const byKey = new Map<string, { sum: number; sample: InventoryMovement }>();
   for (const m of movements) {
-    if (m.type === "TRANSFER") continue;
-    const key = makeInventoryBalanceKeyFromMovement(m);
-    const cur = byKey.get(key);
-    if (!cur) {
-      byKey.set(key, { sum: m.qty, sample: m });
-    } else {
-      cur.sum += m.qty;
-    }
+    forEachMovementBalanceKeyDelta(m, (key, delta) => {
+      const cur = byKey.get(key);
+      if (!cur) {
+        byKey.set(key, { sum: delta, sample: m });
+      } else {
+        cur.sum += delta;
+      }
+    });
   }
   const rows: InventoryBalanceRow[] = [];
   for (const [key, { sum, sample }] of byKey) {
@@ -123,13 +169,13 @@ export function hasReceivingInboundMovements(inboundSourceTaskId: string, moveme
 }
 
 export function getBalanceByKeyMap(movements: InventoryMovement[]): Map<string, number> {
-  const m = new Map<string, number>();
+  const out = new Map<string, number>();
   for (const mov of movements) {
-    if (mov.type === "TRANSFER") continue;
-    const key = makeInventoryBalanceKeyFromMovement(mov);
-    m.set(key, (m.get(key) ?? 0) + mov.qty);
+    forEachMovementBalanceKeyDelta(mov, (key, delta) => {
+      out.set(key, (out.get(key) ?? 0) + delta);
+    });
   }
-  return m;
+  return out;
 }
 
 /** Размещение по заявке /inbounds уже зафиксировано TRANSFER-движениями (идемпотентность). */
