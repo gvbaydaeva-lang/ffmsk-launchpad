@@ -21,8 +21,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
 import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
 import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
+import WarehouseImportPreviewPanel from "@/components/app/WarehouseImportPreviewPanel";
 import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
-import { mergeInboundImportDraftLines, resolveAndApplyImport } from "@/lib/warehouseImportPaste";
+import { inspectWarehouseImportPaste, mergeInboundImportDraftLines } from "@/lib/warehouseImportPaste";
+import type { WarehouseImportInspectionResult } from "@/lib/warehouseImportPaste";
 import { toast } from "sonner";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
@@ -357,6 +359,11 @@ const InboundWarehouseRequestsPanel = () => {
   const [inboundPasteOpen, setInboundPasteOpen] = React.useState(false);
   const [inboundPasteText, setInboundPasteText] = React.useState("");
   const inboundFileInputRef = React.useRef<HTMLInputElement>(null);
+  const [inboundImportPreview, setInboundImportPreview] = React.useState<WarehouseImportInspectionResult | null>(null);
+
+  React.useEffect(() => {
+    setInboundImportPreview(null);
+  }, [partnerId]);
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -432,6 +439,7 @@ const InboundWarehouseRequestsPanel = () => {
     setComment("");
     setInboundPasteOpen(false);
     setInboundPasteText("");
+    setInboundImportPreview(null);
     setLines([{ key: `l-${Date.now()}`, productId: "", plannedQty: "" }]);
   }, []);
 
@@ -595,22 +603,25 @@ const InboundWarehouseRequestsPanel = () => {
     Boolean(isUpdatingWarehouseInboundPlacement) ||
     Boolean(isCompletingWarehouseInboundPlacement);
 
-  const handleInboundPasteLoad = React.useCallback(() => {
+  const runInboundImportInspection = React.useCallback(() => {
     if (inboundPanelBusy || catalogLoading) return;
     if (productsForPartner.length === 0) {
       toast.error("Нет товаров в каталоге для проверки");
       return;
     }
-    const applied = resolveAndApplyImport(inboundPasteText, productsForPartner, (rows) =>
-      setLines((prev) => mergeInboundImportDraftLines(prev, rows)),
-    );
-    if (!applied.ok) {
-      toast.error(applied.message);
-      return;
-    }
-    setInboundPasteText("");
-    toast.success("Данные загружены");
+    setInboundImportPreview(inspectWarehouseImportPaste(inboundPasteText, productsForPartner));
   }, [inboundPasteText, inboundPanelBusy, catalogLoading, productsForPartner]);
+
+  const applyInboundImportFromPreview = React.useCallback(() => {
+    const preview = inboundImportPreview;
+    if (!preview || preview.errors.length > 0 || preview.resolvedRows.length === 0) return;
+    if (inboundPanelBusy || catalogLoading) return;
+    setLines((prev) => mergeInboundImportDraftLines(prev, preview.resolvedRows));
+    setInboundImportPreview(null);
+    setInboundPasteText("");
+    setInboundPasteOpen(false);
+    toast.success("Данные загружены");
+  }, [inboundImportPreview, inboundPanelBusy, catalogLoading]);
 
   const handleInboundExcelFileChange = React.useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -628,14 +639,9 @@ const InboundWarehouseRequestsPanel = () => {
         toast.error(prep.message);
         return;
       }
-      const applied = resolveAndApplyImport(prep.text, productsForPartner, (rows) =>
-        setLines((prev) => mergeInboundImportDraftLines(prev, rows)),
-      );
-      if (!applied.ok) {
-        toast.error(applied.message);
-        return;
-      }
-      toast.success("Файл загружен");
+      setInboundPasteText(prep.text);
+      setInboundPasteOpen(true);
+      setInboundImportPreview(inspectWarehouseImportPaste(prep.text, productsForPartner));
     },
     [inboundPanelBusy, catalogLoading, productsForPartner],
   );
@@ -747,7 +753,10 @@ const InboundWarehouseRequestsPanel = () => {
               <div className="space-y-2 pt-1">
                 <Textarea
                   value={inboundPasteText}
-                  onChange={(e) => setInboundPasteText(e.target.value)}
+                  onChange={(e) => {
+                    setInboundPasteText(e.target.value);
+                    setInboundImportPreview(null);
+                  }}
                   rows={6}
                   placeholder={"WB-A-10452, 120\n4601234567890, 48"}
                   disabled={inboundPanelBusy || catalogLoading}
@@ -758,12 +767,17 @@ const InboundWarehouseRequestsPanel = () => {
                   size="sm"
                   className="h-8"
                   disabled={inboundPanelBusy || catalogLoading}
-                  onClick={handleInboundPasteLoad}
+                  onClick={runInboundImportInspection}
                 >
-                  Загрузить
+                  Проверить
                 </Button>
               </div>
             ) : null}
+            <WarehouseImportPreviewPanel
+              preview={inboundImportPreview}
+              disabled={inboundPanelBusy || catalogLoading}
+              onApply={applyInboundImportFromPreview}
+            />
           </div>
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">

@@ -7,29 +7,65 @@ export type ParseInboundWarehousePasteResult =
   | { ok: true; rows: InboundPasteParsedRow[] }
   | { ok: false; message: string };
 
-/**
- * Парсинг вставки из Excel: непустая строка — «код, количество» (разделитель — запятая).
- */
-export function parseInboundWarehousePaste(text: string): ParseInboundWarehousePasteResult {
-  const rows: InboundPasteParsedRow[] = [];
+export type InboundWarehousePasteLineDiagnosis =
+  | { kind: "empty"; lineNum: number }
+  | {
+      kind: "bad_format";
+      lineNum: number;
+    }
+  | {
+      kind: "bad_qty";
+      lineNum: number;
+    }
+  | { kind: "ok"; lineNum: number; row: InboundPasteParsedRow };
+
+/** Построчная диагностика (пустые строки пропускаются только в результате набора строк с данными). */
+export function diagnoseInboundWarehousePasteLines(text: string): InboundWarehousePasteLineDiagnosis[] {
+  const out: InboundWarehousePasteLineDiagnosis[] = [];
   const rawLines = text.split(/\r?\n/);
   for (let i = 0; i < rawLines.length; i += 1) {
+    const lineNum = i + 1;
     const line = rawLines[i].trim();
-    if (line === "") continue;
+    if (line === "") {
+      out.push({ kind: "empty", lineNum });
+      continue;
+    }
     const parts = line.split(",").map((p) => p.trim());
     if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
-      return {
-        ok: false,
-        message: `Строка ${i + 1}: ожидается формат «артикул или штрихкод, количество»`,
-      };
+      out.push({ kind: "bad_format", lineNum });
+      continue;
     }
     const [code, qtyRaw] = parts;
     const qtyNum = Number(qtyRaw);
     const qty = Math.trunc(qtyNum);
     if (!Number.isFinite(qtyNum) || qty !== qtyNum || qty <= 0) {
-      return { ok: false, message: `Строка ${i + 1}: количество должно быть целым числом > 0` };
+      out.push({ kind: "bad_qty", lineNum });
+      continue;
     }
-    rows.push({ code, qty });
+    out.push({ kind: "ok", lineNum, row: { code, qty } });
+  }
+  return out;
+}
+
+/**
+ * Парсинг вставки из Excel: непустая строка — «код, количество» (разделитель — запятая).
+ */
+export function parseInboundWarehousePaste(text: string): ParseInboundWarehousePasteResult {
+  const diagnoses = diagnoseInboundWarehousePasteLines(text.trim());
+  const rows: InboundPasteParsedRow[] = [];
+  for (const d of diagnoses) {
+    if (d.kind === "empty") continue;
+    if (d.kind === "ok") {
+      rows.push(d.row);
+      continue;
+    }
+    if (d.kind === "bad_format") {
+      return {
+        ok: false,
+        message: `Строка ${d.lineNum}: ожидается формат «артикул или штрихкод, количество»`,
+      };
+    }
+    return { ok: false, message: `Строка ${d.lineNum}: количество должно быть целым числом > 0` };
   }
   return { ok: true, rows };
 }

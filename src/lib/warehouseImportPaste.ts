@@ -1,9 +1,61 @@
 import type { ProductCatalogItem } from "@/types/domain";
-import { parseInboundWarehousePaste, resolveInboundPasteCodeToProductId } from "@/lib/inboundWarehousePasteImport";
+import { diagnoseInboundWarehousePasteLines, resolveInboundPasteCodeToProductId } from "@/lib/inboundWarehousePasteImport";
 
 export type ResolvedWarehouseImportRow = { productId: string; qty: number };
 
 export type InboundImportDraftLine = { key: string; productId: string; plannedQty: string };
+
+export type WarehouseImportLineIssue = { lineNumber: number; message: string };
+
+export type WarehouseImportInspectionResult = {
+  recognizedStructuralLines: number;
+  matchedProductsCount: number;
+  errors: WarehouseImportLineIssue[];
+  resolvedRows: ResolvedWarehouseImportRow[];
+};
+
+/**
+ * Полная построчная проверка: формат строки и сопоставление с каталогом (общая точка для приёмки и отгрузки).
+ */
+export function inspectWarehouseImportPaste(
+  rawText: string,
+  products: readonly ProductCatalogItem[],
+): WarehouseImportInspectionResult {
+  const diagnoses = diagnoseInboundWarehousePasteLines(rawText.trim());
+  const errors: WarehouseImportLineIssue[] = [];
+  let recognizedStructuralLines = 0;
+  const resolvedRows: ResolvedWarehouseImportRow[] = [];
+
+  for (const d of diagnoses) {
+    if (d.kind === "empty") continue;
+    if (d.kind === "bad_format") {
+      errors.push({ lineNumber: d.lineNum, message: "Ожидается формат «артикул или штрихкод, количество»" });
+      continue;
+    }
+    if (d.kind === "bad_qty") {
+      errors.push({ lineNumber: d.lineNum, message: "Количество должно быть целым числом > 0" });
+      continue;
+    }
+    recognizedStructuralLines += 1;
+    const match = resolveInboundPasteCodeToProductId(d.row.code, products);
+    if (!match.ok) {
+      errors.push({ lineNumber: d.lineNum, message: match.message });
+      continue;
+    }
+    resolvedRows.push({ productId: match.productId, qty: d.row.qty });
+  }
+
+  if (recognizedStructuralLines === 0 && errors.length === 0) {
+    errors.push({ lineNumber: 0, message: "Нет строк с данными для импорта" });
+  }
+
+  return {
+    recognizedStructuralLines,
+    matchedProductsCount: resolvedRows.length,
+    errors,
+    resolvedRows,
+  };
+}
 
 /**
  * Парсинг и сопоставление с каталогом (те же правила, что у приёмки).
@@ -12,23 +64,19 @@ export function resolveWarehouseImportPasteRows(
   rawText: string,
   products: readonly ProductCatalogItem[],
 ): { ok: true; rows: ResolvedWarehouseImportRow[] } | { ok: false; message: string } {
-  const parsed = parseInboundWarehousePaste(rawText.trim());
-  if (!parsed.ok) {
-    return { ok: false, message: parsed.message };
+  const inspected = inspectWarehouseImportPaste(rawText, products);
+  if (inspected.errors.length > 0) {
+    const e =
+      inspected.errors.find((x) => x.lineNumber > 0) ??
+      inspected.errors[0];
+    const msg =
+      e.lineNumber > 0 ? `Строка ${e.lineNumber}: ${e.message}` : e.message;
+    return { ok: false, message: msg };
   }
-  if (parsed.rows.length === 0) {
+  if (inspected.resolvedRows.length === 0) {
     return { ok: false, message: "Нет данных для загрузки" };
   }
-  const resolved: ResolvedWarehouseImportRow[] = [];
-  for (let i = 0; i < parsed.rows.length; i += 1) {
-    const row = parsed.rows[i];
-    const match = resolveInboundPasteCodeToProductId(row.code, products);
-    if (!match.ok) {
-      return { ok: false, message: `Строка ${i + 1}: ${match.message}` };
-    }
-    resolved.push({ productId: match.productId, qty: row.qty });
-  }
-  return { ok: true, rows: resolved };
+  return { ok: true, rows: inspected.resolvedRows };
 }
 
 /**

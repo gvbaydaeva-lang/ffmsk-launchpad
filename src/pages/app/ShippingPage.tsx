@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
+import WarehouseImportPreviewPanel from "@/components/app/WarehouseImportPreviewPanel";
 import TaskItemsTable, { type TaskItemRow } from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -56,7 +57,11 @@ import {
 } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
 import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
-import { type ResolvedWarehouseImportRow, resolveWarehouseImportPasteRows } from "@/lib/warehouseImportPaste";
+import {
+  type ResolvedWarehouseImportRow,
+  inspectWarehouseImportPaste,
+  type WarehouseImportInspectionResult,
+} from "@/lib/warehouseImportPaste";
 import {
   outboundPackedQtyAssemblyGate,
   outboundPickedQty,
@@ -535,10 +540,12 @@ const ShippingPage = () => {
   const shippingImportPasteFileRef = React.useRef<HTMLInputElement>(null);
   const [shippingImportPasteOpen, setShippingImportPasteOpen] = React.useState(false);
   const [shippingImportPasteText, setShippingImportPasteText] = React.useState("");
+  const [shippingImportPreview, setShippingImportPreview] = React.useState<WarehouseImportInspectionResult | null>(null);
 
   React.useEffect(() => {
     setShippingImportPasteOpen(false);
     setShippingImportPasteText("");
+    setShippingImportPreview(null);
   }, [selectedId]);
 
   /** Любая исходящая операция по отгрузкам — блокируем повторные клики по панели. */
@@ -1199,36 +1206,34 @@ const ShippingPage = () => {
     [catalog, queryClient, data, updateOutboundDraft, createOutbound],
   );
 
-  const handleShippingImportPasteApply = React.useCallback(
-    async (doc: ShipmentDoc) => {
+  const shippingImportProductScope = React.useCallback(
+    (doc: ShipmentDoc): ProductCatalogItem[] => {
+      const all = Array.isArray(catalog) ? catalog : [];
+      const scoped = all.filter((p) => p.legalEntityId === doc.legalEntityId);
+      return scoped.length > 0 ? scoped : all;
+    },
+    [catalog],
+  );
+
+  const handleShippingInspectPaste = React.useCallback(
+    (doc: ShipmentDoc) => {
       if (shippingDispatchActionsGloballyBusy) return;
       const blocked = getShipmentDocExcelImportBlockedReason(doc);
       if (blocked) {
         toast.error(blocked);
         return;
       }
-      const all = Array.isArray(catalog) ? catalog : [];
-      const scoped = all.filter((p) => p.legalEntityId === doc.legalEntityId);
-      const productScope = scoped.length > 0 ? scoped : all;
+      const productScope = shippingImportProductScope(doc);
       if (productScope.length === 0) {
         toast.error("Нет товаров в каталоге для проверки");
         return;
       }
-      const resolved = resolveWarehouseImportPasteRows(shippingImportPasteText, productScope);
-      if (!resolved.ok) {
-        toast.error(resolved.message);
-        return;
-      }
-      const ok = await applyOutboundImportResolved(doc, resolved.rows);
-      if (ok) {
-        setShippingImportPasteText("");
-        toast.success("Данные загружены");
-      }
+      setShippingImportPreview(inspectWarehouseImportPaste(shippingImportPasteText, productScope));
     },
-    [shippingDispatchActionsGloballyBusy, catalog, shippingImportPasteText, applyOutboundImportResolved],
+    [shippingDispatchActionsGloballyBusy, shippingImportProductScope, shippingImportPasteText],
   );
 
-  const handleShippingImportExcelFileChange = React.useCallback(
+  const handleShippingInspectFromFile = React.useCallback(
     async (doc: ShipmentDoc, e: React.ChangeEvent<HTMLInputElement>) => {
       const input = e.currentTarget;
       const file = input.files?.[0];
@@ -1240,9 +1245,7 @@ const ShippingPage = () => {
         toast.error(blocked);
         return;
       }
-      const all = Array.isArray(catalog) ? catalog : [];
-      const scoped = all.filter((p) => p.legalEntityId === doc.legalEntityId);
-      const productScope = scoped.length > 0 ? scoped : all;
+      const productScope = shippingImportProductScope(doc);
       if (productScope.length === 0) {
         toast.error("Нет товаров в каталоге для проверки");
         return;
@@ -1252,17 +1255,31 @@ const ShippingPage = () => {
         toast.error(prep.message);
         return;
       }
-      const resolved = resolveWarehouseImportPasteRows(prep.text, productScope);
-      if (!resolved.ok) {
-        toast.error(resolved.message);
+      setShippingImportPasteText(prep.text);
+      setShippingImportPasteOpen(true);
+      setShippingImportPreview(inspectWarehouseImportPaste(prep.text, productScope));
+    },
+    [shippingDispatchActionsGloballyBusy, shippingImportProductScope],
+  );
+
+  const handleShippingApplyImportPreview = React.useCallback(
+    async (doc: ShipmentDoc) => {
+      if (shippingDispatchActionsGloballyBusy) return;
+      const preview = shippingImportPreview;
+      if (!preview || preview.errors.length > 0 || preview.resolvedRows.length === 0) return;
+      const blocked = getShipmentDocExcelImportBlockedReason(doc);
+      if (blocked) {
+        toast.error(blocked);
         return;
       }
-      const ok = await applyOutboundImportResolved(doc, resolved.rows);
+      const ok = await applyOutboundImportResolved(doc, preview.resolvedRows);
       if (ok) {
-        toast.success("Файл загружен");
+        setShippingImportPreview(null);
+        setShippingImportPasteText("");
+        toast.success("Данные загружены");
       }
     },
-    [shippingDispatchActionsGloballyBusy, catalog, applyOutboundImportResolved],
+    [shippingDispatchActionsGloballyBusy, shippingImportPreview, applyOutboundImportResolved],
   );
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
@@ -2775,7 +2792,7 @@ const ShippingPage = () => {
                                               accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                                               className="sr-only"
                                               aria-label="Выбор файла Excel или CSV для импорта состава отгрузки"
-                                              onChange={(ev) => void handleShippingImportExcelFileChange(doc, ev)}
+                                              onChange={(ev) => void handleShippingInspectFromFile(doc, ev)}
                                             />
                                             <Button
                                               type="button"
@@ -2803,7 +2820,10 @@ const ShippingPage = () => {
                                           <div className="space-y-2 pt-1">
                                             <Textarea
                                               value={shippingImportPasteText}
-                                              onChange={(e) => setShippingImportPasteText(e.target.value)}
+                                              onChange={(e) => {
+                                                setShippingImportPasteText(e.target.value);
+                                                setShippingImportPreview(null);
+                                              }}
                                               rows={6}
                                               placeholder={"WB-A-10452, 120\n4601234567890, 48"}
                                               disabled={shippingDispatchActionsGloballyBusy}
@@ -2814,12 +2834,17 @@ const ShippingPage = () => {
                                               size="sm"
                                               className="h-8"
                                               disabled={shippingDispatchActionsGloballyBusy}
-                                              onClick={() => void handleShippingImportPasteApply(doc)}
+                                              onClick={() => handleShippingInspectPaste(doc)}
                                             >
-                                              Загрузить
+                                              Проверить
                                             </Button>
                                           </div>
                                         ) : null}
+                                        <WarehouseImportPreviewPanel
+                                          preview={shippingImportPreview}
+                                          disabled={shippingDispatchActionsGloballyBusy}
+                                          onApply={() => void handleShippingApplyImportPreview(doc)}
+                                        />
                                       </div>
                                     )
                                   ) : null}
