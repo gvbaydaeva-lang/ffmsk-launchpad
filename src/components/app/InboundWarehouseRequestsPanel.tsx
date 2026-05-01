@@ -750,16 +750,14 @@ const InboundWarehouseRequestsPanel = () => {
             />
           </div>
           <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0">
-                <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
-                <p className="mt-0.5 text-xs text-slate-600">
-                  Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая)
-                  или те же два столбца в файле <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
-                  (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
-                  <span className="font-mono">WB-A-10452,120</span>
-                </p>
-              </div>
+            <div className="min-w-0 space-y-2">
+              <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
+              <p className="text-xs text-slate-600">
+                Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая)
+                или те же два столбца в файле <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
+                (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
+                <span className="font-mono">WB-A-10452,120</span>
+              </p>
               <div className="flex flex-wrap gap-2">
                 <input
                   ref={inboundFileInputRef}
