@@ -170,6 +170,36 @@ function canModifyOutboundShipmentPlanForImport(sh: OutboundShipment): boolean {
   return !isOutboundShipmentRowTerminalGate(sh);
 }
 
+/** Первая строка задания, по которой держим assignment / склад МП для импорта (нет — импорт нельзя выполнять). */
+function outboundImportLeaderShipment(rows: OutboundShipment[]): OutboundShipment | null {
+  const safe = rows.filter(canModifyOutboundShipmentPlanForImport);
+  return safe[0] ?? null;
+}
+
+/** Импорт плана только до начала операций над заданием (см. требование: не после подбора/сборки/упаковки/отгрузки). */
+function getShipmentDocExcelImportBlockedReason(doc: ShipmentDoc): string | null {
+  const rows = Array.isArray(doc.shipments) ? doc.shipments : [];
+  const ui = shippingWorkflowFromGroup(rows);
+  if (ui === "cancelled") return "Импорт недоступен: отгрузка отменена.";
+  if (isShippingTerminal(ui)) return "Импорт недоступен: отгрузка уже завершена.";
+  if (!rows.length) return "Импорт невозможен: в задании нет строк. Оформите состав задания другим способом.";
+  for (const sh of rows) {
+    if (outboundPickedQty(sh) > 0) {
+      return "Импорт недоступен: по заданию уже начат подбор со склада.";
+    }
+    if (outboundPackedQtyAssemblyGate(sh) > 0) return "Импорт недоступен: уже начата упаковка по заданию.";
+    const pu = Math.max(0, Math.trunc(Number(sh.packedUnits ?? 0) || 0));
+    if (pu > 0) return "Импорт недоступен: уже зафиксирована упаковка.";
+  }
+  if (ui !== "pending") {
+    return "Импорт доступен только в статусе «Новое», до перехода задания в работу или сборку.";
+  }
+  if (!outboundImportLeaderShipment(rows)) {
+    return "Импорт невозможен: нет строки задания, к которой можно привязать новый состав (нет доступной базовой строки или план по строкам уже закрыт).";
+  }
+  return null;
+}
+
 /** Финал по workflow: только shipped / shipped_with_diff; при смеси статусов по строкам — задание не считается отгруженным. */
 function isOutboundShipmentRowWorkflowShippedTerminal(sh: OutboundShipment | null | undefined): boolean {
   if (!sh) return false;
@@ -1086,17 +1116,28 @@ const ShippingPage = () => {
 
   const applyOutboundImportResolved = React.useCallback(
     async (doc: ShipmentDoc, resolved: ResolvedWarehouseImportRow[]) => {
-      const leader = doc.shipments?.[0];
+      const blockEarly = getShipmentDocExcelImportBlockedReason(doc);
+      if (blockEarly) {
+        toast.error(blockEarly);
+        return false;
+      }
+      const leader = outboundImportLeaderShipment(Array.isArray(doc.shipments) ? doc.shipments : []);
       if (!leader) {
-        toast.error("Состав задания пустой");
+        toast.error(
+          "Импорт невозможен: в задании нет строки-основы. Добавьте хотя бы одну активную строку отгрузки или обратитесь к заданию в карточке клиента.",
+        );
         return false;
       }
       const leaderKey = assignmentGroupKeyOutbound(leader);
       const cat = Array.isArray(catalog) ? catalog : [];
       try {
         for (const row of resolved) {
-          const fresh = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? data ?? [];
           const product = cat.find((p) => p.id === row.productId);
+          if (!product) {
+            toast.error("Товар каталога не найден после сопоставления — импорт остановлен.");
+            return false;
+          }
+          const fresh = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? data ?? [];
           const match = fresh.find(
             (s) =>
               assignmentGroupKeyOutbound(s) === leaderKey &&
@@ -1109,15 +1150,11 @@ const ShippingPage = () => {
               id: match.id,
               patch: {
                 plannedUnits: nextPlan,
-                ...(product
-                  ? {
-                      importArticle: product.supplierArticle ?? match.importArticle ?? undefined,
-                      importBarcode: product.barcode ?? match.importBarcode ?? undefined,
-                      importName: product.name ?? match.importName ?? undefined,
-                      importSize: product.size ?? match.importSize ?? undefined,
-                      importColor: product.color ?? match.importColor ?? undefined,
-                    }
-                  : {}),
+                importArticle: product.supplierArticle ?? undefined,
+                importBarcode: product.barcode ?? undefined,
+                importName: product.name ?? undefined,
+                importSize: product.size ?? undefined,
+                importColor: product.color ?? undefined,
               },
             });
           } else {
@@ -1126,27 +1163,27 @@ const ShippingPage = () => {
               productId: row.productId,
               assignmentId: leader.assignmentId ?? null,
               assignmentNo: leader.assignmentNo ?? doc.assignmentNo,
-              importArticle: product?.supplierArticle ?? undefined,
-              importBarcode: product?.barcode ?? undefined,
-              importName: product?.name ?? undefined,
-              importSize: product?.size ?? undefined,
-              importColor: product?.color ?? undefined,
+              importArticle: product.supplierArticle ?? undefined,
+              importBarcode: product.barcode ?? undefined,
+              importName: product.name ?? undefined,
+              importSize: product.size ?? undefined,
+              importColor: product.color ?? undefined,
               marketplace: leader.marketplace,
               sourceWarehouse: leader.sourceWarehouse,
               shippingMethod: leader.shippingMethod,
               priority: leader.priority ?? "normal",
-              boxBarcode: leader.boxBarcode,
-              gateBarcode: leader.gateBarcode,
-              supplyNumber: leader.supplyNumber,
-              expiryDate: leader.expiryDate,
+              plannedShipDate: leader.plannedShipDate ?? null,
               packedUnits: 0,
               packedQty: 0,
               pickedUnits: 0,
-              plannedShipDate: leader.plannedShipDate,
+              boxBarcode: "",
+              gateBarcode: "",
+              supplyNumber: "",
+              expiryDate: "",
               plannedUnits: row.qty,
               shippedUnits: null,
-              status: leader.status,
-              workflowStatus: leader.workflowStatus ?? "pending",
+              status: "готов к отгрузке (резерв)",
+              workflowStatus: "pending",
               boxes: [],
               activeBoxId: null,
             });
@@ -1165,6 +1202,11 @@ const ShippingPage = () => {
   const handleShippingImportPasteApply = React.useCallback(
     async (doc: ShipmentDoc) => {
       if (shippingDispatchActionsGloballyBusy) return;
+      const blocked = getShipmentDocExcelImportBlockedReason(doc);
+      if (blocked) {
+        toast.error(blocked);
+        return;
+      }
       const all = Array.isArray(catalog) ? catalog : [];
       const scoped = all.filter((p) => p.legalEntityId === doc.legalEntityId);
       const productScope = scoped.length > 0 ? scoped : all;
@@ -1193,6 +1235,11 @@ const ShippingPage = () => {
       input.value = "";
       if (!file) return;
       if (shippingDispatchActionsGloballyBusy) return;
+      const blocked = getShipmentDocExcelImportBlockedReason(doc);
+      if (blocked) {
+        toast.error(blocked);
+        return;
+      }
       const all = Array.isArray(catalog) ? catalog : [];
       const scoped = all.filter((p) => p.legalEntityId === doc.legalEntityId);
       const productScope = scoped.length > 0 ? scoped : all;
@@ -2244,6 +2291,7 @@ const ShippingPage = () => {
                           : `Недостаточно доступного товара по ${stockWarnLines.length} позициям. Подробности в подсказке.`;
                       const rowSelected = selectedShipmentIds.includes(doc.id);
                       const readOnlyShipment = isShippingTerminal(uiStatus) || uiStatus === "cancelled";
+                      const shippingExcelImportBlocked = getShipmentDocExcelImportBlockedReason(doc);
                       return (
                         <React.Fragment key={doc.id}>
                           <TableRow
@@ -2704,68 +2752,76 @@ const ShippingPage = () => {
                                     </div>
                                   )}
                                   {!readOnlyShipment ? (
-                                    <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
-                                      <div className="min-w-0 space-y-2">
-                                        <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
-                                        <p className="text-xs text-slate-600">
-                                          Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая)
-                                          или те же два столбца в файле <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
-                                          (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
-                                          <span className="font-mono">WB-A-10452,120</span>
-                                        </p>
-                                        <div className="flex flex-wrap gap-2">
-                                          <input
-                                            ref={shippingImportPasteFileRef}
-                                            type="file"
-                                            accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-                                            className="sr-only"
-                                            aria-label="Выбор файла Excel или CSV для импорта состава отгрузки"
-                                            onChange={(ev) => void handleShippingImportExcelFileChange(doc, ev)}
-                                          />
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-8 shrink-0"
-                                            disabled={shippingDispatchActionsGloballyBusy}
-                                            onClick={() => shippingImportPasteFileRef.current?.click()}
-                                          >
-                                            Загрузить файл Excel
-                                          </Button>
-                                          <Button
-                                            type="button"
-                                            variant="secondary"
-                                            size="sm"
-                                            className="h-8 shrink-0"
-                                            disabled={shippingDispatchActionsGloballyBusy}
-                                            onClick={() => setShippingImportPasteOpen((o) => !o)}
-                                          >
-                                            Вставить данные из Excel
-                                          </Button>
-                                        </div>
+                                    shippingExcelImportBlocked ? (
+                                      <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+                                        <p className="text-xs font-medium text-slate-800">Импорт из Excel</p>
+                                        <p className="mt-1 text-xs text-slate-600">{shippingExcelImportBlocked}</p>
                                       </div>
-                                      {shippingImportPasteOpen ? (
-                                        <div className="space-y-2 pt-1">
-                                          <Textarea
-                                            value={shippingImportPasteText}
-                                            onChange={(e) => setShippingImportPasteText(e.target.value)}
-                                            rows={6}
-                                            placeholder={"WB-A-10452, 120\n4601234567890, 48"}
-                                            disabled={shippingDispatchActionsGloballyBusy}
-                                            className="font-mono text-sm"
-                                          />
-                                          <Button
-                                            type="button"
-                                            size="sm"
-                                            className="h-8"
-                                            disabled={shippingDispatchActionsGloballyBusy}
-                                            onClick={() => void handleShippingImportPasteApply(doc)}
-                                          >
-                                            Загрузить
-                                          </Button>
+                                    ) : (
+                                      <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
+                                        <div className="min-w-0 space-y-2">
+                                          <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
+                                          <p className="text-xs text-slate-600">
+                                            Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span>{" "}
+                                            (разделитель — запятая) или те же два столбца в файле{" "}
+                                            <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
+                                            (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
+                                            <span className="font-mono">WB-A-10452,120</span>
+                                          </p>
+                                          <div className="flex flex-wrap gap-2">
+                                            <input
+                                              ref={shippingImportPasteFileRef}
+                                              type="file"
+                                              accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                                              className="sr-only"
+                                              aria-label="Выбор файла Excel или CSV для импорта состава отгрузки"
+                                              onChange={(ev) => void handleShippingImportExcelFileChange(doc, ev)}
+                                            />
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="h-8 shrink-0"
+                                              disabled={shippingDispatchActionsGloballyBusy}
+                                              onClick={() => shippingImportPasteFileRef.current?.click()}
+                                            >
+                                              Загрузить файл Excel
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="secondary"
+                                              size="sm"
+                                              className="h-8 shrink-0"
+                                              disabled={shippingDispatchActionsGloballyBusy}
+                                              onClick={() => setShippingImportPasteOpen((o) => !o)}
+                                            >
+                                              Вставить данные из Excel
+                                            </Button>
+                                          </div>
                                         </div>
-                                      ) : null}
-                                    </div>
+                                        {shippingImportPasteOpen ? (
+                                          <div className="space-y-2 pt-1">
+                                            <Textarea
+                                              value={shippingImportPasteText}
+                                              onChange={(e) => setShippingImportPasteText(e.target.value)}
+                                              rows={6}
+                                              placeholder={"WB-A-10452, 120\n4601234567890, 48"}
+                                              disabled={shippingDispatchActionsGloballyBusy}
+                                              className="font-mono text-sm"
+                                            />
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              className="h-8"
+                                              disabled={shippingDispatchActionsGloballyBusy}
+                                              onClick={() => void handleShippingImportPasteApply(doc)}
+                                            >
+                                              Загрузить
+                                            </Button>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    )
                                   ) : null}
                                   <div>
                                     <p className="mb-2 text-xs font-medium text-slate-600">Состав задания</p>
