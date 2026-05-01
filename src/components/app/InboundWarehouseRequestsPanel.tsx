@@ -61,6 +61,7 @@ function InboundLinePlacementsBlock({
   locationName,
   onPersist,
   persistBusy,
+  flowLocked,
 }: {
   item: InboundWarehouseItem;
   productName: string;
@@ -69,6 +70,8 @@ function InboundLinePlacementsBlock({
   locationName: (id: string) => string;
   onPersist: (pl: InboundPlacementInput[]) => Promise<void>;
   persistBusy: boolean;
+  /** Глобальная блокировка панели (завершение приёмки/размещения и др.) */
+  flowLocked?: boolean;
 }) {
   type DraftPl = { rowKey: string; id: string; locationId: string; qty: string };
   const [lines, setLines] = React.useState<DraftPl[]>([]);
@@ -115,6 +118,8 @@ function InboundLinePlacementsBlock({
     }
     await onPersist(payload);
   };
+
+  const locked = Boolean(flowLocked || persistBusy);
 
   if (readOnly) {
     return (
@@ -166,6 +171,7 @@ function InboundLinePlacementsBlock({
               <Label className="text-xs text-slate-500">Ячейка</Label>
               <Select
                 value={ln.locationId || undefined}
+                disabled={locked}
                 onValueChange={(v) =>
                   setLines((prev) => prev.map((x) => (x.rowKey === ln.rowKey ? { ...x, locationId: v } : x)))
                 }
@@ -190,6 +196,7 @@ function InboundLinePlacementsBlock({
                 step={1}
                 className="h-9 tabular-nums"
                 value={ln.qty}
+                disabled={locked}
                 onChange={(e) =>
                   setLines((prev) => prev.map((x) => (x.rowKey === ln.rowKey ? { ...x, qty: e.target.value } : x)))
                 }
@@ -201,7 +208,7 @@ function InboundLinePlacementsBlock({
               size="sm"
               className="h-9 shrink-0 text-slate-600"
               onClick={() => setLines((prev) => prev.filter((x) => x.rowKey !== ln.rowKey))}
-              disabled={persistBusy}
+              disabled={locked}
             >
               Убрать
             </Button>
@@ -213,7 +220,7 @@ function InboundLinePlacementsBlock({
             variant="outline"
             size="sm"
             className="h-8"
-            disabled={persistBusy}
+            disabled={locked}
             onClick={() =>
               setLines((prev) => [
                 ...prev,
@@ -224,7 +231,7 @@ function InboundLinePlacementsBlock({
             <Plus className="mr-1 h-3.5 w-3.5" />
             Размещение
           </Button>
-          <Button type="button" size="sm" className="h-8" disabled={persistBusy} onClick={() => void applyLines()}>
+          <Button type="button" size="sm" className="h-8" disabled={locked} onClick={() => void applyLines()}>
             {persistBusy ? "Сохранение…" : "Сохранить распределение"}
           </Button>
         </div>
@@ -475,7 +482,7 @@ const InboundWarehouseRequestsPanel = () => {
     async (inboundId: string) => {
       try {
         await completeWarehouseInboundReceiving(inboundId);
-        toast.success("Приёмка завершена, движения учтены");
+        toast.success("Приёмка завершена, движения приёмки учтены");
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Не удалось завершить приёмку";
         toast.error(msg);
@@ -527,11 +534,20 @@ const InboundWarehouseRequestsPanel = () => {
   const completePlacementBusy = (rowId: string) =>
     Boolean(isCompletingWarehouseInboundPlacement && completingWarehouseInboundPlacementId === rowId);
 
+  /** Блокирует повторные нажатия «завершить» и прочие действия, пока идёт любая мутация по заявкам /inbounds. */
+  const inboundPanelBusy =
+    Boolean(isPostingInbounds) ||
+    Boolean(isStartingInboundReceiving) ||
+    Boolean(isUpdatingInboundReceivedQty) ||
+    Boolean(isCompletingWarehouseInboundReceiving) ||
+    Boolean(isUpdatingWarehouseInboundPlacement) ||
+    Boolean(isCompletingWarehouseInboundPlacement);
+
   const completeInboundPlacementFor = React.useCallback(
     async (inboundId: string) => {
       try {
         await completeWarehouseInboundPlacement(inboundId);
-        toast.success("Размещение завершено, движения созданы");
+        toast.success("Размещение завершено, перемещения в ячейки созданы");
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Не удалось завершить размещение";
         toast.error(msg);
@@ -553,7 +569,11 @@ const InboundWarehouseRequestsPanel = () => {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Партнёр</Label>
-              <Select value={partnerId || undefined} onValueChange={setPartnerId}>
+              <Select
+                value={partnerId || undefined}
+                onValueChange={setPartnerId}
+                disabled={inboundPanelBusy || catalogLoading}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Выберите партнёра" />
                 </SelectTrigger>
@@ -568,17 +588,35 @@ const InboundWarehouseRequestsPanel = () => {
             </div>
             <div className="space-y-2">
               <Label>Ожидаемая дата</Label>
-              <Input type="date" value={plannedDate} onChange={(e) => setPlannedDate(e.target.value)} />
+              <Input
+                type="date"
+                value={plannedDate}
+                onChange={(e) => setPlannedDate(e.target.value)}
+                disabled={inboundPanelBusy || catalogLoading}
+              />
             </div>
           </div>
           <div className="space-y-2">
             <Label>Комментарий</Label>
-            <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} placeholder="Необязательно" />
+            <Textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              rows={2}
+              placeholder="Необязательно"
+              disabled={inboundPanelBusy || catalogLoading}
+            />
           </div>
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label className="mb-0">Позиции</Label>
-              <Button type="button" size="sm" variant="outline" onClick={addLine} className="h-8 gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={addLine}
+                className="h-8 gap-1"
+                disabled={inboundPanelBusy || catalogLoading}
+              >
                 <Plus className="h-3.5 w-3.5" />
                 Добавить строку
               </Button>
@@ -599,6 +637,7 @@ const InboundWarehouseRequestsPanel = () => {
                       <Select
                         value={line.productId || undefined}
                         onValueChange={(v) => updateLine(line.key, { productId: v })}
+                        disabled={inboundPanelBusy || catalogLoading}
                       >
                         <SelectTrigger className="h-9">
                           <SelectValue placeholder="Выберите товар" />
@@ -621,6 +660,7 @@ const InboundWarehouseRequestsPanel = () => {
                         className="h-9"
                         value={line.plannedQty}
                         onChange={(e) => updateLine(line.key, { plannedQty: e.target.value })}
+                        disabled={inboundPanelBusy || catalogLoading}
                       />
                     </div>
                     <div className="flex md:col-span-2 md:justify-end">
@@ -630,7 +670,7 @@ const InboundWarehouseRequestsPanel = () => {
                         size="icon"
                         className="h-9 text-slate-600"
                         onClick={() => removeLine(line.key)}
-                        disabled={lines.length <= 1}
+                        disabled={lines.length <= 1 || inboundPanelBusy || catalogLoading}
                         aria-label="Удалить строку"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -641,7 +681,11 @@ const InboundWarehouseRequestsPanel = () => {
               )}
             </div>
           </div>
-          <Button type="button" onClick={() => void submit()} disabled={isPostingInbounds || catalogLoading}>
+          <Button
+            type="button"
+            onClick={() => void submit()}
+            disabled={isPostingInbounds || catalogLoading || inboundPanelBusy}
+          >
             {isPostingInbounds ? "Создание…" : "Создать приёмку"}
           </Button>
         </CardContent>
@@ -681,7 +725,7 @@ const InboundWarehouseRequestsPanel = () => {
                           <div className="truncate font-mono text-xs tabular-nums">{row.id}</div>
                           {row.originInboundId ? (
                             <div className="mt-0.5 text-[11px] leading-tight text-slate-500">
-                              Продолжение для{" "}
+                              Создано из заявки{" "}
                               <span className="break-all font-mono text-[10px]">{row.originInboundId}</span>
                             </div>
                           ) : null}
@@ -717,7 +761,7 @@ const InboundWarehouseRequestsPanel = () => {
                               size="sm"
                               variant="secondary"
                               className="h-8"
-                              disabled={rowReceivingBusy(row.id)}
+                              disabled={rowReceivingBusy(row.id) || inboundPanelBusy}
                               onClick={() => setModeDialogInboundId(row.id)}
                             >
                               {rowReceivingBusy(row.id) ? "Запрос…" : "Начать приёмку"}
@@ -734,11 +778,11 @@ const InboundWarehouseRequestsPanel = () => {
                               {row.status === "received" ? (
                                 <div className="space-y-1">
                                   <p className="text-xs text-slate-600">
-                                    Приёмка завершена. Факт зафиксирован, движения созданы, правки недоступны.
+                                    Приёмка завершена. Если был недовоз — создана заявка на остаток.
                                   </p>
                                   {continuationInboundIdByOrigin.has(row.id) ? (
                                     <p className="text-xs text-sky-800">
-                                      Заявка на остаток (частичная приёмка):{" "}
+                                      Есть продолжение заявки:{" "}
                                       <span className="font-mono tabular-nums">
                                         {continuationInboundIdByOrigin.get(row.id)}
                                       </span>
@@ -748,11 +792,11 @@ const InboundWarehouseRequestsPanel = () => {
                               ) : row.status === "placed" ? (
                                 <div className="space-y-1">
                                   <p className="text-xs text-slate-600">
-                                    Размещение завершено. Движения из зоны приёмки в ячейки созданы, заявка закрыта.
+                                    Размещение завершено. Товар размещён по ячейкам.
                                   </p>
                                   {continuationInboundIdByOrigin.has(row.id) ? (
                                     <p className="text-xs text-sky-800">
-                                      Заявка на остаток после приёмки:{" "}
+                                      Есть продолжение заявки:{" "}
                                       <span className="font-mono tabular-nums">
                                         {continuationInboundIdByOrigin.get(row.id)}
                                       </span>
@@ -762,14 +806,15 @@ const InboundWarehouseRequestsPanel = () => {
                               ) : (
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <p className="text-xs text-slate-600">
-                                    Внесите факт по строкам. При завершении будут созданы INBOUND-движения в зону приёмки. Если
-                                    по строке принято меньше плана — автоматически создаётся одна новая заявка на остаток.
+                                    Внесите факт по строкам. По завершении создаются движения приёмки в зону приёмки. Если
+                                    принято меньше плана — будет создана заявка на остаток.
                                   </p>
                                   <Button
                                     type="button"
                                     size="sm"
                                     className="shrink-0"
                                     disabled={
+                                      inboundPanelBusy ||
                                       completeReceivingBusy(row.id) ||
                                       anyReceivedQtySavingForInbound(row.id) ||
                                       !row.items.some((it) => Math.max(0, Math.trunc(Number(it.receivedQty) || 0)) > 0)
@@ -801,7 +846,9 @@ const InboundWarehouseRequestsPanel = () => {
                                         productName={productDisplayName(item.productId)}
                                         editable={row.status === "receiving"}
                                         disabled={
-                                          lineReceivedQtyBusy(row.id, item.id) || completeReceivingBusy(row.id)
+                                          inboundPanelBusy ||
+                                          lineReceivedQtyBusy(row.id, item.id) ||
+                                          completeReceivingBusy(row.id)
                                         }
                                         onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
                                       />
@@ -831,6 +878,7 @@ const InboundWarehouseRequestsPanel = () => {
                                       storageLocations={storageLocations}
                                       locationName={locationNameById}
                                       persistBusy={placementLineBusy(row.id, item.id)}
+                                      flowLocked={inboundPanelBusy}
                                       onPersist={(pl) => persistPlacementForLine(row.id, item.id, pl)}
                                     />
                                   ))}
@@ -840,6 +888,7 @@ const InboundWarehouseRequestsPanel = () => {
                                         type="button"
                                         size="sm"
                                         disabled={
+                                          inboundPanelBusy ||
                                           completePlacementBusy(row.id) ||
                                           anyPlacementSavingForInbound(row.id) ||
                                           !isInboundPlacementFullyDistributed(row) ||
@@ -870,13 +919,15 @@ const InboundWarehouseRequestsPanel = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Начало приёмки</DialogTitle>
-            <DialogDescription>Выберите режим работы. Остатки и движения не создаются до отдельного шага завершения приёмки.</DialogDescription>
+            <DialogDescription>
+              Выберите режим работы. Движения приёмки создаются только после нажатия «Завершить приёмку».
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-start">
             <Button
               type="button"
               className="w-full sm:w-auto"
-              disabled={isStartingInboundReceiving}
+              disabled={isStartingInboundReceiving || inboundPanelBusy}
               onClick={() => void confirmStartReceiving("manual")}
             >
               Ручной ввод
@@ -885,7 +936,7 @@ const InboundWarehouseRequestsPanel = () => {
               type="button"
               variant="outline"
               className="w-full sm:w-auto"
-              disabled={isStartingInboundReceiving}
+              disabled={isStartingInboundReceiving || inboundPanelBusy}
               onClick={() => void confirmStartReceiving("scan")}
             >
               Сканирование

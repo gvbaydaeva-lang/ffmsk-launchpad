@@ -100,7 +100,7 @@ function inboundHasContinuationInList(originId: string, rows: InboundWarehouseRe
   return rows.some((r) => (r.originInboundId || "").trim() === o);
 }
 
-/** Остаток плана по строкам после фиксации факта (только строки с remaining > 0). */
+/** Остаток плана по строкам после фиксации факта. Нет строки продолжения при recv ≥ planned и при перевыполнении (recv > planned). */
 function continuationItemsFromPartialReceive(row: InboundWarehouseRequest): { productId: string; plannedQty: number }[] {
   const out: { productId: string; plannedQty: number }[] = [];
   for (const it of row.items) {
@@ -221,8 +221,8 @@ export async function updateInboundReceivedQty(
 }
 
 /**
- * Закрыть приёмку по заявке: статус received, INBOUND-движения только по строкам с receivedQty > 0,
- * без размещения (locationId = RECEIVING_AREA).
+ * Закрыть приёмку по заявке: статус received, движения приёмки только по строкам с receivedQty > 0,
+ * без размещения (место операции — зона приёмки).
  */
 export async function completeInboundReceiving(inboundId: string): Promise<InboundWarehouseRequest> {
   await delay(140);
@@ -309,7 +309,17 @@ export async function completeInboundReceiving(inboundId: string): Promise<Inbou
   if (!inboundHasContinuationInList(inboundId, toStore)) {
     const continuationBody = continuationItemsFromPartialReceive(updated);
     if (continuationBody.length > 0) {
-      toStore = appendContinuationInbound(toStore, updated, continuationBody);
+      const reread = readStored();
+      if (inboundHasContinuationInList(inboundId, reread)) {
+        const rIdx = reread.findIndex((r) => r.id === inboundId);
+        toStore =
+          rIdx >= 0 ? reread.map((r, i) => (i === rIdx ? { ...r, status: "received" } : r)) : next;
+      } else {
+        const rIdx = reread.findIndex((r) => r.id === inboundId);
+        const base =
+          rIdx >= 0 ? reread.map((r, i) => (i === rIdx ? { ...r, status: "received" } : r)) : next;
+        toStore = appendContinuationInbound(base, updated, continuationBody);
+      }
     }
   }
 
@@ -392,7 +402,7 @@ export async function updateInboundPlacement(
 }
 
 /**
- * Завершить размещение: TRANSFER из RECEIVING_AREA в ячейки, сумма placements = receivedQty по каждой строке с приёмкой.
+ * Завершить размещение: перемещение из зоны приёмки в ячейки, сумма placements = receivedQty по каждой строке с приёмкой.
  */
 export async function completeInboundPlacement(inboundId: string): Promise<InboundWarehouseRequest> {
   await delay(170);
