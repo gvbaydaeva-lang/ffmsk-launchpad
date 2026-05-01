@@ -130,10 +130,12 @@ const InventoryPage = () => {
     [locationsSafe],
   );
 
-  const receivingLocationIds = React.useMemo(
-    () => new Set(locationsSafe.filter((l) => l?.type === "receiving").map((l) => l.id)),
-    [locationsSafe],
-  );
+  const receivingLocationIds = React.useMemo(() => {
+    const ids = new Set(locationsSafe.filter((l) => l?.type === "receiving").map((l) => l.id));
+    // Fallback для старых/неполных данных справочника: дефолтная зона приёмки.
+    ids.add("loc-receiving");
+    return ids;
+  }, [locationsSafe]);
 
   const locationById = React.useMemo(() => new Map(locationsSafe.map((l) => [l.id, l])), [locationsSafe]);
 
@@ -255,65 +257,27 @@ const InventoryPage = () => {
   const tableLoading = isLoading || outboundLoading || catalogLoading;
 
   const unplacedRows = React.useMemo(() => {
-    const rows = movementDataSafe;
-    const byKey = new Map<
-      string,
-      {
-        key: string;
-        legalEntityId: string;
-        legalEntityName: string;
-        warehouseName: string;
-        name: string;
-        article: string;
-        barcode: string;
-        marketplace: string;
-        color: string;
-        size: string;
-        qty: number;
-        receivingLocationId: string;
-        lastMovementAt: string | null;
-      }
-    >();
-    for (const m of rows) {
-      const locId = (m.locationId || "").trim();
-      if (!locId || !receivingLocationIds.has(locId)) continue;
-      const rowKey = [
-        m.legalEntityId,
-        m.warehouseName ?? "—",
-        m.barcode,
-        m.article ?? m.sku ?? "",
-        m.color ?? "",
-        m.size ?? "",
-        locId,
-      ].join("::");
-      const cur = byKey.get(rowKey);
-      if (!cur) {
-        byKey.set(rowKey, {
-          key: rowKey,
-          legalEntityId: m.legalEntityId,
-          legalEntityName: m.legalEntityName,
-          warehouseName: m.warehouseName ?? "—",
-          name: m.name,
-          article: m.article ?? m.sku ?? "—",
-          barcode: m.barcode,
-          marketplace: m.marketplace ?? "",
-          color: m.color ?? "—",
-          size: m.size ?? "—",
-          qty: m.qty,
-          receivingLocationId: locId,
-          lastMovementAt: m.createdAt || null,
-        });
-      } else {
-        cur.qty += m.qty;
-        const currentTs = Date.parse(cur.lastMovementAt || "");
-        const nextTs = Date.parse(m.createdAt || "");
-        if (!Number.isFinite(currentTs) || (Number.isFinite(nextTs) && nextTs > currentTs)) {
-          cur.lastMovementAt = m.createdAt || null;
-        }
-      }
-    }
-    return Array.from(byKey.values())
-      .filter((x) => x.qty > 0)
+    return rowsWithLocation
+      .filter((row) => {
+        const locId = (row.locationId || "").trim();
+        if (!locId || !receivingLocationIds.has(locId)) return false;
+        return row.balanceQty > 0;
+      })
+      .map((row) => ({
+        key: row.key,
+        legalEntityId: row.legalEntityId,
+        legalEntityName: row.legalEntityName,
+        warehouseName: row.warehouseName,
+        name: row.name,
+        article: row.article || row.sku || "—",
+        barcode: row.barcode,
+        marketplace: row.marketplace ?? "",
+        color: row.color ?? "—",
+        size: row.size ?? "—",
+        qty: row.balanceQty,
+        receivingLocationId: row.locationId,
+        lastMovementAt: row.lastMovementIso ?? null,
+      }))
       .sort((a, b) => {
         const aTs = Date.parse(a.lastMovementAt || "");
         const bTs = Date.parse(b.lastMovementAt || "");
@@ -324,7 +288,7 @@ const InventoryPage = () => {
         if (bHas) return 1;
         return 0;
       });
-  }, [movementDataSafe, receivingLocationIds]);
+  }, [rowsWithLocation, receivingLocationIds]);
 
   const resetPlacementForm = () => {
     setPlacingRow(null);
