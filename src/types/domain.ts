@@ -164,6 +164,8 @@ export type InboundWarehouseItem = {
   inboundId: string;
   productId: string;
   plannedQty: number;
+  /** Фактически принято по строке (без движений остатков до завершения приёмки) */
+  receivedQty: number;
 };
 
 /** Тарифы фулфилмента по клиенту (договорные ставки) */

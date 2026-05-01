@@ -49,6 +49,7 @@ import {
   fetchInboundsWarehouseRequests,
   postInboundWarehouseRequest,
   startInboundReceiving,
+  updateInboundReceivedQty,
   type PostInboundsPayload,
 } from "@/services/warehouseInboundApi";
 import type { InboundWarehouseReceivingMode } from "@/types/domain";
@@ -631,6 +632,14 @@ export function useWarehouseInboundRequests() {
     },
   });
 
+  const updateReceived = useMutation({
+    mutationFn: (vars: { inboundId: string; itemId: string; receivedQty: number }) =>
+      updateInboundReceivedQty(vars.inboundId, vars.itemId, vars.receivedQty),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
+    },
+  });
+
   return {
     ...query,
     /** POST /inbounds */
@@ -639,6 +648,9 @@ export function useWarehouseInboundRequests() {
     startInboundReceiving: startReceiving.mutateAsync,
     isStartingInboundReceiving: startReceiving.isPending,
     startingInboundReceivingVars: startReceiving.variables,
+    updateInboundReceivedQty: updateReceived.mutateAsync,
+    isUpdatingInboundReceivedQty: updateReceived.isPending,
+    updatingInboundReceivedVars: updateReceived.variables,
   };
 }
 

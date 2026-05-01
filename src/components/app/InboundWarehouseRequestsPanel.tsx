@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useLegalEntities, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
-import type { InboundWarehouseReceivingMode, InboundWarehouseRequest } from "@/types/domain";
+import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
 import { toast } from "sonner";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
@@ -39,6 +39,75 @@ function statusLabel(row: InboundWarehouseRequest): string {
   return "Новая";
 }
 
+function InboundReceivingQtyRow({
+  item,
+  productName,
+  onSave,
+  disabled,
+}: {
+  item: InboundWarehouseItem;
+  productName: string;
+  onSave: (qty: number) => Promise<void>;
+  disabled?: boolean;
+}) {
+  const [val, setVal] = React.useState(String(item.receivedQty));
+  React.useEffect(() => {
+    setVal(String(item.receivedQty));
+  }, [item.receivedQty, item.id]);
+
+  const tRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(
+    () => () => {
+      if (tRef.current) window.clearTimeout(tRef.current);
+    },
+    [],
+  );
+
+  const persist = async (raw: string) => {
+    const n = Math.max(0, Math.trunc(Number(raw) || 0));
+    if (n === item.receivedQty) return;
+    await onSave(n);
+  };
+
+  return (
+    <TableRow>
+      <TableCell className="text-sm font-medium text-slate-900">{productName}</TableCell>
+      <TableCell className="text-right tabular-nums text-sm">{item.plannedQty}</TableCell>
+      <TableCell className="text-right tabular-nums text-sm">{item.receivedQty}</TableCell>
+      <TableCell className="w-[140px]">
+        <Input
+          type="number"
+          min={0}
+          step={1}
+          className="h-9 tabular-nums"
+          value={val}
+          disabled={disabled}
+          onChange={(e) => {
+            const next = e.target.value;
+            setVal(next);
+            if (tRef.current) window.clearTimeout(tRef.current);
+            tRef.current = window.setTimeout(() => {
+              void persist(next);
+            }, 450);
+          }}
+          onBlur={() => {
+            if (tRef.current) {
+              window.clearTimeout(tRef.current);
+              tRef.current = null;
+            }
+            const n = Math.max(0, Math.trunc(Number(val) || 0));
+            setVal(String(n));
+            if (n !== item.receivedQty) void persist(String(n));
+          }}
+        />
+      </TableCell>
+      <TableCell className="text-right text-xs tabular-nums text-slate-600">
+        {item.receivedQty} / {item.plannedQty}
+      </TableCell>
+    </TableRow>
+  );
+}
+
 const InboundWarehouseRequestsPanel = () => {
   const { data: entities } = useLegalEntities();
   const { data: catalog, isLoading: catalogLoading } = useProductCatalog();
@@ -51,6 +120,9 @@ const InboundWarehouseRequestsPanel = () => {
     startInboundReceiving,
     isStartingInboundReceiving,
     startingInboundReceivingVars,
+    updateInboundReceivedQty,
+    isUpdatingInboundReceivedQty,
+    updatingInboundReceivedVars,
   } = useWarehouseInboundRequests();
 
   const [modeDialogInboundId, setModeDialogInboundId] = React.useState<string | null>(null);
@@ -63,6 +135,38 @@ const InboundWarehouseRequestsPanel = () => {
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
     [entities],
+  );
+
+  const productNameById = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of catalog ?? []) {
+      m.set(p.id, (p.name ?? "").trim() || p.supplierArticle || p.id);
+    }
+    return m;
+  }, [catalog]);
+
+  const productDisplayName = React.useCallback((productId: string) => productNameById.get(productId) ?? productId, [productNameById]);
+
+  const persistReceivedQty = React.useCallback(
+    async (inboundId: string, itemId: string, receivedQty: number) => {
+      try {
+        await updateInboundReceivedQty({ inboundId, itemId, receivedQty });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Не удалось сохранить факт";
+        toast.error(msg);
+      }
+    },
+    [updateInboundReceivedQty],
+  );
+
+  const lineReceivedQtyBusy = React.useCallback(
+    (inboundId: string, itemId: string) =>
+      Boolean(
+        isUpdatingInboundReceivedQty &&
+          updatingInboundReceivedVars?.inboundId === inboundId &&
+          updatingInboundReceivedVars?.itemId === itemId,
+      ),
+    [isUpdatingInboundReceivedQty, updatingInboundReceivedVars],
   );
 
   const productsForPartner = React.useMemo(() => {
@@ -306,9 +410,35 @@ const InboundWarehouseRequestsPanel = () => {
                       </TableRow>
                       {row.status === "receiving" ? (
                         <TableRow className="border-t-0 bg-slate-50/70 hover:bg-slate-50/70">
-                          <TableCell colSpan={7} className="py-3 text-sm text-slate-600">
-                            <div className="rounded-md border border-dashed border-slate-300 bg-white px-3 py-2 text-center text-slate-500">
-                              Фактическая приёмка будет добавлена следующим шагом
+                          <TableCell colSpan={7} className="p-0 align-top">
+                            <div className="space-y-2 p-3">
+                              <p className="text-xs text-slate-600">
+                                Факт по строкам сохраняется здесь; движения остатков и завершение приёмки не выполняются.
+                              </p>
+                              <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow className="bg-slate-50/90">
+                                      <TableHead className="text-xs font-semibold">Товар</TableHead>
+                                      <TableHead className="text-right text-xs font-semibold">План</TableHead>
+                                      <TableHead className="text-right text-xs font-semibold">Принято</TableHead>
+                                      <TableHead className="text-xs font-semibold">Изменить факт</TableHead>
+                                      <TableHead className="text-right text-xs font-semibold">Факт / план</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {row.items.map((item) => (
+                                      <InboundReceivingQtyRow
+                                        key={item.id}
+                                        item={item}
+                                        productName={productDisplayName(item.productId)}
+                                        disabled={lineReceivedQtyBusy(row.id, item.id)}
+                                        onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
+                                      />
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -326,7 +456,7 @@ const InboundWarehouseRequestsPanel = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Начало приёмки</DialogTitle>
-            <DialogDescription>Выберите режим работы. Факт и движения остатков на этом шаге не изменяются.</DialogDescription>
+            <DialogDescription>Выберите режим работы. Остатки и движения не создаются до отдельного шага завершения приёмки.</DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-start">
             <Button

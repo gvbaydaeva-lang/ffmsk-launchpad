@@ -11,6 +11,16 @@ function delay(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
+function normalizeInboundItem(it: InboundWarehouseItem): InboundWarehouseItem {
+  const rq = Number(it.receivedQty);
+  const receivedQty = Number.isFinite(rq) && rq >= 0 ? Math.trunc(rq) : 0;
+  return {
+    ...it,
+    plannedQty: Math.max(0, Math.trunc(Number(it.plannedQty) || 0)),
+    receivedQty,
+  };
+}
+
 function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): InboundWarehouseRequest {
   const status: InboundWarehouseRequestStatus =
     raw.status === "receiving" ? "receiving" : "new";
@@ -18,11 +28,12 @@ function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): Inbound
   if (raw.receivingMode === "manual" || raw.receivingMode === "scan") {
     receivingMode = raw.receivingMode;
   }
+  const itemsRaw = Array.isArray(raw.items) ? raw.items : [];
   return {
     ...raw,
     status,
     receivingMode,
-    items: Array.isArray(raw.items) ? raw.items : [],
+    items: itemsRaw.map((x) => normalizeInboundItem(x as InboundWarehouseItem)),
   };
 }
 
@@ -89,6 +100,36 @@ export async function startInboundReceiving(id: string, mode: InboundWarehouseRe
   return updated;
 }
 
+/** Обновление факта по строке (только при status === receiving, без движений и смены статуса) */
+export async function updateInboundReceivedQty(
+  inboundId: string,
+  itemId: string,
+  receivedQty: number,
+): Promise<InboundWarehouseRequest> {
+  const q = Math.trunc(Number(receivedQty));
+  if (!Number.isFinite(q) || q < 0) {
+    throw new Error("Количество должно быть целым числом ≥ 0");
+  }
+  await delay(70);
+  const rows = readStored();
+  const idx = rows.findIndex((r) => r.id === inboundId);
+  if (idx < 0) throw new Error("Заявка не найдена");
+  const row = rows[idx];
+  if (row.status !== "receiving") {
+    throw new Error("Факт можно вносить только для заявки в статусе «Приёмка»");
+  }
+  const lineIdx = row.items.findIndex((it) => it.id === itemId);
+  if (lineIdx < 0) throw new Error("Строка заявки не найдена");
+  const nextItems = row.items.map((it, i) =>
+    i === lineIdx ? { ...it, receivedQty: q } : it,
+  );
+  const updated: InboundWarehouseRequest = { ...row, items: nextItems };
+  const next = [...rows];
+  next[idx] = updated;
+  writeStored(next);
+  return updated;
+}
+
 /** GET /inbounds */
 export async function fetchInboundsWarehouseRequests(): Promise<InboundWarehouseRequest[]> {
   await delay(80);
@@ -108,6 +149,7 @@ export async function postInboundWarehouseRequest(body: PostInboundsPayload): Pr
     inboundId: id,
     productId: it.productId.trim(),
     plannedQty: Math.trunc(Number(it.plannedQty)),
+    receivedQty: 0,
   }));
   const row: InboundWarehouseRequest = {
     id,
