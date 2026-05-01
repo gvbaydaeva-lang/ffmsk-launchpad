@@ -110,7 +110,7 @@ function shippingDispatcherHint(status: ShippingUiStatus): string {
   if (status === "assembling") return "Задание в сборке на складе";
   if (status === "assembled") return "Задание собрано, ожидает отгрузки";
   if (status === "shipped") return "Отгрузка завершена";
-  if (status === "shipped_with_diff") return "Отгрузка завершена с расхождением";
+  if (status === "shipped_with_diff") return "Отгружено с расхождением";
   return "Сборка завершена";
 }
 
@@ -155,11 +155,25 @@ function shippingOutboundPackedQtyGateSum(shipments: OutboundShipment[] | undefi
   return safe.reduce((s, sh) => s + outboundPackedQtyAssemblyGate(sh), 0);
 }
 
-/** По всем строкам с планом > 0: подобрано >= план (для подсказки «не упаковано» при полном подборе). */
-function docShipmentsPackedGateOk(doc: ShipmentDoc | null | undefined): boolean {
-  const raw = doc?.shipments ?? [];
-  const rows = Array.isArray(raw) ? raw : [];
-  return outboundShipmentsPackedQtyPlanSatisfied(rows);
+function shipmentDocPackedTotal(doc: ShipmentDoc | null | undefined): number {
+  return shippingOutboundPackedQtyGateSum(doc?.shipments ?? []);
+}
+
+/** Отгрузка без расхождений: все строки упакованы по плану и подобрано ≥ плана по документу. */
+function canShipmentExactFinalize(doc: ShipmentDoc | null | undefined): boolean {
+  if (!doc) return false;
+  const rows = doc.shipments ?? [];
+  const safe = Array.isArray(rows) ? rows : [];
+  if (!safe.length) return false;
+  if (!outboundShipmentsPackedQtyPlanSatisfied(safe)) return false;
+  return Number(doc.fact ?? 0) >= Number(doc.planned ?? 0);
+}
+
+/** Конец со shipped_with_diff: есть упакованные единицы, но точное завершение недоступно. */
+function canShipmentDiffFinalize(doc: ShipmentDoc | null | undefined): boolean {
+  if (!doc) return false;
+  if (canShipmentExactFinalize(doc)) return false;
+  return shipmentDocPackedTotal(doc) > 0;
 }
 
 /** ISO момента отгрузки: max shippedAt, если все строки в финале (shipped / shipped_with_diff). */
@@ -188,11 +202,6 @@ function buildShippingCellPickLogDescription(
   const loc = (locationLabel ?? "").trim() || "Без места";
   const num = (shipmentNumber ?? "").trim() || "—";
   return `${title}. Товар: ${n}; количество: ${q}; ячейка: ${loc}; № отгрузки: ${num}`;
-}
-
-function shipmentDocsPackedGateOk(docs: ShipmentDoc[] | null | undefined): boolean {
-  const list = Array.isArray(docs) ? docs : [];
-  return list.every((d) => docShipmentsPackedGateOk(d));
 }
 
 function shippingGroupFullyPickedForPlan(shipments: OutboundShipment[] | undefined | null): boolean {
@@ -368,7 +377,13 @@ function ShippingStockWarnTrigger({
 
 const ShippingPage = () => {
   const DIFF_REASONS = React.useMemo(
-    () => ["Нет товара", "Пересорт", "Повреждение", "Ошибка учёта", "Другое"],
+    () => [
+      "товара не хватило",
+      "повреждение товара",
+      "ошибка подбора",
+      "отменено клиентом",
+      "другое",
+    ],
     [],
   );
   const navigate = useNavigate();
@@ -762,6 +777,31 @@ const ShippingPage = () => {
     [appendOperationLog, entities, queryClient],
   );
 
+  const appendShipmentDiffFinishedLog = React.useCallback(
+    (doc: ShipmentDoc, reason: string) => {
+      const no = ((doc?.assignmentNo ?? "") as string).trim() || "—";
+      const rs = ((reason ?? "") as string).trim() || "—";
+      const desc = `Отгрузка завершена с расхождением. № отгрузки: ${no}. Причина: ${rs}.`;
+      const logsRaw = queryClient.getQueryData<OperationLog[]>(["wms", "operation-logs"]);
+      const logs = Array.isArray(logsRaw) ? logsRaw : [];
+      const dup = logs.some(
+        (log) => operationLogBelongsToShipmentDoc(doc, log) && String(log.description ?? "").trim() === desc,
+      );
+      if (dup) return;
+
+      const leName = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
+      appendOperationLog({
+        type: "SHIPMENT_DIFF_COMPLETED",
+        legalEntityId: doc.legalEntityId,
+        legalEntityName: leName,
+        taskId: doc.id,
+        taskNumber: (doc?.assignmentNo ?? "").trim() || "—",
+        description: desc,
+      });
+    },
+    [appendOperationLog, entities, queryClient],
+  );
+
   const operationLogsList = React.useMemo(
     () => (Array.isArray(operationLogsRaw) ? operationLogsRaw : []),
     [operationLogsRaw],
@@ -951,25 +991,31 @@ const ShippingPage = () => {
     [updateOutboundDraft, assemblyCompletingId, isUpdatingOutboundDraft],
   );
 
-  const confirmShipment = React.useCallback(
+  const openShipmentDiffFinalizeDialog = React.useCallback((doc: ShipmentDoc | null | undefined) => {
+    if (!doc || doc.workflowStatus !== "assembled") return;
+    if (!canShipmentDiffFinalize(doc)) {
+      toast.error(
+        shipmentDocPackedTotal(doc) <= 0
+          ? "Нельзя отгрузить: ничего не упаковано"
+          : "Нельзя завершить отгрузку с расхождением для этого задания.",
+      );
+      return;
+    }
+    setPendingBulkDiffDocs([]);
+    setPendingBulkExactDocs([]);
+    setPendingDiffDoc(doc);
+    setSelectedDiffReason("");
+    setDiffReasonDialogOpen(true);
+  }, []);
+
+  const finalizeShipmentExact = React.useCallback(
     async (doc: ShipmentDoc) => {
       if (doc.workflowStatus !== "assembled") return;
+      if (!canShipmentExactFinalize(doc)) return;
       if (confirmingShipmentId === doc.id) return;
       const packRowsRaw = doc?.shipments ?? [];
       const packRows = Array.isArray(packRowsRaw) ? packRowsRaw : [];
-      if (!outboundShipmentsPackedQtyPlanSatisfied(packRows)) {
-        toast.error("Нельзя подтвердить отгрузку: упакованы не все товары по плану.");
-        return;
-      }
-      const hasDiff = Number(doc.fact ?? 0) < Number(doc.planned ?? 0);
-      if (hasDiff) {
-        setPendingBulkDiffDocs([]);
-        setPendingBulkExactDocs([]);
-        setPendingDiffDoc(doc);
-        setSelectedDiffReason("");
-        setDiffReasonDialogOpen(true);
-        return;
-      }
+      if (packRows.length === 0) return;
       setConfirmingShipmentId(doc.id);
       const ts = new Date().toISOString();
       try {
@@ -996,6 +1042,13 @@ const ShippingPage = () => {
 
   const submitDiffShipmentConfirm = React.useCallback(async () => {
     if (!selectedDiffReason) return;
+    const okPrompt =
+      typeof globalThis.confirm === "function"
+        ? globalThis.confirm(
+            "Завершить отгрузку с расхождением? Статус заданий будет переведён в «Отгружено с расхождением».",
+          )
+        : true;
+    if (!okPrompt) return;
 
     const bulkDiff = Array.isArray(pendingBulkDiffDocs) ? pendingBulkDiffDocs : [];
     const bulkExact = Array.isArray(pendingBulkExactDocs) ? pendingBulkExactDocs : [];
@@ -1003,18 +1056,18 @@ const ShippingPage = () => {
     if (bulkDiff.length > 0) {
       if (bulkConfirming || bulkTakingToWork) return;
       for (const doc of bulkDiff) {
-        const bdRowsRaw = doc?.shipments ?? [];
-        const bdRows = Array.isArray(bdRowsRaw) ? bdRowsRaw : [];
-        if (!outboundShipmentsPackedQtyPlanSatisfied(bdRows)) {
-          toast.error("Нельзя подтвердить: упакованы не все товары по плану.");
+        if (shipmentDocPackedTotal(doc) <= 0) {
+          toast.error("Нельзя завершить: по заданию ничего не упаковано.");
+          return;
+        }
+        if (!canShipmentDiffFinalize(doc)) {
+          toast.error("Нельзя завершить: задание больше не подходит под завершение с расхождением.");
           return;
         }
       }
       for (const doc of bulkExact) {
-        const exRowsRaw = doc?.shipments ?? [];
-        const exRows = Array.isArray(exRowsRaw) ? exRowsRaw : [];
-        if (!outboundShipmentsPackedQtyPlanSatisfied(exRows)) {
-          toast.error("Нельзя подтвердить: упакованы не все товары по плану.");
+        if (!canShipmentExactFinalize(doc)) {
+          toast.error("Нельзя завершить: часть заданий утратила условие обычного подтверждения.");
           return;
         }
       }
@@ -1050,7 +1103,7 @@ const ShippingPage = () => {
         }
         const n = bulkDiff.length + bulkExact.length;
         for (const doc of bulkDiff) {
-          appendShipmentConfirmedLog(doc);
+          appendShipmentDiffFinishedLog(doc, selectedDiffReason);
         }
         for (const doc of bulkExact) {
           appendShipmentConfirmedLog(doc);
@@ -1069,33 +1122,38 @@ const ShippingPage = () => {
 
     if (!pendingDiffDoc || pendingDiffDoc.workflowStatus !== "assembled") return;
     if (confirmingShipmentId === pendingDiffDoc.id) return;
-    const pendRowsRaw = pendingDiffDoc?.shipments ?? [];
-    const pendRows = Array.isArray(pendRowsRaw) ? pendRowsRaw : [];
-    if (!outboundShipmentsPackedQtyPlanSatisfied(pendRows)) {
-      toast.error("Нельзя подтвердить: упакованы не все товары по плану.");
+    if (shipmentDocPackedTotal(pendingDiffDoc) <= 0) {
+      toast.error("Нельзя отгрузить: ничего не упаковано");
       return;
     }
+    if (!canShipmentDiffFinalize(pendingDiffDoc)) {
+      toast.error("Нельзя завершить отгрузку с расхождением для этого задания.");
+      return;
+    }
+    const pendRowsRaw = pendingDiffDoc?.shipments ?? [];
+    const pendRows = Array.isArray(pendRowsRaw) ? pendRowsRaw : [];
     setConfirmingShipmentId(pendingDiffDoc.id);
     const ts = new Date().toISOString();
     try {
       for (const sh of pendRows) {
         const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
-            workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
-            status: "отгружено",
-            shippedAt: ts,
-            completedAt: sh.completedAt ?? ts,
-            updatedAt: ts,
-            differenceReason: selectedDiffReason,
-          };
+          workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
+          status: "отгружено",
+          shippedAt: ts,
+          completedAt: sh.completedAt ?? ts,
+          updatedAt: ts,
+          differenceReason: selectedDiffReason,
+        };
         await updateOutboundDraft({
           id: sh.id,
           patch,
         });
       }
-      appendShipmentConfirmedLog(pendingDiffDoc);
+      appendShipmentDiffFinishedLog(pendingDiffDoc, selectedDiffReason);
       setDiffReasonDialogOpen(false);
       setPendingDiffDoc(null);
       setSelectedDiffReason("");
+      toast.success("Отгрузка завершена с расхождением");
     } finally {
       setConfirmingShipmentId(null);
     }
@@ -1109,6 +1167,7 @@ const ShippingPage = () => {
     bulkTakingToWork,
     updateOutboundDraft,
     appendShipmentConfirmedLog,
+    appendShipmentDiffFinishedLog,
   ]);
 
   const confirmBulkSelectedShipments = React.useCallback(async () => {
@@ -1121,31 +1180,26 @@ const ShippingPage = () => {
       toast.warning("Подтвердить можно только отгрузки со статусом 'Собрано'.");
     }
     if (assembled.length === 0) return;
-    const assembledEligible = assembled.filter((d) => {
-      const sr = d?.shipments ?? [];
-      const rows = Array.isArray(sr) ? sr : [];
-      return outboundShipmentsPackedQtyPlanSatisfied(rows);
-    });
-    if (assembled.length > assembledEligible.length) {
-      toast.warning("Часть заданий исключена: не все товары упакованы по плану.");
+    const stalled = assembled.filter((d) => !canShipmentExactFinalize(d) && !canShipmentDiffFinalize(d));
+    const exactEligible = assembled.filter((d) => canShipmentExactFinalize(d));
+    const diffEligible = assembled.filter((d) => canShipmentDiffFinalize(d));
+    if (stalled.length > 0) {
+      toast.warning("Часть заданий исключена: нечего отгружать (ничего не упаковано).");
     }
-    if (assembledEligible.length === 0) return;
+    if (exactEligible.length === 0 && diffEligible.length === 0) return;
     if (bulkConfirming || bulkTakingToWork) return;
-    const withDiff = assembledEligible.filter((d) => Number(d.fact ?? 0) < Number(d.planned ?? 0));
-    const withoutDiff = assembledEligible.filter((d) => Number(d.fact ?? 0) >= Number(d.planned ?? 0));
-    if (withDiff.length > 0) {
+    if (diffEligible.length > 0) {
       setPendingDiffDoc(null);
-      setPendingBulkDiffDocs(withDiff);
-      setPendingBulkExactDocs(withoutDiff);
+      setPendingBulkDiffDocs(diffEligible);
+      setPendingBulkExactDocs(exactEligible);
       setSelectedDiffReason("");
       setDiffReasonDialogOpen(true);
       return;
     }
-    if (bulkTakingToWork) return;
     setBulkConfirming(true);
     const ts = new Date().toISOString();
     try {
-      for (const doc of withoutDiff) {
+      for (const doc of exactEligible) {
         for (const sh of doc.shipments ?? []) {
           await updateOutboundDraft({
             id: sh.id,
@@ -1161,7 +1215,7 @@ const ShippingPage = () => {
         appendShipmentConfirmedLog(doc);
       }
       setSelectedShipmentIds([]);
-      toast.success("Отгрузки подтверждены", { description: `Подтверждено заданий: ${withoutDiff.length}.` });
+      toast.success("Отгрузки подтверждены", { description: `Подтверждено заданий: ${exactEligible.length}.` });
     } finally {
       setBulkConfirming(false);
     }
@@ -1792,6 +1846,17 @@ const ShippingPage = () => {
                                         {formatTaskArchiveDateLabel(outboundShipmentsShippedAtIso(doc?.shipments ?? []))}
                                       </p>
                                     </div>
+                                  ) : uiStatus === "shipped_with_diff" ? (
+                                    <div className="rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2">
+                                      <p className="text-sm font-medium text-amber-900">Отгружено с расхождением</p>
+                                      <p className="mt-1 text-xs tabular-nums text-amber-900/85">
+                                        Дата отгрузки:{" "}
+                                        {formatTaskArchiveDateLabel(outboundShipmentsShippedAtIso(doc?.shipments ?? []))}
+                                      </p>
+                                      <p className="mt-1 text-xs text-amber-900/90">
+                                        Причина: {doc.differenceReason?.trim() || "—"}
+                                      </p>
+                                    </div>
                                   ) : null}
                                   <div className="rounded-md border border-slate-200 bg-white p-3">
                                     <p className="mb-2 text-xs font-medium text-slate-600">Этапы отгрузки</p>
@@ -1938,12 +2003,16 @@ const ShippingPage = () => {
                                       <p className="text-sm text-amber-800">Причина: {doc.differenceReason || "—"}</p>
                                     </div>
                                   ) : null}
-                                  {uiStatus === "assembled" && !assemblyPackGateOk ? (
+                                  {uiStatus === "assembled" &&
+                                  !assemblyPackGateOk &&
+                                  !canShipmentDiffFinalize(doc) ? (
                                     <p className="rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs font-medium text-amber-900">
                                       Сборка завершена некорректно: не все товары упакованы
                                     </p>
                                   ) : null}
-                                  {viewMode === "archive" || uiStatus === "shipped" ? null : (
+                                  {viewMode === "archive" || uiStatus === "shipped" || uiStatus === "shipped_with_diff"
+                                    ? null
+                                    : (
                                     <div className="space-y-2">
                                       {(() => {
                                         const shipmentsRow = doc?.shipments ?? [];
@@ -1965,11 +2034,11 @@ const ShippingPage = () => {
                                             ) : null}
                                             <div className="flex flex-wrap items-center gap-2">
                                               {uiStatus === "assembled" ? (
-                                                assemblyPackGateOk ? (
+                                                canShipmentExactFinalize(doc) ? (
                                                   <Button
                                                     type="button"
                                                     size="sm"
-                                                    onClick={() => void confirmShipment(doc)}
+                                                    onClick={() => void finalizeShipmentExact(doc)}
                                                     disabled={
                                                       confirmingShipmentId === doc.id ||
                                                       isUpdatingOutboundDraft ||
@@ -1979,11 +2048,27 @@ const ShippingPage = () => {
                                                   >
                                                     Подтвердить отгрузку
                                                   </Button>
+                                                ) : canShipmentDiffFinalize(doc) ? (
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    onClick={() => openShipmentDiffFinalizeDialog(doc)}
+                                                    disabled={
+                                                      confirmingShipmentId === doc.id ||
+                                                      isUpdatingOutboundDraft ||
+                                                      bulkConfirming ||
+                                                      bulkTakingToWork ||
+                                                      Boolean(diffReasonDialogOpen)
+                                                    }
+                                                  >
+                                                    Завершить с расхождением
+                                                  </Button>
                                                 ) : (
-                                                  <p className="text-sm font-medium text-amber-800">Нельзя отгрузить: не все товары упакованы</p>
+                                                  <p className="text-sm font-medium text-amber-800">
+                                                    Нельзя отгрузить: ничего не упаковано
+                                                  </p>
                                                 )
-                                              ) : uiStatus === "shipped_with_diff" ? (
-                                                <p className="text-sm font-medium text-amber-700">Отгружено с расхождением</p>
                                               ) : isShippingTerminal(uiStatus) ? (
                                                 <Button type="button" size="sm" variant="secondary" disabled>
                                                   {uiStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
@@ -2217,11 +2302,14 @@ const ShippingPage = () => {
                 bulkConfirming ||
                 bulkTakingToWork ||
                 (pendingBulkDiffDocs.length > 0 || pendingBulkExactDocs.length > 0
-                  ? !shipmentDocsPackedGateOk(pendingBulkDiffDocs) || !shipmentDocsPackedGateOk(pendingBulkExactDocs)
+                  ? pendingBulkDiffDocs.some(
+                      (d) => shipmentDocPackedTotal(d) <= 0 || !canShipmentDiffFinalize(d),
+                    ) || pendingBulkExactDocs.some((d) => !canShipmentExactFinalize(d))
                   : !pendingDiffDoc ||
                     pendingDiffDoc.workflowStatus !== "assembled" ||
                     confirmingShipmentId === pendingDiffDoc.id ||
-                    !docShipmentsPackedGateOk(pendingDiffDoc))
+                    shipmentDocPackedTotal(pendingDiffDoc) <= 0 ||
+                    !canShipmentDiffFinalize(pendingDiffDoc))
               }
             >
               Подтвердить
