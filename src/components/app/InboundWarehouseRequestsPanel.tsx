@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
 import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
 import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
+import { parseInboundWarehousePaste } from "@/lib/inboundWarehousePasteImport";
 import { toast } from "sonner";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
@@ -352,6 +353,8 @@ const InboundWarehouseRequestsPanel = () => {
   const [plannedDate, setPlannedDate] = React.useState(() => new Date().toISOString().slice(0, 10));
   const [comment, setComment] = React.useState("");
   const [lines, setLines] = React.useState<DraftLine[]>(() => [{ key: `l-${Date.now()}`, productId: "", plannedQty: "" }]);
+  const [inboundPasteOpen, setInboundPasteOpen] = React.useState(false);
+  const [inboundPasteText, setInboundPasteText] = React.useState("");
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -421,10 +424,17 @@ const InboundWarehouseRequestsPanel = () => {
     return filtered.length > 0 ? filtered : all;
   }, [catalog, partnerId]);
 
+  const catalogIdsForInboundPaste = React.useMemo(
+    () => new Set(productsForPartner.map((p) => p.id)),
+    [productsForPartner],
+  );
+
   const resetForm = React.useCallback(() => {
     setPartnerId("");
     setPlannedDate(new Date().toISOString().slice(0, 10));
     setComment("");
+    setInboundPasteOpen(false);
+    setInboundPasteText("");
     setLines([{ key: `l-${Date.now()}`, productId: "", plannedQty: "" }]);
   }, []);
 
@@ -588,6 +598,54 @@ const InboundWarehouseRequestsPanel = () => {
     Boolean(isUpdatingWarehouseInboundPlacement) ||
     Boolean(isCompletingWarehouseInboundPlacement);
 
+  const handleInboundPasteLoad = React.useCallback(() => {
+    if (inboundPanelBusy || catalogLoading) return;
+    if (productsForPartner.length === 0) {
+      toast.error("Нет товаров в каталоге для проверки");
+      return;
+    }
+    const parsed = parseInboundWarehousePaste(inboundPasteText);
+    if (!parsed.ok) {
+      toast.error(parsed.message);
+      return;
+    }
+    if (parsed.rows.length === 0) {
+      toast.error("Нет данных для загрузки");
+      return;
+    }
+    for (const r of parsed.rows) {
+      if (!catalogIdsForInboundPaste.has(r.productId)) {
+        toast.error(`Товар не найден в каталоге: ${r.productId}`);
+        return;
+      }
+    }
+    setLines((prev) => {
+      const draft = prev.map((l) => ({ ...l }));
+      for (const { productId, qty } of parsed.rows) {
+        const idx = draft.findIndex((l) => l.productId.trim() === productId);
+        if (idx >= 0) {
+          const cur = Math.max(0, Math.trunc(Number(draft[idx].plannedQty) || 0));
+          draft[idx] = { ...draft[idx], plannedQty: String(cur + qty) };
+        } else {
+          draft.push({
+            key: `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            productId,
+            plannedQty: String(qty),
+          });
+        }
+      }
+      return draft;
+    });
+    setInboundPasteText("");
+    toast.success("Данные загружены");
+  }, [
+    inboundPasteText,
+    inboundPanelBusy,
+    catalogLoading,
+    productsForPartner.length,
+    catalogIdsForInboundPaste,
+  ]);
+
   const completeInboundPlacementFor = React.useCallback(
     async (inboundId: string) => {
       try {
@@ -650,6 +708,48 @@ const InboundWarehouseRequestsPanel = () => {
               placeholder="Необязательно"
               disabled={inboundPanelBusy || catalogLoading}
             />
+          </div>
+          <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  Одна строка — <span className="font-mono">productId,qty</span>. Пример:{" "}
+                  <span className="font-mono">SKU-001,100</span>
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={inboundPanelBusy || catalogLoading}
+                onClick={() => setInboundPasteOpen((o) => !o)}
+              >
+                Вставить данные из Excel
+              </Button>
+            </div>
+            {inboundPasteOpen ? (
+              <div className="space-y-2 pt-1">
+                <Textarea
+                  value={inboundPasteText}
+                  onChange={(e) => setInboundPasteText(e.target.value)}
+                  rows={6}
+                  placeholder={"SKU-001,100\nSKU-002,50"}
+                  disabled={inboundPanelBusy || catalogLoading}
+                  className="font-mono text-sm"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8"
+                  disabled={inboundPanelBusy || catalogLoading}
+                  onClick={handleInboundPasteLoad}
+                >
+                  Загрузить
+                </Button>
+              </div>
+            ) : null}
           </div>
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
