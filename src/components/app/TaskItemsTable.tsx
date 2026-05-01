@@ -26,6 +26,46 @@ function lineValidationBadgeLabel(v: LineValidationResult): string {
   return `Ошибка +${v.overQty}`;
 }
 
+/** Колонка «Статус» состава отгрузки: этапы подбора / упаковки (не workflow задания). */
+function outboundLineProcessBadge(row: TaskItemRow): { className: string; label: string } {
+  const plan = Math.max(0, Math.trunc(Number(row.plan ?? 0) || 0));
+  const fact = Math.max(0, Math.trunc(Number(row.fact ?? 0) || 0));
+  const packedQty = Math.max(0, Math.trunc(Number(row.shippingPackedQty ?? 0) || 0));
+
+  if (row.shippingStock?.state === "short") {
+    const shortage = Math.max(0, Math.trunc(Number(row.shippingStock.shortage) || 0));
+    return {
+      className: "bg-amber-100 text-amber-900 ring-amber-200",
+      label: shortage > 0 ? `Не хватает ${shortage}` : "Не хватает",
+    };
+  }
+
+  const validation = getLineValidation({ plannedQty: plan, factQty: fact });
+  if (validation.status === "error") {
+    return { className: lineValidationBadgeClass(validation), label: lineValidationBadgeLabel(validation) };
+  }
+
+  if (plan <= 0) {
+    return { className: "bg-slate-100 text-slate-600 ring-slate-200", label: "—" };
+  }
+
+  if (fact === 0) {
+    return { className: "bg-slate-100 text-slate-700 ring-slate-200", label: "Ожидает подбора" };
+  }
+  if (fact < plan) {
+    return { className: "bg-amber-100 text-amber-900 ring-amber-200", label: "Подобрано частично" };
+  }
+
+  // fact полностью по плану
+  if (packedQty === 0) {
+    return { className: "bg-slate-100 text-slate-700 ring-slate-200", label: "Ожидает упаковки" };
+  }
+  if (packedQty < plan) {
+    return { className: "bg-amber-100 text-amber-900 ring-amber-200", label: "Упаковано частично" };
+  }
+  return { className: "bg-emerald-100 text-emerald-800 ring-emerald-200", label: "Упаковано полностью" };
+}
+
 export type TaskItemRow = {
   id: string;
   name: string;
@@ -36,7 +76,7 @@ export type TaskItemRow = {
   size: string;
   plan: number;
   fact: number;
-  /** outboundLines: упаковано (packedQty с fallback подобрано). */
+  /** outboundLines: упаковано (packedQty ?? 0). */
   shippingPackedQty?: number;
   warehouse: string;
   status?: TaskWorkflowStatus;
@@ -112,11 +152,14 @@ export default function TaskItemsTable({
       </TableHeader>
       <TableBody>
         {rows.map((row) => {
-          const mismatch = row.plan !== row.fact;
-          const remaining = planFactRemaining(row.plan, row.fact);
-          const packedCell = outbound ? Number(row.shippingPackedQty ?? 0) : row.fact;
-          const validation = getLineValidation({ plannedQty: row.plan, factQty: row.fact });
-          const rowBg = outbound ? planFactRowBgClass(row.plan, row.fact) : mismatch ? "bg-red-50/50" : "";
+          const planN = Number(row.plan ?? 0);
+          const factN = Number(row.fact ?? 0);
+          const mismatch = planN !== factN;
+          const remaining = planFactRemaining(planN, factN);
+          const packedCell = outbound ? Number(row.shippingPackedQty ?? 0) : factN;
+          const validation = getLineValidation({ plannedQty: planN, factQty: factN });
+          const outboundBadge = outbound ? outboundLineProcessBadge(row) : null;
+          const rowBg = outbound ? planFactRowBgClass(planN, factN) : mismatch ? "bg-red-50/50" : "";
           const isFlash = highlightedRowId != null && row.id === highlightedRowId && rowHighlight != null;
           const flashClass =
             rowHighlight === "success"
@@ -132,18 +175,11 @@ export default function TaskItemsTable({
               <TableCell className="px-3 py-2">{row.marketplace || "—"}</TableCell>
               <TableCell className="px-3 py-2">{row.color || "—"}</TableCell>
               <TableCell className="px-3 py-2">{row.size || "—"}</TableCell>
-              <TableCell className="px-3 py-2 text-right tabular-nums">{row.plan}</TableCell>
-              <TableCell className="px-3 py-2 text-right tabular-nums">{row.fact}</TableCell>
+              <TableCell className="px-3 py-2 text-right tabular-nums">{planN}</TableCell>
+              <TableCell className="px-3 py-2 text-right tabular-nums">{factN}</TableCell>
               {outbound ? (
-                <TableCell className="px-3 py-2 text-right align-top tabular-nums">
+                <TableCell className="px-3 py-2 text-right tabular-nums">
                   <div>{packedCell}</div>
-                  {row.fact > 0 ? (
-                    packedCell < row.fact ? (
-                      <div className="mt-0.5 text-[10px] font-medium text-amber-800">не завершена</div>
-                    ) : (
-                      <div className="mt-0.5 text-[10px] font-medium text-emerald-700">полностью</div>
-                    )
-                  ) : null}
                 </TableCell>
               ) : null}
               {!outbound ? (
@@ -204,11 +240,19 @@ export default function TaskItemsTable({
                 </TableCell>
               ) : null}
               <TableCell className="px-3 py-2">
-                <span
-                  className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineValidationBadgeClass(validation)}`}
-                >
-                  {lineValidationBadgeLabel(validation)}
-                </span>
+                {outboundBadge ? (
+                  <span
+                    className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${outboundBadge.className}`}
+                  >
+                    {outboundBadge.label}
+                  </span>
+                ) : (
+                  <span
+                    className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineValidationBadgeClass(validation)}`}
+                  >
+                    {lineValidationBadgeLabel(validation)}
+                  </span>
+                )}
               </TableCell>
             </TableRow>
           );
