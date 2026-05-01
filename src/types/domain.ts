@@ -275,6 +275,8 @@ export type OutboundShipment = {
   /** Опционально: для архива (mock/API). */
   updatedAt?: string;
   completedAt?: string;
+  /** Момент подтверждения отгрузки (экран «Отгрузка»), ISO. */
+  shippedAt?: string;
 };
 
 /** Движение товара (остаток = сумма qty по согласованным ключам) */

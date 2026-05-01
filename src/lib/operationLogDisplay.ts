@@ -2,6 +2,7 @@
 const shortStatusByType: Record<string, string> = {
   RECEIVING_CREATED: "Создано",
   SHIPPING_CREATED: "Создано",
+  SHIPMENT_CONFIRMED: "Отгрузка",
   RECEIVING_STARTED: "В работе",
   PACKING_STARTED: "В работе",
   RECEIVING_COMPLETED: "Завершено",
@@ -28,6 +29,8 @@ export function operationLogTypeBadgeClass(type: string): string {
     case "RECEIVING_CREATED":
     case "SHIPPING_CREATED":
       return `${badgeBase} border-blue-200 bg-blue-50 text-blue-800`;
+    case "SHIPMENT_CONFIRMED":
+      return `${badgeBase} border-emerald-200 bg-emerald-50 text-emerald-900`;
     case "RECEIVING_STARTED":
     case "PACKING_STARTED":
       return `${badgeBase} border-violet-200 bg-violet-50 text-violet-800`;

@@ -119,6 +119,7 @@ type OutboundDbRow = {
   boxes: OutboundShipment["boxes"];
   active_box_id: string | null;
   created_at: string;
+  shipped_at?: string | null;
   assignment_id?: string | null;
   assignment_no?: string | null;
   import_article?: string | null;
@@ -184,6 +185,7 @@ function toDb(row: OutboundShipment): OutboundDbRow {
     boxes: row.boxes ?? [],
     active_box_id: row.activeBoxId ?? null,
     created_at: row.createdAt,
+    shipped_at: row.shippedAt ?? null,
     assignment_id: row.assignmentId ?? null,
     assignment_no: row.assignmentNo ?? null,
     import_article: row.importArticle ?? null,
@@ -227,6 +229,7 @@ function fromDb(row: OutboundDbRow & { legalEntityId?: string }): OutboundShipme
     importName: row.import_name ?? undefined,
     importSize: row.import_size ?? undefined,
     importColor: row.import_color ?? undefined,
+    shippedAt: (row.shipped_at ?? "").trim() || undefined,
     priority: parseOutboundPriority(
       (row as { priority?: unknown }).priority ??
         (row as { packing_priority?: unknown }).packing_priority ??
@@ -246,6 +249,7 @@ function stripExtendedForLegacySupabase(row: OutboundDbRow): Omit<
   | "import_size"
   | "import_color"
   | "packed_qty"
+  | "shipped_at"
 > {
   const {
     assignment_id: _a,
@@ -256,6 +260,7 @@ function stripExtendedForLegacySupabase(row: OutboundDbRow): Omit<
     import_size: _is,
     import_color: _ic,
     packed_qty: _pq,
+    shipped_at: _sa,
     ...rest
   } = row;
   return rest;

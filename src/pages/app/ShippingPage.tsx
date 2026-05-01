@@ -17,6 +17,7 @@ import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useUserRole } from "@/contexts/UserRoleContext";
 import {
+  useAppendOperationLog,
   useInventoryMovements,
   useLegalEntities,
   useLocations,
@@ -158,6 +159,19 @@ function docShipmentsPackedGateOk(doc: ShipmentDoc | null | undefined): boolean 
   const raw = doc?.shipments ?? [];
   const rows = Array.isArray(raw) ? raw : [];
   return outboundShipmentsPackedQtyPlanSatisfied(rows);
+}
+
+/** ISO момента отгрузки: max shippedAt, если все строки в финале (shipped / shipped_with_diff). */
+function outboundShipmentsShippedAtIso(shipments: OutboundShipment[] | undefined | null): string | undefined {
+  const rows = Array.isArray(shipments) ? shipments : [];
+  if (rows.length === 0) return undefined;
+  if (!rows.every((s) => s.workflowStatus === "shipped" || s.workflowStatus === "shipped_with_diff")) return undefined;
+  let max = "";
+  for (const sh of rows) {
+    const raw = (sh.shippedAt ?? "").trim();
+    if (raw && raw > max) max = raw;
+  }
+  return max || undefined;
 }
 
 function shipmentDocsPackedGateOk(docs: ShipmentDoc[] | null | undefined): boolean {
@@ -349,6 +363,7 @@ const ShippingPage = () => {
   const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
   const { data: operationLogsRaw } = useOperationLogs();
+  const appendOperationLog = useAppendOperationLog();
   const { legalEntityId } = useAppFilters();
   useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
@@ -358,7 +373,7 @@ const ShippingPage = () => {
   const [warehouseFilter, setWarehouseFilter] = React.useState("all");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
-  type ShippingQuickFilter = "all" | "problematic" | "shortage" | "shipped_with_diff" | "assembled";
+  type ShippingQuickFilter = "all" | "problematic" | "shortage" | "shipped_with_diff" | "assembled" | "shipped";
   const [shippingQuickFilter, setShippingQuickFilter] = React.useState<ShippingQuickFilter>("all");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const openTaskRowRef = React.useRef<HTMLTableRowElement | null>(null);
@@ -536,6 +551,7 @@ const ShippingPage = () => {
     let shortage = 0;
     let shippedWithDiff = 0;
     let assembled = 0;
+    let shipped = 0;
     for (const d of base) {
       const ui = shippingWorkflowFromGroup(d.shipments);
       const hasShortage = shippingStockShortageLinesForDoc(
@@ -551,6 +567,7 @@ const ShippingPage = () => {
       if (hasShortage) shortage += 1;
       if (ui === "shipped_with_diff") shippedWithDiff += 1;
       if (ui === "assembled") assembled += 1;
+      if (ui === "shipped") shipped += 1;
     }
     return {
       all: base.length,
@@ -558,6 +575,7 @@ const ShippingPage = () => {
       shortage,
       shipped_with_diff: shippedWithDiff,
       assembled,
+      shipped,
     };
   }, [documentsBeforeQuickFilter, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog]);
 
@@ -581,6 +599,7 @@ const ShippingPage = () => {
             if (shippingQuickFilter === "shortage") return hasShortage;
             if (shippingQuickFilter === "shipped_with_diff") return ui === "shipped_with_diff";
             if (shippingQuickFilter === "assembled") return ui === "assembled";
+            if (shippingQuickFilter === "shipped") return ui === "shipped";
             return true;
           });
     return [...afterQuick].sort((a, b) => {
@@ -701,6 +720,21 @@ const ShippingPage = () => {
   }, [documents, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog]);
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
+
+  const appendShipmentConfirmedLog = React.useCallback(
+    (doc: ShipmentDoc) => {
+      const leName = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
+      appendOperationLog({
+        type: "SHIPMENT_CONFIRMED",
+        legalEntityId: doc.legalEntityId,
+        legalEntityName: leName,
+        taskId: doc.id,
+        taskNumber: doc.assignmentNo,
+        description: "Отгрузка подтверждена",
+      });
+    },
+    [appendOperationLog, entities],
+  );
 
   const operationLogsList = React.useMemo(
     () => (Array.isArray(operationLogsRaw) ? operationLogsRaw : []),
@@ -912,16 +946,20 @@ const ShippingPage = () => {
             id: sh.id,
             patch: {
               workflowStatus: "shipped",
+              status: "отгружено",
+              shippedAt: ts,
               completedAt: sh.completedAt ?? ts,
               updatedAt: ts,
             },
           });
         }
+        toast.success("Отгрузка подтверждена");
+        appendShipmentConfirmedLog(doc);
       } finally {
         setConfirmingShipmentId(null);
       }
     },
-    [updateOutboundDraft, confirmingShipmentId],
+    [updateOutboundDraft, confirmingShipmentId, appendShipmentConfirmedLog],
   );
 
   const submitDiffShipmentConfirm = React.useCallback(async () => {
@@ -955,6 +993,8 @@ const ShippingPage = () => {
           for (const sh of doc.shipments ?? []) {
             const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
               workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
+              status: "отгружено",
+              shippedAt: ts,
               completedAt: sh.completedAt ?? ts,
               updatedAt: ts,
               differenceReason: selectedDiffReason,
@@ -968,6 +1008,8 @@ const ShippingPage = () => {
               id: sh.id,
               patch: {
                 workflowStatus: "shipped",
+                status: "отгружено",
+                shippedAt: ts,
                 completedAt: sh.completedAt ?? ts,
                 updatedAt: ts,
               },
@@ -975,6 +1017,12 @@ const ShippingPage = () => {
           }
         }
         const n = bulkDiff.length + bulkExact.length;
+        for (const doc of bulkDiff) {
+          appendShipmentConfirmedLog(doc);
+        }
+        for (const doc of bulkExact) {
+          appendShipmentConfirmedLog(doc);
+        }
         setDiffReasonDialogOpen(false);
         setPendingBulkDiffDocs([]);
         setPendingBulkExactDocs([]);
@@ -1001,6 +1049,8 @@ const ShippingPage = () => {
       for (const sh of pendRows) {
         const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
             workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
+            status: "отгружено",
+            shippedAt: ts,
             completedAt: sh.completedAt ?? ts,
             updatedAt: ts,
             differenceReason: selectedDiffReason,
@@ -1010,6 +1060,7 @@ const ShippingPage = () => {
           patch,
         });
       }
+      appendShipmentConfirmedLog(pendingDiffDoc);
       setDiffReasonDialogOpen(false);
       setPendingDiffDoc(null);
       setSelectedDiffReason("");
@@ -1025,6 +1076,7 @@ const ShippingPage = () => {
     bulkConfirming,
     bulkTakingToWork,
     updateOutboundDraft,
+    appendShipmentConfirmedLog,
   ]);
 
   const confirmBulkSelectedShipments = React.useCallback(async () => {
@@ -1067,18 +1119,28 @@ const ShippingPage = () => {
             id: sh.id,
             patch: {
               workflowStatus: "shipped",
+              status: "отгружено",
+              shippedAt: ts,
               completedAt: sh.completedAt ?? ts,
               updatedAt: ts,
             },
           });
         }
+        appendShipmentConfirmedLog(doc);
       }
       setSelectedShipmentIds([]);
       toast.success("Отгрузки подтверждены", { description: `Подтверждено заданий: ${withoutDiff.length}.` });
     } finally {
       setBulkConfirming(false);
     }
-  }, [selectedShipmentIds, documents, bulkConfirming, bulkTakingToWork, updateOutboundDraft]);
+  }, [
+    selectedShipmentIds,
+    documents,
+    bulkConfirming,
+    bulkTakingToWork,
+    updateOutboundDraft,
+    appendShipmentConfirmedLog,
+  ]);
 
   const takeBulkSelectedToWork = React.useCallback(async () => {
     const ids = new Set(Array.isArray(selectedShipmentIds) ? selectedShipmentIds : []);
@@ -1264,6 +1326,7 @@ const ShippingPage = () => {
                 { id: "shortage" as const, label: "Не хватает товара" },
                 { id: "shipped_with_diff" as const, label: "С расхождением" },
                 { id: "assembled" as const, label: "Готово к отгрузке" },
+                { id: "shipped" as const, label: "Отгружено" },
               ] as const
             ).map((opt) => {
               const active = shippingQuickFilter === opt.id;
@@ -1410,6 +1473,7 @@ const ShippingPage = () => {
                               uiStatus === "pending" ? "bg-blue-50/60" : "",
                               uiStatus === "assembling" ? "bg-sky-50/70" : "",
                               uiStatus === "assembled" ? "bg-emerald-50/50" : "",
+                              uiStatus === "shipped" ? "bg-emerald-50/40" : "",
                               uiStatus === "shipped_with_diff" ? "bg-amber-50/60" : "",
                               openTaskHighlightId === doc.id &&
                                 "z-[1] ring-2 ring-amber-400/50 ring-inset bg-amber-50/50",
@@ -1501,6 +1565,14 @@ const ShippingPage = () => {
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
                                     <p className="mt-1 text-sm text-slate-600">{shippingDispatcherHint(uiStatus)}</p>
                                   </div>
+                                  {uiStatus === "shipped" ? (
+                                    <div className="rounded-md border border-emerald-200 bg-emerald-50/90 px-3 py-2">
+                                      <p className="text-sm font-medium text-emerald-800">Отгрузка завершена</p>
+                                      <p className="mt-1 text-xs tabular-nums text-emerald-900/85">
+                                        Дата отгрузки: {formatTaskArchiveDateLabel(outboundShipmentsShippedAtIso(doc.shipments))}
+                                      </p>
+                                    </div>
+                                  ) : null}
                                   <div className="rounded-md border border-slate-200 bg-white p-3">
                                     <p className="mb-2 text-xs font-medium text-slate-600">Этапы отгрузки</p>
                                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1623,14 +1695,16 @@ const ShippingPage = () => {
                                       <div className={`font-medium tabular-nums ${over > 0 ? "text-red-700" : "text-slate-900"}`}>{over}</div>
                                     </div>
                                   </div>
-                                  {doc.fact > 0 &&
+                                  {!isShippingTerminal(uiStatus) &&
+                                  doc.fact > 0 &&
                                   shippingOutboundPackedQtyGateSum(doc.shipments ?? []) < Number(doc.fact ?? 0) ? (
                                     <p className="text-xs font-medium text-amber-800">Упаковка не завершена: упаковано меньше подобранного.</p>
-                                  ) : doc.fact > 0 &&
+                                  ) : !isShippingTerminal(uiStatus) &&
+                                    doc.fact > 0 &&
                                     shippingOutboundPackedQtyGateSum(doc.shipments ?? []) >= Number(doc.fact ?? 0) ? (
                                     <p className="text-xs font-medium text-emerald-800">Товар по подобранному объёму полностью упакован.</p>
                                   ) : null}
-                                  {(doc.planned > doc.fact || doc.fact > doc.planned) && (
+                                  {!isShippingTerminal(uiStatus) && (doc.planned > doc.fact || doc.fact > doc.planned) && (
                                     <div className="flex flex-wrap gap-3 text-sm">
                                       {doc.planned > doc.fact ? (
                                         <span className="font-medium text-amber-800">Осталось: {rem}</span>
@@ -1649,7 +1723,7 @@ const ShippingPage = () => {
                                       Сборка завершена некорректно: не все товары упакованы
                                     </p>
                                   ) : null}
-                                  {viewMode === "archive" ? null : (
+                                  {viewMode === "archive" || uiStatus === "shipped" ? null : (
                                     <div className="space-y-2">
                                       {(() => {
                                         const shipmentsRow = doc?.shipments ?? [];
@@ -1686,12 +1760,8 @@ const ShippingPage = () => {
                                                     Подтвердить отгрузку
                                                   </Button>
                                                 ) : (
-                                                  <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                                    Продолжить упаковку
-                                                  </Button>
+                                                  <p className="text-sm font-medium text-amber-800">Нельзя отгрузить: не все товары упакованы</p>
                                                 )
-                                              ) : uiStatus === "shipped" ? (
-                                                <p className="text-sm font-medium text-emerald-700">Отгрузка подтверждена</p>
                                               ) : uiStatus === "shipped_with_diff" ? (
                                                 <p className="text-sm font-medium text-amber-700">Отгружено с расхождением</p>
                                               ) : isShippingTerminal(uiStatus) ? (
