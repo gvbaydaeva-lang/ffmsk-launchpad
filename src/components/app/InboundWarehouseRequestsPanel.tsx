@@ -36,6 +36,7 @@ function receivingModeLabel(mode: InboundWarehouseReceivingMode): string {
 }
 
 function statusLabel(row: InboundWarehouseRequest): string {
+  if (row.status === "cancelled") return "Отменена";
   if (row.status === "placed") return "Размещено";
   if (row.status === "received") return "Принято";
   if (row.status === "receiving") return "Приёмка";
@@ -340,6 +341,9 @@ const InboundWarehouseRequestsPanel = () => {
     completeWarehouseInboundPlacement,
     isCompletingWarehouseInboundPlacement,
     completingWarehouseInboundPlacementId,
+    cancelWarehouseInbound,
+    isCancellingWarehouseInbound,
+    cancellingWarehouseInboundId,
   } = useWarehouseInboundRequests();
 
   const [modeDialogInboundId, setModeDialogInboundId] = React.useState<string | null>(null);
@@ -472,6 +476,46 @@ const InboundWarehouseRequestsPanel = () => {
     }
   };
 
+  /** Любая исходящая мутация по конкретной заявке — отмена для неё недоступна. */
+  const inboundRowMutationPending = React.useCallback(
+    (rowId: string) =>
+      Boolean(
+        (isStartingInboundReceiving && startingInboundReceivingVars?.id === rowId) ||
+          (isCancellingWarehouseInbound && cancellingWarehouseInboundId === rowId) ||
+          (isUpdatingInboundReceivedQty && updatingInboundReceivedVars?.inboundId === rowId) ||
+          (isCompletingWarehouseInboundReceiving && completingWarehouseInboundId === rowId) ||
+          (isUpdatingWarehouseInboundPlacement && updatingWarehouseInboundPlacementVars?.inboundId === rowId) ||
+          (isCompletingWarehouseInboundPlacement && completingWarehouseInboundPlacementId === rowId),
+      ),
+    [
+      isStartingInboundReceiving,
+      startingInboundReceivingVars?.id,
+      isCancellingWarehouseInbound,
+      cancellingWarehouseInboundId,
+      isUpdatingInboundReceivedQty,
+      updatingInboundReceivedVars?.inboundId,
+      isCompletingWarehouseInboundReceiving,
+      completingWarehouseInboundId,
+      isUpdatingWarehouseInboundPlacement,
+      updatingWarehouseInboundPlacementVars?.inboundId,
+      isCompletingWarehouseInboundPlacement,
+      completingWarehouseInboundPlacementId,
+    ],
+  );
+
+  const cancelInboundFor = React.useCallback(
+    async (inboundId: string) => {
+      try {
+        await cancelWarehouseInbound(inboundId);
+        toast.success("Приёмка отменена");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Не удалось отменить приёмку";
+        toast.error(msg);
+      }
+    },
+    [cancelWarehouseInbound],
+  );
+
   const rowReceivingBusy = (rowId: string) =>
     isStartingInboundReceiving && startingInboundReceivingVars?.id === rowId;
 
@@ -538,6 +582,7 @@ const InboundWarehouseRequestsPanel = () => {
   const inboundPanelBusy =
     Boolean(isPostingInbounds) ||
     Boolean(isStartingInboundReceiving) ||
+    Boolean(isCancellingWarehouseInbound) ||
     Boolean(isUpdatingInboundReceivedQty) ||
     Boolean(isCompletingWarehouseInboundReceiving) ||
     Boolean(isUpdatingWarehouseInboundPlacement) ||
@@ -741,7 +786,9 @@ const InboundWarehouseRequestsPanel = () => {
                                   ? "border-emerald-200 bg-emerald-50 text-emerald-900"
                                   : row.status === "receiving"
                                     ? "border-violet-200 bg-violet-50 text-violet-900"
-                                    : "border-slate-200 bg-slate-50 text-slate-700"
+                                    : row.status === "cancelled"
+                                      ? "border-rose-200 bg-rose-50 text-rose-900"
+                                      : "border-slate-200 bg-slate-50 text-slate-700"
                             }`}
                           >
                             {statusLabel(row)}
@@ -756,25 +803,60 @@ const InboundWarehouseRequestsPanel = () => {
                         <TableCell className="text-right tabular-nums text-sm">{row.items.length}</TableCell>
                         <TableCell>
                           {row.status === "new" ? (
+                            <div className="flex flex-wrap gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                className="h-8"
+                                disabled={rowReceivingBusy(row.id) || inboundPanelBusy}
+                                onClick={() => setModeDialogInboundId(row.id)}
+                              >
+                                {rowReceivingBusy(row.id) ? "Запрос…" : "Начать приёмку"}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8"
+                                disabled={inboundRowMutationPending(row.id)}
+                                onClick={() => void cancelInboundFor(row.id)}
+                              >
+                                {isCancellingWarehouseInbound && cancellingWarehouseInboundId === row.id
+                                  ? "Отмена…"
+                                  : "Отменить приёмку"}
+                              </Button>
+                            </div>
+                          ) : row.status === "receiving" ? (
                             <Button
                               type="button"
                               size="sm"
-                              variant="secondary"
+                              variant="outline"
                               className="h-8"
-                              disabled={rowReceivingBusy(row.id) || inboundPanelBusy}
-                              onClick={() => setModeDialogInboundId(row.id)}
+                              disabled={inboundRowMutationPending(row.id)}
+                              onClick={() => void cancelInboundFor(row.id)}
                             >
-                              {rowReceivingBusy(row.id) ? "Запрос…" : "Начать приёмку"}
+                              {isCancellingWarehouseInbound && cancellingWarehouseInboundId === row.id
+                                ? "Отмена…"
+                                : "Отменить приёмку"}
                             </Button>
                           ) : (
                             <span className="text-xs text-slate-400">—</span>
                           )}
                         </TableCell>
                       </TableRow>
-                      {row.status === "receiving" || row.status === "received" || row.status === "placed" ? (
+                      {row.status === "receiving" ||
+                      row.status === "received" ||
+                      row.status === "placed" ||
+                      row.status === "cancelled" ? (
                         <TableRow className="border-t-0 bg-slate-50/70 hover:bg-slate-50/70">
                           <TableCell colSpan={7} className="p-0 align-top">
                             <div className="space-y-2 p-3">
+                              {row.status === "cancelled" ? (
+                                <div className="rounded-md border border-rose-100 bg-rose-50/80 px-3 py-2 text-sm text-rose-900">
+                                  Приёмка отменена. Действия недоступны.
+                                </div>
+                              ) : null}
                               {row.status === "received" ? (
                                 <div className="space-y-1">
                                   <p className="text-xs text-slate-600">
@@ -803,7 +885,7 @@ const InboundWarehouseRequestsPanel = () => {
                                     </p>
                                   ) : null}
                                 </div>
-                              ) : (
+                              ) : row.status === "receiving" ? (
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <p className="text-xs text-slate-600">
                                     Внесите факт по строкам. По завершении создаются движения приёмки в зону приёмки. Если
@@ -824,38 +906,66 @@ const InboundWarehouseRequestsPanel = () => {
                                     {completeReceivingBusy(row.id) ? "Завершение…" : "Завершить приёмку"}
                                   </Button>
                                 </div>
+                              ) : null}
+                              {row.status !== "cancelled" ? (
+                                <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow className="bg-slate-50/90">
+                                        <TableHead className="text-xs font-semibold">Товар</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">План</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">Принято</TableHead>
+                                        <TableHead className="text-xs font-semibold">
+                                          {row.status === "receiving" ? "Изменить факт" : "Факт"}
+                                        </TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">Факт / план</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {row.items.map((item) => (
+                                        <InboundReceivingQtyRow
+                                          key={item.id}
+                                          item={item}
+                                          productName={productDisplayName(item.productId)}
+                                          editable={row.status === "receiving"}
+                                          disabled={
+                                            inboundPanelBusy ||
+                                            lineReceivedQtyBusy(row.id, item.id) ||
+                                            completeReceivingBusy(row.id)
+                                          }
+                                          onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
+                                        />
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              ) : (
+                                <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow className="bg-slate-50/90">
+                                        <TableHead className="text-xs font-semibold">Товар</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">План</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">Принято</TableHead>
+                                        <TableHead className="text-xs font-semibold">Факт</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">Факт / план</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {row.items.map((item) => (
+                                        <InboundReceivingQtyRow
+                                          key={item.id}
+                                          item={item}
+                                          productName={productDisplayName(item.productId)}
+                                          editable={false}
+                                          disabled
+                                          onSave={async () => {}}
+                                        />
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
                               )}
-                              <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow className="bg-slate-50/90">
-                                      <TableHead className="text-xs font-semibold">Товар</TableHead>
-                                      <TableHead className="text-right text-xs font-semibold">План</TableHead>
-                                      <TableHead className="text-right text-xs font-semibold">Принято</TableHead>
-                                      <TableHead className="text-xs font-semibold">
-                                        {row.status === "receiving" ? "Изменить факт" : "Факт"}
-                                      </TableHead>
-                                      <TableHead className="text-right text-xs font-semibold">Факт / план</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {row.items.map((item) => (
-                                      <InboundReceivingQtyRow
-                                        key={item.id}
-                                        item={item}
-                                        productName={productDisplayName(item.productId)}
-                                        editable={row.status === "receiving"}
-                                        disabled={
-                                          inboundPanelBusy ||
-                                          lineReceivedQtyBusy(row.id, item.id) ||
-                                          completeReceivingBusy(row.id)
-                                        }
-                                        onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
-                                      />
-                                    ))}
-                                  </TableBody>
-                                </Table>
-                              </div>
                               {row.status === "received" || row.status === "placed" ? (
                                 <div className="space-y-3 pt-2">
                                   <div>

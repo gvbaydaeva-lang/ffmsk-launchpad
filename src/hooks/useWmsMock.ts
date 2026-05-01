@@ -49,6 +49,7 @@ import {
   fetchInboundsWarehouseRequests,
   postInboundWarehouseRequest,
   startInboundReceiving,
+  cancelInbound,
   completeInboundReceiving,
   updateInboundReceivedQty,
   updateInboundPlacement,
@@ -636,6 +637,13 @@ export function useWarehouseInboundRequests() {
     },
   });
 
+  const cancelWarehouseInboundMut = useMutation({
+    mutationFn: (inboundId: string) => cancelInbound(inboundId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
+    },
+  });
+
   const updateReceived = useMutation({
     mutationFn: (vars: { inboundId: string; itemId: string; receivedQty: number }) =>
       updateInboundReceivedQty(vars.inboundId, vars.itemId, vars.receivedQty),
@@ -676,6 +684,9 @@ export function useWarehouseInboundRequests() {
     startInboundReceiving: startReceiving.mutateAsync,
     isStartingInboundReceiving: startReceiving.isPending,
     startingInboundReceivingVars: startReceiving.variables,
+    cancelWarehouseInbound: cancelWarehouseInboundMut.mutateAsync,
+    isCancellingWarehouseInbound: cancelWarehouseInboundMut.isPending,
+    cancellingWarehouseInboundId: cancelWarehouseInboundMut.variables,
     updateInboundReceivedQty: updateReceived.mutateAsync,
     isUpdatingInboundReceivedQty: updateReceived.isPending,
     updatingInboundReceivedVars: updateReceived.variables,

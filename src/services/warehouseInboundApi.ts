@@ -52,13 +52,15 @@ export const WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID = "RECEIVING_AREA";
 
 function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): InboundWarehouseRequest {
   const status: InboundWarehouseRequestStatus =
-    raw.status === "placed"
-      ? "placed"
-      : raw.status === "received"
-        ? "received"
-        : raw.status === "receiving"
-          ? "receiving"
-          : "new";
+    raw.status === "cancelled"
+      ? "cancelled"
+      : raw.status === "placed"
+        ? "placed"
+        : raw.status === "received"
+          ? "received"
+          : raw.status === "receiving"
+            ? "receiving"
+            : "new";
   let receivingMode: InboundWarehouseReceivingMode | null = null;
   if (raw.receivingMode === "manual" || raw.receivingMode === "scan") {
     receivingMode = raw.receivingMode;
@@ -166,6 +168,33 @@ function validatePayload(body: PostInboundsPayload): void {
   }
 }
 
+/** Отмена приёмки без движений и откатов; только «Новая» / «Приёмка». Идемпотентно для «Отменена». */
+export async function cancelInbound(inboundId: string): Promise<InboundWarehouseRequest> {
+  await delay(85);
+  const rows = readStored();
+  const idx = rows.findIndex((r) => r.id === inboundId);
+  if (idx < 0) throw new Error("Заявка не найдена");
+  const row = rows[idx];
+  if (row.status === "cancelled") {
+    return row;
+  }
+  if (row.status === "received" || row.status === "placed") {
+    throw new Error("Нельзя отменить заявку после завершения приёмки или размещения");
+  }
+  if (row.status !== "new" && row.status !== "receiving") {
+    throw new Error("Отмена доступна только для заявок в статусах «Новая» или «Приёмка»");
+  }
+  const updated: InboundWarehouseRequest = {
+    ...row,
+    status: "cancelled",
+    receivingMode: null,
+  };
+  const next = [...rows];
+  next[idx] = updated;
+  writeStored(next);
+  return updated;
+}
+
 /** старт операции приёмки по заявке (демо backend) */
 export async function startInboundReceiving(id: string, mode: InboundWarehouseReceivingMode): Promise<InboundWarehouseRequest> {
   if (mode !== "manual" && mode !== "scan") {
@@ -176,6 +205,9 @@ export async function startInboundReceiving(id: string, mode: InboundWarehouseRe
   const idx = rows.findIndex((r) => r.id === id);
   if (idx < 0) throw new Error("Заявка не найдена");
   const row = rows[idx];
+  if (row.status === "cancelled") {
+    throw new Error("Заявка отменена");
+  }
   if (row.status !== "new") {
     throw new Error("Приёмку можно начать только для заявки в статусе «Новая»");
   }
@@ -205,6 +237,9 @@ export async function updateInboundReceivedQty(
   const idx = rows.findIndex((r) => r.id === inboundId);
   if (idx < 0) throw new Error("Заявка не найдена");
   const row = rows[idx];
+  if (row.status === "cancelled") {
+    throw new Error("Заявка отменена");
+  }
   if (row.status !== "receiving") {
     throw new Error("Факт можно вносить только для заявки в статусе «Приёмка»");
   }
@@ -230,6 +265,9 @@ export async function completeInboundReceiving(inboundId: string): Promise<Inbou
   const idx = rows.findIndex((r) => r.id === inboundId);
   if (idx < 0) throw new Error("Заявка не найдена");
   const row = rows[idx];
+  if (row.status === "cancelled") {
+    throw new Error("Заявка отменена");
+  }
   if (row.status !== "receiving") {
     throw new Error('Завершить можно только заявку в статусе «Приёмка»');
   }
@@ -373,6 +411,9 @@ export async function updateInboundPlacement(
   if (row.status === "placed") {
     throw new Error("Заявка уже размещена, изменения недоступны");
   }
+  if (row.status === "cancelled") {
+    throw new Error("Заявка отменена");
+  }
   if (row.status !== "received") {
     throw new Error("Размещение можно вносить только для заявки в статусе «Принято»");
   }
@@ -412,6 +453,9 @@ export async function completeInboundPlacement(inboundId: string): Promise<Inbou
   const row = rows[idx];
   if (row.status === "placed") {
     throw new Error("Размещение уже завершено");
+  }
+  if (row.status === "cancelled") {
+    throw new Error("Заявка отменена");
   }
   if (row.status !== "received") {
     throw new Error("Завершить размещение можно только для заявки в статусе «Принято»");
