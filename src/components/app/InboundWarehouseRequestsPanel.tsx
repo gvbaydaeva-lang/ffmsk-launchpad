@@ -21,8 +21,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
 import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
 import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
+import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
 import { parseInboundWarehousePaste, resolveInboundPasteCodeToProductId } from "@/lib/inboundWarehousePasteImport";
 import { toast } from "sonner";
+import type { ProductCatalogItem } from "@/types/domain";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
 
@@ -46,6 +48,55 @@ function statusLabel(row: InboundWarehouseRequest): string {
 
 function sumPlacementsQty(item: InboundWarehouseItem): number {
   return item.placements.reduce((s, p) => s + Math.max(0, Math.trunc(Number(p.qty) || 0)), 0);
+}
+
+function mergeResolvedInboundPasteIntoLines(
+  setLinesInner: React.Dispatch<React.SetStateAction<DraftLine[]>>,
+  resolved: { productId: string; qty: number }[],
+) {
+  setLinesInner((prev) => {
+    const draft = prev.map((l) => ({ ...l }));
+    for (const { productId, qty } of resolved) {
+      const idx = draft.findIndex((l) => l.productId.trim() === productId);
+      if (idx >= 0) {
+        const cur = Math.max(0, Math.trunc(Number(draft[idx].plannedQty) || 0));
+        draft[idx] = { ...draft[idx], plannedQty: String(cur + qty) };
+      } else {
+        draft.push({
+          key: `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          productId,
+          plannedQty: String(qty),
+        });
+      }
+    }
+    return draft;
+  });
+}
+
+/** Одна точка входа для вставки и файла — без дублирования parse/resolve/setLines */
+function resolveAndApplyInboundImport(
+  rawText: string,
+  productsForPartner: ProductCatalogItem[],
+  setLinesInner: React.Dispatch<React.SetStateAction<DraftLine[]>>,
+): { ok: true } | { ok: false; message: string } {
+  const parsed = parseInboundWarehousePaste(rawText.trim());
+  if (!parsed.ok) {
+    return { ok: false, message: parsed.message };
+  }
+  if (parsed.rows.length === 0) {
+    return { ok: false, message: "Нет данных для загрузки" };
+  }
+  const resolved: { productId: string; qty: number }[] = [];
+  for (let i = 0; i < parsed.rows.length; i += 1) {
+    const row = parsed.rows[i];
+    const match = resolveInboundPasteCodeToProductId(row.code, productsForPartner);
+    if (!match.ok) {
+      return { ok: false, message: `Строка ${i + 1}: ${match.message}` };
+    }
+    resolved.push({ productId: match.productId, qty: row.qty });
+  }
+  mergeResolvedInboundPasteIntoLines(setLinesInner, resolved);
+  return { ok: true };
 }
 
 function isInboundPlacementFullyDistributed(row: InboundWarehouseRequest): boolean {
@@ -355,6 +406,7 @@ const InboundWarehouseRequestsPanel = () => {
   const [lines, setLines] = React.useState<DraftLine[]>(() => [{ key: `l-${Date.now()}`, productId: "", plannedQty: "" }]);
   const [inboundPasteOpen, setInboundPasteOpen] = React.useState(false);
   const [inboundPasteText, setInboundPasteText] = React.useState("");
+  const inboundFileInputRef = React.useRef<HTMLInputElement>(null);
 
   const entityName = React.useCallback(
     (id: string) => entities?.find((e) => e.id === id)?.shortName ?? id,
@@ -599,45 +651,40 @@ const InboundWarehouseRequestsPanel = () => {
       toast.error("Нет товаров в каталоге для проверки");
       return;
     }
-    const parsed = parseInboundWarehousePaste(inboundPasteText);
-    if (!parsed.ok) {
-      toast.error(parsed.message);
+    const applied = resolveAndApplyInboundImport(inboundPasteText, productsForPartner, setLines);
+    if (!applied.ok) {
+      toast.error(applied.message);
       return;
     }
-    if (parsed.rows.length === 0) {
-      toast.error("Нет данных для загрузки");
-      return;
-    }
-    const resolved: { productId: string; qty: number }[] = [];
-    for (let i = 0; i < parsed.rows.length; i += 1) {
-      const row = parsed.rows[i];
-      const match = resolveInboundPasteCodeToProductId(row.code, productsForPartner);
-      if (!match.ok) {
-        toast.error(`Строка ${i + 1}: ${match.message}`);
-        return;
-      }
-      resolved.push({ productId: match.productId, qty: row.qty });
-    }
-    setLines((prev) => {
-      const draft = prev.map((l) => ({ ...l }));
-      for (const { productId, qty } of resolved) {
-        const idx = draft.findIndex((l) => l.productId.trim() === productId);
-        if (idx >= 0) {
-          const cur = Math.max(0, Math.trunc(Number(draft[idx].plannedQty) || 0));
-          draft[idx] = { ...draft[idx], plannedQty: String(cur + qty) };
-        } else {
-          draft.push({
-            key: `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            productId,
-            plannedQty: String(qty),
-          });
-        }
-      }
-      return draft;
-    });
     setInboundPasteText("");
     toast.success("Данные загружены");
   }, [inboundPasteText, inboundPanelBusy, catalogLoading, productsForPartner]);
+
+  const handleInboundExcelFileChange = React.useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const file = input.files?.[0];
+      input.value = "";
+      if (!file) return;
+      if (inboundPanelBusy || catalogLoading) return;
+      if (productsForPartner.length === 0) {
+        toast.error("Нет товаров в каталоге для проверки");
+        return;
+      }
+      const prep = await inboundImportFileToPasteText(file);
+      if (!prep.ok) {
+        toast.error(prep.message);
+        return;
+      }
+      const applied = resolveAndApplyInboundImport(prep.text, productsForPartner, setLines);
+      if (!applied.ok) {
+        toast.error(applied.message);
+        return;
+      }
+      toast.success("Файл загружен");
+    },
+    [inboundPanelBusy, catalogLoading, productsForPartner],
+  );
 
   const completeInboundPlacementFor = React.useCallback(
     async (inboundId: string) => {
@@ -707,21 +754,42 @@ const InboundWarehouseRequestsPanel = () => {
               <div className="min-w-0">
                 <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая).
-                  Можно также указать внутренний код товара из каталога. Пример:{" "}
-                  <span className="font-mono">WB-A-10452,120</span> или <span className="font-mono">4601234567890,48</span>
+                  Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая)
+                  или те же два столбца в файле <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
+                  (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
+                  <span className="font-mono">WB-A-10452,120</span>
                 </p>
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="h-8 shrink-0"
-                disabled={inboundPanelBusy || catalogLoading}
-                onClick={() => setInboundPasteOpen((o) => !o)}
-              >
-                Вставить данные из Excel
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={inboundFileInputRef}
+                  type="file"
+                  accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                  className="sr-only"
+                  aria-label="Выбор файла .xlsx или .csv для импорта позиций приёмки"
+                  onChange={(ev) => void handleInboundExcelFileChange(ev)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  disabled={inboundPanelBusy || catalogLoading}
+                  onClick={() => inboundFileInputRef.current?.click()}
+                >
+                  Загрузить файл Excel
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  disabled={inboundPanelBusy || catalogLoading}
+                  onClick={() => setInboundPasteOpen((o) => !o)}
+                >
+                  Вставить данные из Excel
+                </Button>
+              </div>
             </div>
             {inboundPasteOpen ? (
               <div className="space-y-2 pt-1">
