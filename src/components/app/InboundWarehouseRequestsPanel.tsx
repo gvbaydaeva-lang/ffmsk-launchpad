@@ -22,9 +22,18 @@ import { useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundR
 import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
 import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
 import WarehouseImportPreviewPanel from "@/components/app/WarehouseImportPreviewPanel";
+import {
+  WarehouseImportExcelDescription,
+  WAREHOUSE_IMPORT_BTN_CHECK,
+  WAREHOUSE_IMPORT_TEXTAREA_PLACEHOLDER,
+} from "@/components/app/WarehouseImportExcelDescription";
 import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
 import { downloadWarehouseImportTemplateXlsx } from "@/lib/warehouseImportTemplateXlsx";
-import { inspectWarehouseImportPaste, mergeInboundImportDraftLines } from "@/lib/warehouseImportPaste";
+import {
+  inspectWarehouseImportPaste,
+  mergeInboundImportDraftLines,
+  warehouseImportInspectionFromMessage,
+} from "@/lib/warehouseImportPaste";
 import type { WarehouseImportInspectionResult } from "@/lib/warehouseImportPaste";
 import { toast } from "sonner";
 
@@ -360,6 +369,7 @@ const InboundWarehouseRequestsPanel = () => {
   const [inboundPasteOpen, setInboundPasteOpen] = React.useState(false);
   const [inboundPasteText, setInboundPasteText] = React.useState("");
   const inboundFileInputRef = React.useRef<HTMLInputElement>(null);
+  const inboundApplyImportLockedRef = React.useRef(false);
   const [inboundImportPreview, setInboundImportPreview] = React.useState<WarehouseImportInspectionResult | null>(null);
 
   React.useEffect(() => {
@@ -614,14 +624,22 @@ const InboundWarehouseRequestsPanel = () => {
   }, [inboundPasteText, inboundPanelBusy, catalogLoading, productsForPartner]);
 
   const applyInboundImportFromPreview = React.useCallback(() => {
+    if (inboundApplyImportLockedRef.current) return;
     const preview = inboundImportPreview;
     if (!preview || preview.errors.length > 0 || preview.resolvedRows.length === 0) return;
     if (inboundPanelBusy || catalogLoading) return;
-    setLines((prev) => mergeInboundImportDraftLines(prev, preview.resolvedRows));
-    setInboundImportPreview(null);
-    setInboundPasteText("");
-    setInboundPasteOpen(false);
-    toast.success("Данные загружены");
+    inboundApplyImportLockedRef.current = true;
+    try {
+      setLines((prev) => mergeInboundImportDraftLines(prev, preview.resolvedRows));
+      setInboundImportPreview(null);
+      setInboundPasteText("");
+      setInboundPasteOpen(false);
+      toast.success("Данные загружены");
+    } finally {
+      queueMicrotask(() => {
+        inboundApplyImportLockedRef.current = false;
+      });
+    }
   }, [inboundImportPreview, inboundPanelBusy, catalogLoading]);
 
   const handleInboundExcelFileChange = React.useCallback(
@@ -637,7 +655,11 @@ const InboundWarehouseRequestsPanel = () => {
       }
       const prep = await inboundImportFileToPasteText(file);
       if (!prep.ok) {
-        toast.error(prep.message);
+        setInboundPasteText("");
+        setInboundPasteOpen(true);
+        setInboundImportPreview(
+          warehouseImportInspectionFromMessage(prep.message, prep.fileRowNumber ?? 0),
+        );
         return;
       }
       setInboundPasteText(prep.text);
@@ -713,13 +735,18 @@ const InboundWarehouseRequestsPanel = () => {
           <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
             <div className="min-w-0 space-y-2">
               <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
-              <p className="text-xs text-slate-600">
-                Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span> (разделитель — запятая)
-                или те же два столбца в файле <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
-                (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
-                <span className="font-mono">WB-A-10452,120</span>
-              </p>
+              <WarehouseImportExcelDescription />
               <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  disabled={inboundPanelBusy || catalogLoading}
+                  onClick={() => downloadWarehouseImportTemplateXlsx("inbound")}
+                >
+                  Скачать шаблон
+                </Button>
                 <input
                   ref={inboundFileInputRef}
                   type="file"
@@ -748,15 +775,6 @@ const InboundWarehouseRequestsPanel = () => {
                 >
                   Вставить данные из Excel
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 shrink-0 text-slate-700"
-                  onClick={() => downloadWarehouseImportTemplateXlsx("inbound")}
-                >
-                  Скачать шаблон
-                </Button>
               </div>
             </div>
             {inboundPasteOpen ? (
@@ -768,7 +786,7 @@ const InboundWarehouseRequestsPanel = () => {
                     setInboundImportPreview(null);
                   }}
                   rows={6}
-                  placeholder={"WB-A-10452, 120\n4601234567890, 48"}
+                  placeholder={WAREHOUSE_IMPORT_TEXTAREA_PLACEHOLDER}
                   disabled={inboundPanelBusy || catalogLoading}
                   className="font-mono text-sm"
                 />
@@ -779,7 +797,7 @@ const InboundWarehouseRequestsPanel = () => {
                   disabled={inboundPanelBusy || catalogLoading}
                   onClick={runInboundImportInspection}
                 >
-                  Проверить
+                  {WAREHOUSE_IMPORT_BTN_CHECK}
                 </Button>
               </div>
             ) : null}

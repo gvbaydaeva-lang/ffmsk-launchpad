@@ -14,7 +14,8 @@ function cellToTrimmedString(cell: unknown): string {
  * Колонка A — код, B — количество. Пустые строки пропускаются.
  */
 export async function inboundImportFileToPasteText(file: File): Promise<
-  { ok: true; text: string } | { ok: false; message: string }
+  | { ok: true; text: string }
+  | { ok: false; message: string; fileRowNumber?: number }
 > {
   const name = file.name?.toLowerCase() ?? "";
   if (!name.endsWith(".xlsx") && !name.endsWith(".csv")) {
@@ -60,19 +61,24 @@ export async function inboundImportFileToPasteText(file: File): Promise<
     const qtyRaw = row[1];
     const qtyStr = cellToTrimmedString(qtyRaw);
     if (qtyStr === "") {
-      return { ok: false, message: `В файле строка ${i + 1}: заполните количество во второй колонке` };
+      return {
+        ok: false,
+        message: "Заполните количество во второй колонке",
+        fileRowNumber: i + 1,
+      };
     }
     if (code.includes(",")) {
       return {
         ok: false,
-        message: `В файле строка ${i + 1}: код не должен содержать запятую (используйте два столбца)`,
+        message: "Код не должен содержать запятую (используйте два столбца)",
+        fileRowNumber: i + 1,
       };
     }
     outLines.push(`${code},${qtyStr}`);
   }
 
   if (outLines.length === 0) {
-    return { ok: false, message: "В файле нет строк с кодом и количеством" };
+    return { ok: false, message: "Нет данных для загрузки" };
   }
 
   return { ok: true, text: outLines.join("\n") };

@@ -14,6 +14,19 @@ export type WarehouseImportInspectionResult = {
   resolvedRows: ResolvedWarehouseImportRow[];
 };
 
+/** Превью с одной ошибкой (напр. ошибка чтения файла) — только для UI, без применения строк. */
+export function warehouseImportInspectionFromMessage(message: string, lineNumber = 0): WarehouseImportInspectionResult {
+  return {
+    recognizedStructuralLines: 0,
+    matchedProductsCount: 0,
+    errors: [{ lineNumber, message }],
+    resolvedRows: [],
+  };
+}
+
+/** Сообщение для пустого ввода / пустого файла без строк данных */
+export const WAREHOUSE_IMPORT_NO_DATA_MESSAGE = "Нет данных для загрузки";
+
 /**
  * Полная построчная проверка: формат строки и сопоставление с каталогом (общая точка для приёмки и отгрузки).
  */
@@ -46,7 +59,7 @@ export function inspectWarehouseImportPaste(
   }
 
   if (recognizedStructuralLines === 0 && errors.length === 0) {
-    errors.push({ lineNumber: 0, message: "Нет строк с данными для импорта" });
+    errors.push({ lineNumber: 0, message: WAREHOUSE_IMPORT_NO_DATA_MESSAGE });
   }
 
   return {

@@ -13,6 +13,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import WarehouseImportPreviewPanel from "@/components/app/WarehouseImportPreviewPanel";
+import {
+  WarehouseImportExcelDescription,
+  WAREHOUSE_IMPORT_BTN_CHECK,
+  WAREHOUSE_IMPORT_TEXTAREA_PLACEHOLDER,
+} from "@/components/app/WarehouseImportExcelDescription";
 import TaskItemsTable, { type TaskItemRow } from "@/components/app/TaskItemsTable";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -61,6 +66,7 @@ import {
   type ResolvedWarehouseImportRow,
   inspectWarehouseImportPaste,
   type WarehouseImportInspectionResult,
+  warehouseImportInspectionFromMessage,
 } from "@/lib/warehouseImportPaste";
 import { downloadWarehouseImportTemplateXlsx } from "@/lib/warehouseImportTemplateXlsx";
 import {
@@ -542,6 +548,7 @@ const ShippingPage = () => {
   const [shippingImportPasteOpen, setShippingImportPasteOpen] = React.useState(false);
   const [shippingImportPasteText, setShippingImportPasteText] = React.useState("");
   const [shippingImportPreview, setShippingImportPreview] = React.useState<WarehouseImportInspectionResult | null>(null);
+  const shippingApplyImportLockedRef = React.useRef(false);
 
   React.useEffect(() => {
     setShippingImportPasteOpen(false);
@@ -1253,7 +1260,11 @@ const ShippingPage = () => {
       }
       const prep = await inboundImportFileToPasteText(file);
       if (!prep.ok) {
-        toast.error(prep.message);
+        setShippingImportPasteText("");
+        setShippingImportPasteOpen(true);
+        setShippingImportPreview(
+          warehouseImportInspectionFromMessage(prep.message, prep.fileRowNumber ?? 0),
+        );
         return;
       }
       setShippingImportPasteText(prep.text);
@@ -1265,6 +1276,7 @@ const ShippingPage = () => {
 
   const handleShippingApplyImportPreview = React.useCallback(
     async (doc: ShipmentDoc) => {
+      if (shippingApplyImportLockedRef.current) return;
       if (shippingDispatchActionsGloballyBusy) return;
       const preview = shippingImportPreview;
       if (!preview || preview.errors.length > 0 || preview.resolvedRows.length === 0) return;
@@ -1273,11 +1285,16 @@ const ShippingPage = () => {
         toast.error(blocked);
         return;
       }
-      const ok = await applyOutboundImportResolved(doc, preview.resolvedRows);
-      if (ok) {
-        setShippingImportPreview(null);
-        setShippingImportPasteText("");
-        toast.success("Данные загружены");
+      shippingApplyImportLockedRef.current = true;
+      try {
+        const ok = await applyOutboundImportResolved(doc, preview.resolvedRows);
+        if (ok) {
+          setShippingImportPreview(null);
+          setShippingImportPasteText("");
+          toast.success("Данные загружены");
+        }
+      } finally {
+        shippingApplyImportLockedRef.current = false;
       }
     },
     [shippingDispatchActionsGloballyBusy, shippingImportPreview, applyOutboundImportResolved],
@@ -2776,9 +2793,10 @@ const ShippingPage = () => {
                                         <p className="mt-1 text-xs text-slate-600">{shippingExcelImportBlocked}</p>
                                         <Button
                                           type="button"
-                                          variant="ghost"
+                                          variant="outline"
                                           size="sm"
-                                          className="mt-2 h-8 px-0 text-slate-700"
+                                          className="mt-2 h-8 shrink-0"
+                                          disabled={shippingDispatchActionsGloballyBusy}
                                           onClick={() => downloadWarehouseImportTemplateXlsx("outbound")}
                                         >
                                           Скачать шаблон
@@ -2788,14 +2806,18 @@ const ShippingPage = () => {
                                       <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
                                         <div className="min-w-0 space-y-2">
                                           <Label className="text-sm font-medium text-slate-900">Импорт из Excel</Label>
-                                          <p className="text-xs text-slate-600">
-                                            Каждая строка — <span className="font-medium">артикул или штрихкод, количество</span>{" "}
-                                            (разделитель — запятая) или те же два столбца в файле{" "}
-                                            <span className="font-mono">.xlsx</span> / <span className="font-mono">.csv</span>{" "}
-                                            (лист 1). Можно также внутренний код товара из каталога. Пример:{" "}
-                                            <span className="font-mono">WB-A-10452,120</span>
-                                          </p>
+                                          <WarehouseImportExcelDescription />
                                           <div className="flex flex-wrap gap-2">
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="h-8 shrink-0"
+                                              disabled={shippingDispatchActionsGloballyBusy}
+                                              onClick={() => downloadWarehouseImportTemplateXlsx("outbound")}
+                                            >
+                                              Скачать шаблон
+                                            </Button>
                                             <input
                                               ref={shippingImportPasteFileRef}
                                               type="file"
@@ -2824,15 +2846,6 @@ const ShippingPage = () => {
                                             >
                                               Вставить данные из Excel
                                             </Button>
-                                            <Button
-                                              type="button"
-                                              variant="ghost"
-                                              size="sm"
-                                              className="h-8 shrink-0 text-slate-700"
-                                              onClick={() => downloadWarehouseImportTemplateXlsx("outbound")}
-                                            >
-                                              Скачать шаблон
-                                            </Button>
                                           </div>
                                         </div>
                                         {shippingImportPasteOpen ? (
@@ -2844,7 +2857,7 @@ const ShippingPage = () => {
                                                 setShippingImportPreview(null);
                                               }}
                                               rows={6}
-                                              placeholder={"WB-A-10452, 120\n4601234567890, 48"}
+                                              placeholder={WAREHOUSE_IMPORT_TEXTAREA_PLACEHOLDER}
                                               disabled={shippingDispatchActionsGloballyBusy}
                                               className="font-mono text-sm"
                                             />
@@ -2855,7 +2868,7 @@ const ShippingPage = () => {
                                               disabled={shippingDispatchActionsGloballyBusy}
                                               onClick={() => handleShippingInspectPaste(doc)}
                                             >
-                                              Проверить
+                                              {WAREHOUSE_IMPORT_BTN_CHECK}
                                             </Button>
                                           </div>
                                         ) : null}
