@@ -47,7 +47,11 @@ import {
 } from "@/lib/outboundTaskPriority";
 import { balanceKeyFromOutboundShipment, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { formatOperationLogDescription, formatOperationLogShortStatus } from "@/lib/operationLogDisplay";
-import { getBalanceByKeyMap, movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
+import {
+  getBalanceByKeyMap,
+  hasOutboundShipmentCancelReturnMoves,
+  movementLocationTotalsForWarehouseBalanceKey,
+} from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
 import {
   outboundPackedQtyAssemblyGate,
@@ -1068,11 +1072,12 @@ const ShippingPage = () => {
 
   const cancelShipmentGroup = React.useCallback(
     async (doc: ShipmentDoc) => {
-      if (doc.workflowStatus === "cancelled") {
+      const uiEarly = shippingWorkflowFromGroup(doc.shipments ?? []);
+      if (uiEarly === "cancelled" || doc.workflowStatus === "cancelled") {
         toast.info("Отгрузка уже отменена");
         return;
       }
-      const ui = shippingWorkflowFromGroup(doc.shipments ?? []);
+      const ui = uiEarly;
       if (isShippingTerminal(ui)) {
         toast.info("Нельзя отменить уже отгруженное задание");
         return;
@@ -1097,6 +1102,13 @@ const ShippingPage = () => {
         if (String(latest.workflowStatus ?? "") === "cancelled" || String(latest.status ?? "").trim() === "отменено") {
           toast.info("Отгрузка уже отменена");
           return;
+        }
+        if (isOutboundShipmentRowTerminalGate(latest)) {
+          toast.info("Нельзя отменить уже отгруженное задание");
+          return;
+        }
+        if (hasOutboundShipmentCancelReturnMoves(latest.id, safeMoves)) {
+          continue;
         }
         const fact = Math.max(0, Math.trunc(Number(outboundPickedQty(latest) ?? 0)));
         if (fact <= 0) continue;
@@ -1134,6 +1146,9 @@ const ShippingPage = () => {
         const allInMoves: InventoryMovement[] = [];
         for (const sh of rows) {
           const latest = snapshot.find((x) => x.id === sh.id) ?? sh;
+          if (hasOutboundShipmentCancelReturnMoves(latest.id, safeMoves)) {
+            continue;
+          }
           const fact = Math.max(0, Math.trunc(Number(outboundPickedQty(latest) ?? 0)));
           if (fact <= 0) continue;
           const pickMoves = safeMoves.filter(
@@ -2130,7 +2145,7 @@ const ShippingPage = () => {
                                   </div>
                                   {uiStatus === "cancelled" ? (
                                     <div className="rounded-md border border-slate-200 bg-slate-100 px-3 py-2">
-                                      <p className="text-sm font-medium text-slate-800">Отгрузка отменена</p>
+                                      <p className="text-sm font-medium text-slate-800">Отгрузка отменена. Действия недоступны.</p>
                                     </div>
                                   ) : uiStatus === "shipped" ? (
                                     <div className="rounded-md border border-emerald-200 bg-emerald-50/90 px-3 py-2">
@@ -2456,6 +2471,7 @@ const ShippingPage = () => {
                                                   disabled={
                                                     cancellingShipmentId === doc.id ||
                                                     confirmingShipmentId === doc.id ||
+                                                    assemblyCompletingId === doc.id ||
                                                     isUpdatingOutboundDraft ||
                                                     isAppendingMovements ||
                                                     bulkConfirming ||
