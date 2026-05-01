@@ -102,6 +102,10 @@ function outboundHasShippingPickForShipment(movements: InventoryMovement[], ship
   return safe.some((m) => m.type === "OUTBOUND" && m.source === "shipping" && m.itemId === shipmentId);
 }
 
+/** Сообщения сканирования (п. 4–5 ТЗ упаковщика). */
+const SCAN_ERR_NOT_PICKED = "Товар не подобран. Сначала выполните подбор.";
+const SCAN_ERR_ALL_PACKED = "Весь подобранный товар уже упакован.";
+
 const PackingPage = () => {
   const { data: outbound, isLoading, error, updateOutboundDraft, setOutboundStatus, isUpdatingOutboundDraft, isUpdatingOutbound } =
     useOutboundShipments();
@@ -271,24 +275,36 @@ const PackingPage = () => {
   const startedAssignment =
     startedAssignmentId == null ? null : (allGroupedAssignments.find((x) => x.id === startedAssignmentId) ?? null);
 
+  const startedShipmentList = React.useMemo(() => {
+    const s = startedAssignment?.shipments;
+    return Array.isArray(s) ? s : [];
+  }, [startedAssignment]);
+
+  const movementsSafe = React.useMemo(
+    () => (Array.isArray(movementData) ? movementData : []),
+    [movementData],
+  );
+
   React.useEffect(() => {
-    if (!startedAssignment?.shipments.length) {
+    const itemsSafe = Array.isArray(startedShipmentList) ? startedShipmentList : [];
+    if (!itemsSafe.length) {
       setFinalizePlanFactWarning(null);
       return;
     }
-    const items = startedAssignment.shipments.map((sh) => ({
+    const items = itemsSafe.map((sh) => ({
       plannedQty: Number(sh.plannedUnits) || 0,
       factQty: outboundPackedUnits(sh),
     }));
     const v = getTaskValidation(items);
     if (v.totalRemaining === 0 && v.totalOver === 0) setFinalizePlanFactWarning(null);
-  }, [startedAssignment]);
+  }, [startedShipmentList]);
 
   const scanLines = React.useMemo<ScanLine[]>(() => {
     if (!startedAssignment) return [];
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
     const lineMap = new Map<string, ScanLine>();
-    for (const sh of startedAssignment.shipments ?? []) {
+    const shipRows = Array.isArray(startedShipmentList) ? startedShipmentList : [];
+    for (const sh of shipRows) {
       const product = byProduct.get(sh.productId) ?? null;
       const article = (sh.importArticle || product?.supplierArticle || "").trim();
       const name = (sh.importName || product?.name || "").trim();
@@ -323,7 +339,7 @@ const PackingPage = () => {
       }
     }
     return Array.from(lineMap.values()).sort((a, b) => a.article.localeCompare(b.article, "ru"));
-  }, [startedAssignment, catalog]);
+  }, [startedAssignment, startedShipmentList, catalog]);
 
   const progress = React.useMemo(() => {
     const totalPlan = scanLines.reduce((sum, line) => sum + line.plan, 0);
@@ -379,10 +395,11 @@ const PackingPage = () => {
       setLineHighlightTone(null);
       setLastScanResult({ status: "error", message: "Товар не найден" });
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const firstRowMiss = startedShipmentList[0];
       const noErr =
-        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
-        startedAssignment.shipments[0]?.assignmentId?.trim() ||
-        startedAssignment.shipments[0]?.id ||
+        firstRowMiss?.assignmentNo?.trim() ||
+        firstRowMiss?.assignmentId?.trim() ||
+        firstRowMiss?.id ||
         "—";
       appendOperationLog({
         type: "SCAN_ERROR",
@@ -402,12 +419,13 @@ const PackingPage = () => {
       setHighlightedLineKey(lineByBarcode.key);
       setLineHighlightTone("error");
       clearLineHighlightLater();
-      setLastScanResult({ status: "error", message: "Товар не подобран. Сначала выполните подбор." });
+      setLastScanResult({ status: "error", message: SCAN_ERR_NOT_PICKED });
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const firstRowNotPicked = startedShipmentList[0];
       const noErr =
-        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
-        startedAssignment.shipments[0]?.assignmentId?.trim() ||
-        startedAssignment.shipments[0]?.id ||
+        firstRowNotPicked?.assignmentNo?.trim() ||
+        firstRowNotPicked?.assignmentId?.trim() ||
+        firstRowNotPicked?.id ||
         "—";
       appendOperationLog({
         type: "SCAN_ERROR",
@@ -415,9 +433,9 @@ const PackingPage = () => {
         legalEntityName: leNameErr,
         taskId: startedAssignment.id,
         taskNumber: noErr,
-        description: `Ошибка: товар не подобран (штрихкод: ${code}). Сначала подбор из ячейки на отгрузке.`,
+        description: `Ошибка: ${SCAN_ERR_NOT_PICKED} (штрихкод: ${code})`,
       });
-      toast.error("Товар не подобран");
+      toast.error(SCAN_ERR_NOT_PICKED);
       focusScanInput();
       return;
     }
@@ -431,12 +449,13 @@ const PackingPage = () => {
       setHighlightedLineKey(lineByBarcode.key);
       setLineHighlightTone("error");
       clearLineHighlightLater();
-      setLastScanResult({ status: "error", message: "Подобранное по этому товару уже отсканировано" });
+      setLastScanResult({ status: "error", message: SCAN_ERR_ALL_PACKED });
       const leNameErr = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const firstRowPacked = startedShipmentList[0];
       const noErr =
-        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
-        startedAssignment.shipments[0]?.assignmentId?.trim() ||
-        startedAssignment.shipments[0]?.id ||
+        firstRowPacked?.assignmentNo?.trim() ||
+        firstRowPacked?.assignmentId?.trim() ||
+        firstRowPacked?.id ||
         "—";
       appendOperationLog({
         type: "SCAN_ERROR",
@@ -444,14 +463,14 @@ const PackingPage = () => {
         legalEntityName: leNameErr,
         taskId: startedAssignment.id,
         taskNumber: noErr,
-        description: `Ошибка: лимит упаковки по подбору (штрихкод: ${code})`,
+        description: `Ошибка: ${SCAN_ERR_ALL_PACKED} (штрихкод: ${code})`,
       });
-      toast.error("Подобранное количество уже отсканировано");
+      toast.error(SCAN_ERR_ALL_PACKED);
       focusScanInput();
       return;
     }
     let shipment: OutboundShipment | undefined;
-    const shipmentsSafe = Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : [];
+    const shipmentsSafe = Array.isArray(startedShipmentList) ? startedShipmentList : [];
     for (const r of lineByBarcode.shipmentRefs) {
       const sh = shipmentsSafe.find((x) => x.id === r.shipmentId);
       if (sh && outboundPackRemainingForShipment(sh) > 0) {
@@ -473,8 +492,8 @@ const PackingPage = () => {
       setHighlightedLineKey(lineByBarcode.key);
       setLineHighlightTone("error");
       clearLineHighlightLater();
-      setLastScanResult({ status: "error", message: "Нельзя отсканировать больше, чем подобрано" });
-      toast.error("Лимит по подбору исчерпан");
+      setLastScanResult({ status: "error", message: SCAN_ERR_ALL_PACKED });
+      toast.error(SCAN_ERR_ALL_PACKED);
       focusScanInput();
       return;
     }
@@ -489,10 +508,11 @@ const PackingPage = () => {
       });
       await queryClient.invalidateQueries({ queryKey: ["wms", "outbound"] });
       const leNameScan = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
+      const scanFirst = startedShipmentList[0];
       const noScan =
-        startedAssignment.shipments[0]?.assignmentNo?.trim() ||
-        startedAssignment.shipments[0]?.assignmentId?.trim() ||
-        startedAssignment.shipments[0]?.id ||
+        scanFirst?.assignmentNo?.trim() ||
+        scanFirst?.assignmentId?.trim() ||
+        scanFirst?.id ||
         "—";
       appendOperationLog({
         type: "ITEM_SCANNED",
@@ -531,13 +551,14 @@ const PackingPage = () => {
     const fullyPacked = progress.totalPacked >= progress.totalPlan || progress.remaining === 0;
     const taskId = startedAssignment.id;
     const invSnapshot =
-      (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementData) ?? [];
-    const planFactLineItems = (Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : []).map((sh) => ({
+      (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementsSafe) ?? [];
+    const shipListFin = Array.isArray(startedShipmentList) ? startedShipmentList : [];
+    const planFactLineItems = shipListFin.map((sh) => ({
       plannedQty: Number(sh.plannedUnits) || 0,
       factQty: outboundPackedUnits(sh),
     }));
     const planFactValidation = getTaskValidation(planFactLineItems);
-    const firstShForLog = startedAssignment.shipments[0];
+    const firstShForLog = shipListFin[0];
     const taskNoForPlanFact =
       firstShForLog?.assignmentNo?.trim() ||
       firstShForLog?.assignmentId?.trim() ||
@@ -560,7 +581,7 @@ const PackingPage = () => {
       setFinalizePlanFactWarning(null);
     }
     const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
-    const totalShipQty = (Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : []).reduce((s, sh) => {
+    const totalShipQty = shipListFin.reduce((s, sh) => {
       const plan = Number(sh.plannedUnits) || 0;
       const pack = outboundPackedUnits(sh);
       return s + Math.min(pack, plan);
@@ -572,20 +593,20 @@ const PackingPage = () => {
         legalEntityName: legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId,
         taskId,
         taskNumber:
-          startedAssignment.shipments[0]?.assignmentNo?.trim() ||
-          startedAssignment.shipments[0]?.assignmentId?.trim() ||
-          startedAssignment.shipments[0]?.id ||
+        shipListFin[0]?.assignmentNo?.trim() ||
+        shipListFin[0]?.assignmentId?.trim() ||
+        shipListFin[0]?.id ||
           "—",
         description: "Ошибка: попытка завершить задание с расхождением План/Факт",
       });
       toast.error("Нет количества для завершения", { description: "Отсканируйте товар по заданию." });
       return;
     }
-    const firstSh = startedAssignment.shipments[0];
+    const firstSh = shipListFin[0];
     const assignmentNo = firstSh?.assignmentNo?.trim() || firstSh?.assignmentId?.trim() || firstSh?.id || "—";
     const leName = legal?.find((x) => x.id === startedAssignment.legalEntityId)?.shortName ?? startedAssignment.legalEntityId;
     const ts = new Date().toISOString();
-    const hasDiscrepancy = startedAssignment.shipments.some((sh) => {
+    const hasDiscrepancy = shipListFin.some((sh) => {
       const p = Number(sh.plannedUnits) || 0;
       const f = outboundPackedUnits(sh);
       return p !== f;
@@ -598,7 +619,7 @@ const PackingPage = () => {
         return w === "pending" || w === "processing" || w === "assembling";
       }) ?? null;
     try {
-      const moves: InventoryMovement[] = (Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : [])
+      const moves: InventoryMovement[] = shipListFin
         .map((sh) => {
           if (outboundHasShippingPickForShipment(invSnapshot, sh.id)) return null;
           const product = byProduct.get(sh.productId) ?? null;
@@ -637,7 +658,7 @@ const PackingPage = () => {
       if (moves.length) {
         await addInventoryMovements(moves);
       }
-      for (const sh of Array.isArray(startedAssignment.shipments) ? startedAssignment.shipments : []) {
+      for (const sh of shipListFin) {
         const plan = Number(sh.plannedUnits) || 0;
         const packed = outboundPackedUnits(sh);
         const shipQty = Math.min(packed, plan);
@@ -768,7 +789,7 @@ const PackingPage = () => {
     })();
   }, [searchParams, allGroupedAssignments, isLoading, error, setSearchParams]);
 
-  const startedFirst = startedAssignment?.shipments[0] ?? null;
+  const startedFirst = startedShipmentList[0] ?? null;
   const startedAssignmentNo =
     startedFirst?.assignmentNo?.trim() || startedFirst?.assignmentId?.trim() || startedFirst?.id || "—";
   const startedLegalName = startedAssignment
