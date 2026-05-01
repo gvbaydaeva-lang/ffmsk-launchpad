@@ -391,11 +391,12 @@ const ShippingPage = () => {
   const [bulkTakingToWork, setBulkTakingToWork] = React.useState(false);
   const [assemblyCompletingId, setAssemblyCompletingId] = React.useState<string | null>(null);
   const [pickDraftByShipment, setPickDraftByShipment] = React.useState<Record<string, { locationId: string; qty: string }>>({});
+  const [undoingPickId, setUndoingPickId] = React.useState<string | null>(null);
 
-  const movementDataSafe = React.useMemo(
-    () => (Array.isArray(inventoryMovements) ? inventoryMovements : []),
-    [inventoryMovements],
-  );
+  const movementDataSafe = React.useMemo(() => {
+    const m = inventoryMovements ?? [];
+    return Array.isArray(m) ? m : [];
+  }, [inventoryMovements]);
   const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
   const locationById = React.useMemo(() => new Map(locationsSafe.map((l) => [l.id, l])), [locationsSafe]);
   const storageLocationIds = React.useMemo(
@@ -832,8 +833,9 @@ const ShippingPage = () => {
         warehouseName: sh.sourceWarehouse || "",
         reserveQty,
       });
-      const fact = Number(outboundPickedQty(sh) ?? 0) || 0;
-      const plan = Number(sh.plannedUnits ?? 0) || 0;
+      const plan = Math.max(0, Math.trunc(Number(sh.plannedUnits ?? 0) || 0));
+      const fact = Math.max(0, Math.trunc(Number(outboundPickedQty(sh) ?? 0) || 0));
+      const packedQtyEffective = outboundPackedQtyAssemblyGate(sh);
       const remaining = Math.max(0, plan - fact);
       const name = (sh.importName || product?.name || "").trim() || "—";
       const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
@@ -843,6 +845,8 @@ const ShippingPage = () => {
         barcode,
         plan,
         fact,
+        packedQtyEffective,
+        pickOutboundMoves,
         remaining,
         legalEntityId: sh.legalEntityId,
         legalEntityName: (entities ?? []).find((e) => e.id === sh.legalEntityId)?.shortName ?? sh.legalEntityId,
@@ -1190,16 +1194,18 @@ const ShippingPage = () => {
         toast.error("Укажите корректное количество");
         return;
       }
-      if (qty > selectedCell.available) {
+      if (qty > (selectedCell.available ?? 0)) {
         toast.error("Нельзя подобрать больше доступного в выбранной ячейке");
         return;
       }
-      if (qty > line.remaining) {
+      const remPick = Math.max(0, Math.trunc(Number(line.remaining ?? 0) || 0));
+      if (qty > remPick) {
         toast.error("Нельзя подобрать больше, чем осталось по заданию");
         return;
       }
       const ts = new Date().toISOString();
-      const nextFact = line.fact + qty;
+      const baseFact = Math.max(0, Math.trunc(Number(line.fact ?? 0) || 0));
+      const nextFact = baseFact + qty;
       try {
         await addInventoryMovements([
           {
@@ -1245,6 +1251,132 @@ const ShippingPage = () => {
       }
     },
     [selectedShipmentPickRows, pickDraftByShipment, addInventoryMovements, updateOutboundDraft],
+  );
+
+  const undoPickFromCell = React.useCallback(
+    async (shipmentId: string) => {
+      if (!selectedDoc) return;
+      const shipmentsDoc = Array.isArray(selectedDoc.shipments) ? selectedDoc.shipments : [];
+      const wfUi = shippingWorkflowFromGroup(shipmentsDoc);
+      if (isShippingTerminal(wfUi)) {
+        toast.error("Нельзя отменить подбор после отгрузки");
+        return;
+      }
+      if (undoingPickId === shipmentId || isUpdatingOutboundDraft || isAppendingMovements) return;
+
+      const latestShipment = (data ?? []).find((s) => s.id === shipmentId);
+      if (!latestShipment) return;
+
+      const factRaw = outboundPickedQty(latestShipment) ?? 0;
+      const fact = Math.max(0, Math.trunc(Number(factRaw) || 0));
+      const packed = outboundPackedQtyAssemblyGate(latestShipment);
+      if (
+        latestShipment.workflowStatus === "shipped" ||
+        latestShipment.workflowStatus === "shipped_with_diff" ||
+        latestShipment.status === "отгружено"
+      ) {
+        toast.error("Нельзя отменить подбор после отгрузки");
+        return;
+      }
+
+      if (fact <= 0) {
+        toast.error("Нечего отменять");
+        return;
+      }
+      if (packed > 0) {
+        toast.error("Нельзя отменить подбор: товар уже упакован");
+        return;
+      }
+
+      const mvRaw = inventoryMovements ?? [];
+      const safeMoves = Array.isArray(mvRaw) ? mvRaw : [];
+      const pickMoves = safeMoves.filter(
+        (m) =>
+          m.type === "OUTBOUND" &&
+          m.source === "shipping" &&
+          (m.itemId ?? "").trim() === shipmentId,
+      );
+      if (pickMoves.length === 0) {
+        toast.error("Не найдены движения подбора для отмены");
+        return;
+      }
+
+      let sumPickQty = 0;
+      for (const m of pickMoves) {
+        const q = Number(m.qty);
+        sumPickQty += Number.isFinite(q) ? q : 0;
+      }
+      const totalOutAbs = Math.abs(Math.trunc(Number(sumPickQty) || 0));
+      if (totalOutAbs > fact) {
+        toast.error("Нельзя отменить подбор больше, чем было подобрано");
+        return;
+      }
+      if (totalOutAbs < fact) {
+        toast.error("Не все подобранные единицы связаны со движениями подбора");
+        return;
+      }
+      const missingLoc = pickMoves.some((m) => !(m.locationId ?? "").trim());
+      if (missingLoc) {
+        toast.error("У движения подбора не указана ячейка возврата");
+        return;
+      }
+
+      setUndoingPickId(shipmentId);
+      const ts = new Date().toISOString();
+      try {
+        const inMoves: InventoryMovement[] = pickMoves.map((m, idx) => {
+          const absQty = Math.trunc(Math.abs(Number.isFinite(Number(m.qty)) ? Number(m.qty) : 0));
+          if (absQty <= 0) throw new Error("invalid_pick_qty");
+          return {
+            id: `undo-pick-${m.id}-${ts}-${idx}`,
+            type: "INBOUND" as const,
+            source: "shipping" as const,
+            taskId: m.taskId,
+            taskNumber: m.taskNumber,
+            legalEntityId: m.legalEntityId,
+            legalEntityName: m.legalEntityName,
+            warehouseName: m.warehouseName,
+            locationId: (m.locationId ?? "").trim(),
+            itemId: m.itemId,
+            name: m.name,
+            article: m.article ?? m.sku ?? "",
+            sku: m.sku ?? m.article ?? "",
+            barcode: m.barcode ?? "",
+            marketplace: m.marketplace,
+            color: m.color ?? "—",
+            size: m.size ?? "—",
+            qty: absQty,
+            createdAt: ts,
+          };
+        });
+        await addInventoryMovements(inMoves);
+        const newFactRaw = fact + Math.trunc(sumPickQty);
+        const newFact = Math.max(0, Number.isFinite(newFactRaw) ? newFactRaw : 0);
+        await updateOutboundDraft({
+          id: shipmentId,
+          patch: {
+            pickedUnits: newFact,
+            shippedUnits: newFact,
+            updatedAt: ts,
+          },
+        });
+        toast.success("Подбор отменён");
+      } catch {
+        toast.error("Не удалось отменить подбор");
+      } finally {
+        setUndoingPickId(null);
+      }
+    },
+    [
+      selectedDoc,
+      data,
+      inventoryMovements,
+      undoingPickId,
+      isUpdatingOutboundDraft,
+      isAppendingMovements,
+      addInventoryMovements,
+      updateOutboundDraft,
+    ],
   );
 
   return (
@@ -1816,19 +1948,29 @@ const ShippingPage = () => {
                                         {selectedShipmentPickRows.map((line) => {
                                           const draft = pickDraftByShipment[line.shipmentId] ?? { locationId: "", qty: "" };
                                           const selectedCell = line.storageOptions.find((opt) => opt.locationId === draft.locationId);
-                                          const maxQty = Math.min(line.remaining, selectedCell?.available ?? 0);
-                                          const pickingDone = line.remaining <= 0;
+                                          const remLine = Math.max(0, Math.trunc(Number(line.remaining ?? 0) || 0));
+                                          const maxQty = Math.min(remLine, Math.max(0, Math.trunc(Number(selectedCell?.available ?? 0) || 0)));
+                                          const pickingDone = remLine <= 0;
                                           const pickQtyParsed = Math.trunc(Number(draft.qty) || 0);
                                           const pickQtyOk =
                                             draft.qty.trim() !== "" && pickQtyParsed > 0 && pickQtyParsed <= maxQty;
+                                          const planLine = Math.max(0, Math.trunc(Number(line.plan ?? 0) || 0));
+                                          const factLine = Math.max(0, Math.trunc(Number(line.fact ?? 0) || 0));
+                                          const packedLine = Math.max(0, Math.trunc(Number(line.packedQtyEffective ?? 0) || 0));
+                                          const showUndoPick =
+                                            factLine > 0 &&
+                                            packedLine <= 0 &&
+                                            !isShippingTerminal(uiStatus);
                                           return (
                                             <div key={line.shipmentId} className="grid gap-2 rounded-md border border-slate-200 p-2 md:grid-cols-12 md:items-end">
                                               <div className="md:col-span-4">
                                                 <div className="text-sm font-medium text-slate-900">{line.name}</div>
                                                 <div className="text-xs text-slate-600">
-                                                  {line.barcode} · Осталось: {line.remaining.toLocaleString("ru-RU")}
+                                                  {line.barcode} · Осталось: {remLine.toLocaleString("ru-RU")}
                                                 </div>
-                                                {pickingDone ? (
+                                                {planLine > 0 && factLine <= 0 ? (
+                                                  <div className="mt-1 text-xs text-slate-600">Ожидает подбора</div>
+                                                ) : pickingDone ? (
                                                   <div className="mt-1 text-xs font-medium text-emerald-700">Подбор выполнен</div>
                                                 ) : null}
                                               </div>
@@ -1878,22 +2020,41 @@ const ShippingPage = () => {
                                                 />
                                               </div>
                                               <div className="md:col-span-3">
-                                                <Button
-                                                  type="button"
-                                                  size="sm"
-                                                  className="h-8 w-full"
-                                                  onClick={() => void submitPickFromCell(line.shipmentId)}
-                                                  disabled={
-                                                    line.storageOptions.length === 0 ||
-                                                    pickingDone ||
-                                                    !draft.locationId ||
-                                                    !pickQtyOk ||
-                                                    isUpdatingOutboundDraft ||
-                                                    isAppendingMovements
-                                                  }
-                                                >
-                                                  Подобрать
-                                                </Button>
+                                                <div className="flex flex-wrap gap-1">
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    className="h-8 min-w-[104px] flex-1 sm:flex-none sm:min-w-[100px]"
+                                                    onClick={() => void submitPickFromCell(line.shipmentId)}
+                                                    disabled={
+                                                      line.storageOptions.length === 0 ||
+                                                      pickingDone ||
+                                                      !draft.locationId ||
+                                                      !pickQtyOk ||
+                                                      isUpdatingOutboundDraft ||
+                                                      isAppendingMovements ||
+                                                      undoingPickId === line.shipmentId
+                                                    }
+                                                  >
+                                                    Подобрать
+                                                  </Button>
+                                                  {showUndoPick ? (
+                                                    <Button
+                                                      type="button"
+                                                      variant="outline"
+                                                      size="sm"
+                                                      className="h-8 min-w-[104px] flex-1 sm:flex-none sm:min-w-[120px]"
+                                                      onClick={() => void undoPickFromCell(line.shipmentId)}
+                                                      disabled={
+                                                        isUpdatingOutboundDraft ||
+                                                        isAppendingMovements ||
+                                                        undoingPickId === line.shipmentId
+                                                      }
+                                                    >
+                                                      {undoingPickId === line.shipmentId ? "Отмена…" : "Отменить подбор"}
+                                                    </Button>
+                                                  ) : null}
+                                                </div>
                                                 {line.storageOptions.length === 0 ? (
                                                   <div className="mt-1 text-[11px] text-slate-500">Нет доступных остатков в ячейках хранения</div>
                                                 ) : null}
