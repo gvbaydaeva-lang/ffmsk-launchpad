@@ -323,7 +323,10 @@ export type InventoryMovement = {
   warehouseId?: string;
   warehouseName?: string;
   locationId?: string;
+  /** Ид строки источника (строка заявки inbound, строка outbound и т.д.) — не подменять sku/productId */
   itemId?: string;
+  /** Каталог: id товара; заполнять отдельно от itemId, если строка документа ≠ товар */
+  productId?: string;
   name: string;
   sku?: string;
   article?: string;

@@ -101,9 +101,14 @@ export function hasTaskMovements(
   return movements.some((m) => m.taskId === taskId && m.type === type);
 }
 
-/** Уже есть приёмочные INBOUND по этому заданию — повторно не создавать. */
-export function hasReceivingInboundMovements(taskId: string, movements: InventoryMovement[]): boolean {
-  return movements.some((m) => m.taskId === taskId && m.type === "INBOUND" && m.source === "receiving");
+/**
+ * Есть ли уже INBOUND-движения из приёмки для источника (taskId = id операционной поставки или заявки /inbounds).
+ * Идемпотентность по идентификатору заявки источника, без учёта productId/itemId строк.
+ */
+export function hasReceivingInboundMovements(inboundSourceTaskId: string, movements: InventoryMovement[]): boolean {
+  return movements.some(
+    (m) => m.taskId === inboundSourceTaskId && m.type === "INBOUND" && m.source === "receiving",
+  );
 }
 
 export function getBalanceByKeyMap(movements: InventoryMovement[]): Map<string, number> {

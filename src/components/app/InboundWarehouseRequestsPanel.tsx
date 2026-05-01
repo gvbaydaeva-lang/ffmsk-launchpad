@@ -442,13 +442,12 @@ const InboundWarehouseRequestsPanel = () => {
                             <div className="space-y-2 p-3">
                               {row.status === "received" ? (
                                 <p className="text-xs text-slate-600">
-                                  Приёмка завершена. Факт по заявке зафиксирован, правки недоступны.
+                                  Приёмка завершена. Факт зафиксирован, движения созданы, правки недоступны.
                                 </p>
                               ) : (
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <p className="text-xs text-slate-600">
-                                    Внесите факт по строкам; по кнопке ниже создаются движения INBOUND в зону приёмки и заявка закрывается без
-                                    размещения по ячейкам.
+                                    Внесите факт по строкам. При завершении будут созданы INBOUND-движения в зону приёмки.
                                   </p>
                                   <Button
                                     type="button"

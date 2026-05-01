@@ -22,6 +22,7 @@ export function buildInboundReceivingInventoryMovements(
     const it = itemsSafe[i];
     const q = Number(it.factualQuantity) || 0;
     if (q <= 0) continue;
+    const pid = (it.productId ?? "").trim();
     moves.push({
       id: `im-in-${supply.id}-${i}-${stamp}`,
       type: "INBOUND",
@@ -32,7 +33,8 @@ export function buildInboundReceivingInventoryMovements(
       legalEntityName: (legalEntityName || "").trim() || leId,
       warehouseName,
       locationId: receivingLocationId,
-      itemId: it.productId ?? `line-${i}`,
+      itemId: `${supply.id}-ln-${i}`,
+      ...(pid ? { productId: pid } : {}),
       name: (it.name || it.barcode || "—").trim() || "—",
       sku: (it.supplierArticle || "").trim() || undefined,
       article: (it.supplierArticle || "").trim() || "—",
