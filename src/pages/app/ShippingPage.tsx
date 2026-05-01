@@ -125,6 +125,23 @@ function isShippingTerminal(status: ShippingUiStatus): boolean {
   return status === "shipped" || status === "shipped_with_diff";
 }
 
+/** Все строки задания уже в финальном статусе отгрузки (на случай рассогласования с групповым статусом). */
+function shipmentOutboundRowsAllShippedTerminal(doc: ShipmentDoc | null | undefined): boolean {
+  const rows = Array.isArray(doc?.shipments) ? doc!.shipments! : [];
+  if (rows.length === 0) return false;
+  return rows.every((s) => {
+    const wf = (s.workflowStatus ?? "") as string;
+    return wf === "shipped" || wf === "shipped_with_diff";
+  });
+}
+
+/** Нельзя снова подтверждать: документ уже в терминальном статусе или все строки отгружены. */
+function isShipmentFinalizeBlockedAlreadyDone(doc: ShipmentDoc | null | undefined): boolean {
+  if (!doc) return false;
+  if (isShippingTerminal(doc.workflowStatus as ShippingUiStatus)) return true;
+  return shipmentOutboundRowsAllShippedTerminal(doc);
+}
+
 function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiStatus {
   const perRow = shipments.map((s): ShippingUiStatus => {
     const wf = (s.workflowStatus ?? "pending") as string;
@@ -413,6 +430,10 @@ const ShippingPage = () => {
   const openTaskScrollDone = React.useRef<string | null>(null);
   const [openTaskHighlightId, setOpenTaskHighlightId] = React.useState<string | null>(null);
   const [confirmingShipmentId, setConfirmingShipmentId] = React.useState<string | null>(null);
+  /** Синхронная защита от двойного клика до срабатывания `setConfirmingShipmentId`. */
+  const finalizeInFlightIdsRef = React.useRef<Set<string>>(new Set());
+  const diffBulkSubmitInFlightRef = React.useRef(false);
+  const bulkExactBulkInFlightRef = React.useRef(false);
   const [diffReasonDialogOpen, setDiffReasonDialogOpen] = React.useState(false);
   const [pendingDiffDoc, setPendingDiffDoc] = React.useState<ShipmentDoc | null>(null);
   const [pendingBulkDiffDocs, setPendingBulkDiffDocs] = React.useState<ShipmentDoc[]>([]);
@@ -993,6 +1014,10 @@ const ShippingPage = () => {
 
   const openShipmentDiffFinalizeDialog = React.useCallback((doc: ShipmentDoc | null | undefined) => {
     if (!doc || doc.workflowStatus !== "assembled") return;
+    if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
+      toast.info("Отгрузка уже завершена");
+      return;
+    }
     if (!canShipmentDiffFinalize(doc)) {
       toast.error(
         shipmentDocPackedTotal(doc) <= 0
@@ -1010,12 +1035,17 @@ const ShippingPage = () => {
 
   const finalizeShipmentExact = React.useCallback(
     async (doc: ShipmentDoc) => {
+      if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
+        toast.info("Отгрузка уже завершена");
+        return;
+      }
       if (doc.workflowStatus !== "assembled") return;
       if (!canShipmentExactFinalize(doc)) return;
-      if (confirmingShipmentId === doc.id) return;
       const packRowsRaw = doc?.shipments ?? [];
       const packRows = Array.isArray(packRowsRaw) ? packRowsRaw : [];
       if (packRows.length === 0) return;
+      if (finalizeInFlightIdsRef.current.has(doc.id)) return;
+      finalizeInFlightIdsRef.current.add(doc.id);
       setConfirmingShipmentId(doc.id);
       const ts = new Date().toISOString();
       try {
@@ -1034,10 +1064,11 @@ const ShippingPage = () => {
         toast.success("Отгрузка подтверждена");
         appendShipmentConfirmedLog(doc);
       } finally {
+        finalizeInFlightIdsRef.current.delete(doc.id);
         setConfirmingShipmentId(null);
       }
     },
-    [updateOutboundDraft, confirmingShipmentId, appendShipmentConfirmedLog],
+    [updateOutboundDraft, appendShipmentConfirmedLog],
   );
 
   const submitDiffShipmentConfirm = React.useCallback(async () => {
@@ -1054,27 +1085,46 @@ const ShippingPage = () => {
     const bulkExact = Array.isArray(pendingBulkExactDocs) ? pendingBulkExactDocs : [];
 
     if (bulkDiff.length > 0) {
-      if (bulkConfirming || bulkTakingToWork) return;
-      for (const doc of bulkDiff) {
-        if (shipmentDocPackedTotal(doc) <= 0) {
-          toast.error("Нельзя завершить: по заданию ничего не упаковано.");
-          return;
-        }
-        if (!canShipmentDiffFinalize(doc)) {
-          toast.error("Нельзя завершить: задание больше не подходит под завершение с расхождением.");
-          return;
-        }
-      }
-      for (const doc of bulkExact) {
-        if (!canShipmentExactFinalize(doc)) {
-          toast.error("Нельзя завершить: часть заданий утратила условие обычного подтверждения.");
-          return;
-        }
-      }
+      if (bulkTakingToWork || diffBulkSubmitInFlightRef.current || bulkConfirming) return;
+      diffBulkSubmitInFlightRef.current = true;
       setBulkConfirming(true);
-      const ts = new Date().toISOString();
       try {
-        for (const doc of bulkDiff) {
+        const bulkDiffReady = bulkDiff.filter((d) => !isShipmentFinalizeBlockedAlreadyDone(d));
+        const bulkExactReady = bulkExact.filter((d) => !isShipmentFinalizeBlockedAlreadyDone(d));
+        const skippedCount = bulkDiff.length + bulkExact.length - bulkDiffReady.length - bulkExactReady.length;
+        if (bulkDiffReady.length === 0 && bulkExactReady.length === 0) {
+          if (skippedCount > 1) {
+            toast.info(`Все выбранные отгрузки уже завершены (${skippedCount}).`);
+          } else {
+            toast.info("Отгрузка уже завершена");
+          }
+          setDiffReasonDialogOpen(false);
+          setPendingBulkDiffDocs([]);
+          setPendingBulkExactDocs([]);
+          setSelectedDiffReason("");
+          return;
+        }
+        if (skippedCount > 0) {
+          toast.info("Часть заданий уже завершена — пропущена.", { description: `Пропущено: ${skippedCount}.` });
+        }
+        for (const doc of bulkDiffReady) {
+          if (shipmentDocPackedTotal(doc) <= 0) {
+            toast.error("Нельзя завершить: по заданию ничего не упаковано.");
+            return;
+          }
+          if (!canShipmentDiffFinalize(doc)) {
+            toast.error("Нельзя завершить: задание больше не подходит под завершение с расхождением.");
+            return;
+          }
+        }
+        for (const doc of bulkExactReady) {
+          if (!canShipmentExactFinalize(doc)) {
+            toast.error("Нельзя завершить: часть заданий утратила условие обычного подтверждения.");
+            return;
+          }
+        }
+        const ts = new Date().toISOString();
+        for (const doc of bulkDiffReady) {
           for (const sh of doc.shipments ?? []) {
             const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
               workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
@@ -1087,7 +1137,7 @@ const ShippingPage = () => {
             await updateOutboundDraft({ id: sh.id, patch });
           }
         }
-        for (const doc of bulkExact) {
+        for (const doc of bulkExactReady) {
           for (const sh of doc.shipments ?? []) {
             await updateOutboundDraft({
               id: sh.id,
@@ -1101,11 +1151,11 @@ const ShippingPage = () => {
             });
           }
         }
-        const n = bulkDiff.length + bulkExact.length;
-        for (const doc of bulkDiff) {
+        const n = bulkDiffReady.length + bulkExactReady.length;
+        for (const doc of bulkDiffReady) {
           appendShipmentDiffFinishedLog(doc, selectedDiffReason);
         }
-        for (const doc of bulkExact) {
+        for (const doc of bulkExactReady) {
           appendShipmentConfirmedLog(doc);
         }
         setDiffReasonDialogOpen(false);
@@ -1116,12 +1166,20 @@ const ShippingPage = () => {
         toast.success("Отгрузки подтверждены", { description: `Обработано заданий: ${n}.` });
       } finally {
         setBulkConfirming(false);
+        diffBulkSubmitInFlightRef.current = false;
       }
       return;
     }
 
     if (!pendingDiffDoc || pendingDiffDoc.workflowStatus !== "assembled") return;
-    if (confirmingShipmentId === pendingDiffDoc.id) return;
+    if (isShipmentFinalizeBlockedAlreadyDone(pendingDiffDoc)) {
+      toast.info("Отгрузка уже завершена");
+      setDiffReasonDialogOpen(false);
+      setPendingDiffDoc(null);
+      setSelectedDiffReason("");
+      return;
+    }
+    if (finalizeInFlightIdsRef.current.has(pendingDiffDoc.id)) return;
     if (shipmentDocPackedTotal(pendingDiffDoc) <= 0) {
       toast.error("Нельзя отгрузить: ничего не упаковано");
       return;
@@ -1132,6 +1190,7 @@ const ShippingPage = () => {
     }
     const pendRowsRaw = pendingDiffDoc?.shipments ?? [];
     const pendRows = Array.isArray(pendRowsRaw) ? pendRowsRaw : [];
+    finalizeInFlightIdsRef.current.add(pendingDiffDoc.id);
     setConfirmingShipmentId(pendingDiffDoc.id);
     const ts = new Date().toISOString();
     try {
@@ -1155,6 +1214,7 @@ const ShippingPage = () => {
       setSelectedDiffReason("");
       toast.success("Отгрузка завершена с расхождением");
     } finally {
+      finalizeInFlightIdsRef.current.delete(pendingDiffDoc.id);
       setConfirmingShipmentId(null);
     }
   }, [
@@ -1162,7 +1222,6 @@ const ShippingPage = () => {
     pendingBulkDiffDocs,
     pendingBulkExactDocs,
     selectedDiffReason,
-    confirmingShipmentId,
     bulkConfirming,
     bulkTakingToWork,
     updateOutboundDraft,
@@ -1171,11 +1230,25 @@ const ShippingPage = () => {
   ]);
 
   const confirmBulkSelectedShipments = React.useCallback(async () => {
+    if (bulkConfirming || bulkTakingToWork || bulkExactBulkInFlightRef.current) return;
     const ids = new Set(Array.isArray(selectedShipmentIds) ? selectedShipmentIds : []);
     const list = Array.isArray(documents) ? documents : [];
     const selected = list.filter((d) => d && ids.has(d.id));
-    const nonAssembled = selected.filter((d) => d.workflowStatus !== "assembled");
-    const assembled = selected.filter((d) => d.workflowStatus === "assembled");
+    const actionableSelected = selected.filter((d) => !isShipmentFinalizeBlockedAlreadyDone(d));
+    const terminalSkippedFromSelection = selected.length - actionableSelected.length;
+    if (actionableSelected.length === 0) {
+      if (terminalSkippedFromSelection > 0) {
+        toast.info("Отгрузка уже завершена");
+      }
+      return;
+    }
+    if (terminalSkippedFromSelection > 0) {
+      toast.info("Часть заданий уже завершена — пропущена.", {
+        description: `Пропущено: ${terminalSkippedFromSelection}.`,
+      });
+    }
+    const nonAssembled = actionableSelected.filter((d) => d.workflowStatus !== "assembled");
+    const assembled = actionableSelected.filter((d) => d.workflowStatus === "assembled");
     if (nonAssembled.length > 0) {
       toast.warning("Подтвердить можно только отгрузки со статусом 'Собрано'.");
     }
@@ -1187,7 +1260,6 @@ const ShippingPage = () => {
       toast.warning("Часть заданий исключена: нечего отгружать (ничего не упаковано).");
     }
     if (exactEligible.length === 0 && diffEligible.length === 0) return;
-    if (bulkConfirming || bulkTakingToWork) return;
     if (diffEligible.length > 0) {
       setPendingDiffDoc(null);
       setPendingBulkDiffDocs(diffEligible);
@@ -1196,28 +1268,38 @@ const ShippingPage = () => {
       setDiffReasonDialogOpen(true);
       return;
     }
-    setBulkConfirming(true);
-    const ts = new Date().toISOString();
+    bulkExactBulkInFlightRef.current = true;
     try {
-      for (const doc of exactEligible) {
-        for (const sh of doc.shipments ?? []) {
-          await updateOutboundDraft({
-            id: sh.id,
-            patch: {
-              workflowStatus: "shipped",
-              status: "отгружено",
-              shippedAt: ts,
-              completedAt: sh.completedAt ?? ts,
-              updatedAt: ts,
-            },
-          });
+      setBulkConfirming(true);
+      const ts = new Date().toISOString();
+      let confirmedExactCount = 0;
+      try {
+        for (const doc of exactEligible) {
+          if (isShipmentFinalizeBlockedAlreadyDone(doc)) continue;
+          for (const sh of doc.shipments ?? []) {
+            await updateOutboundDraft({
+              id: sh.id,
+              patch: {
+                workflowStatus: "shipped",
+                status: "отгружено",
+                shippedAt: ts,
+                completedAt: sh.completedAt ?? ts,
+                updatedAt: ts,
+              },
+            });
+          }
+          appendShipmentConfirmedLog(doc);
+          confirmedExactCount += 1;
         }
-        appendShipmentConfirmedLog(doc);
+        setSelectedShipmentIds([]);
+        toast.success("Отгрузки подтверждены", {
+          description: `Подтверждено заданий: ${confirmedExactCount}.`,
+        });
+      } finally {
+        setBulkConfirming(false);
       }
-      setSelectedShipmentIds([]);
-      toast.success("Отгрузки подтверждены", { description: `Подтверждено заданий: ${exactEligible.length}.` });
     } finally {
-      setBulkConfirming(false);
+      bulkExactBulkInFlightRef.current = false;
     }
   }, [
     selectedShipmentIds,
