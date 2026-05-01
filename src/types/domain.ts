@@ -100,7 +100,9 @@ export type TaskWorkflowStatus =
   | "completed"
   | "assembling"
   | "assembled"
-  | "shipped";
+  | "shipped"
+  /** Отгрузка закрыта без полного плана (диспетчерская ветка FF). */
+  | "shipped_with_diff";
 
 /** Входящая поставка (приёмка) */
 export type InboundSupply = {

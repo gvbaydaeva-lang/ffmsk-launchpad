@@ -59,6 +59,18 @@ function PrimaryBadge({ status }: { status: TaskWorkflowStatus }) {
       </span>
     );
   }
+  if (status === "shipped_with_diff") {
+    return (
+      <span
+        className={cn(
+          "inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1",
+          "bg-amber-100 text-amber-900 ring-amber-200",
+        )}
+      >
+        Отгружено с расхождением
+      </span>
+    );
+  }
   if (status === "completed") {
     return (
       <span

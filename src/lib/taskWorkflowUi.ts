@@ -7,7 +7,7 @@ export function normalizeWorkflowStatus(status: TaskWorkflowStatus | undefined |
 
 /** Завершённые по отгрузке этапы: закрыто в архиве вместе с «Завершено». */
 export function isOutboundWorkflowTerminal(status: TaskWorkflowStatus): boolean {
-  return status === "completed" || status === "shipped";
+  return status === "completed" || status === "shipped" || status === "shipped_with_diff";
 }
 
 /** Обводка и фон карточки задания */
@@ -84,6 +84,8 @@ export function compareWorkflowPriority(a: TaskWorkflowStatus, b: TaskWorkflowSt
         return 4;
       case "shipped":
         return 5;
+      case "shipped_with_diff":
+        return 5;
     }
   };
   return order(a) - order(b);
@@ -100,19 +102,22 @@ export function workflowFromInbound(row: InboundSupply): TaskWorkflowStatus {
 /** Статус задания отгрузки по группе строк */
 export function workflowFromOutboundGroup(shipments: OutboundShipment[]): TaskWorkflowStatus {
   const perRow = shipments.map((s): TaskWorkflowStatus => {
-    const wf = s.workflowStatus;
+    const wfRaw = s.workflowStatus;
     /** Явный workflow важнее legacy `status === "отгружено"` (например после упаковки — «Собрано»). */
-    if (wf === "assembled" || wf === "assembling" || wf === "shipped") return wf;
-    if (wf === "completed" || s.status === "отгружено") return "completed";
-    if (wf === "processing") return "processing";
-    return (wf ?? "pending") as TaskWorkflowStatus;
+    if (wfRaw === "shipped_with_diff") return "shipped_with_diff";
+    if (wfRaw === "assembled" || wfRaw === "assembling" || wfRaw === "shipped") return wfRaw;
+    if (wfRaw === "completed" || s.status === "отгружено") return "completed";
+    if (wfRaw === "processing") return "processing";
+    return (wfRaw ?? "pending") as TaskWorkflowStatus;
   });
   if (perRow.some((x) => x === "processing")) return "processing";
   if (perRow.some((x) => x === "assembling")) return "assembling";
-  if (perRow.every((x) => x === "completed")) return "completed";
-  if (perRow.every((x) => x === "shipped")) return "shipped";
-  if (perRow.every((x) => x === "completed" || x === "shipped")) {
-    return perRow.some((x) => x === "shipped") ? "shipped" : "completed";
+  if (perRow.length === 0) return "pending";
+  if (perRow.every((x) => x === "completed" || x === "shipped" || x === "shipped_with_diff")) {
+    if (perRow.some((x) => x === "shipped" || x === "shipped_with_diff")) {
+      return perRow.some((x) => x === "shipped_with_diff") ? "shipped_with_diff" : "shipped";
+    }
+    return "completed";
   }
   if (perRow.every((x) => x === "assembled")) return "assembled";
   return "pending";

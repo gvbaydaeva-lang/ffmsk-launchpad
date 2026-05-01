@@ -126,13 +126,16 @@ function isShippingTerminal(status: ShippingUiStatus): boolean {
 }
 
 /** Все строки задания уже в финальном статусе отгрузки (на случай рассогласования с групповым статусом). */
+function isOutboundShipmentRowTerminalGate(sh: OutboundShipment | null | undefined): boolean {
+  if (!sh) return false;
+  const wf = String(sh.workflowStatus ?? "");
+  return wf === "shipped" || wf === "shipped_with_diff" || String(sh.status ?? "").trim() === "отгружено";
+}
+
 function shipmentOutboundRowsAllShippedTerminal(doc: ShipmentDoc | null | undefined): boolean {
   const rows = Array.isArray(doc?.shipments) ? doc!.shipments! : [];
   if (rows.length === 0) return false;
-  return rows.every((s) => {
-    const wf = (s.workflowStatus ?? "") as string;
-    return wf === "shipped" || wf === "shipped_with_diff";
-  });
+  return rows.every((s) => isOutboundShipmentRowTerminalGate(s));
 }
 
 /** Нельзя снова подтверждать: документ уже в терминальном статусе или все строки отгружены. */
@@ -665,11 +668,17 @@ const ShippingPage = () => {
   }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog]);
 
   const documentIdsOnPage = React.useMemo(() => documents.map((d) => d.id), [documents]);
+  /** Массовые действия недоступны для уже отгруженных заданий. */
+  const documentBulkSelectableIdsOnPage = React.useMemo(
+    () => documents.filter((d) => !isShipmentFinalizeBlockedAlreadyDone(d)).map((d) => d.id),
+    [documents],
+  );
 
   React.useEffect(() => {
     const allowed = new Set(documentIdsOnPage);
-    setSelectedShipmentIds((prev) => (Array.isArray(prev) ? prev : []).filter((id) => allowed.has(id)));
-  }, [documentIdsOnPage]);
+    const bulkAllowed = new Set(documentBulkSelectableIdsOnPage);
+    setSelectedShipmentIds((prev) => (Array.isArray(prev) ? prev : []).filter((id) => allowed.has(id) && bulkAllowed.has(id)));
+  }, [documentIdsOnPage, documentBulkSelectableIdsOnPage]);
 
   const openTaskResolvedId = React.useMemo(() => {
     if (!openTaskDecoded) return null;
@@ -986,6 +995,10 @@ const ShippingPage = () => {
 
   const completeShipmentAssembly = React.useCallback(
     async (doc: ShipmentDoc) => {
+      if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
+        toast.info("Отгрузка уже завершена");
+        return;
+      }
       const rows = doc?.shipments ?? [];
       if (!Array.isArray(rows) || !shippingGroupAllLinesPacked(rows)) return;
       if (assemblyCompletingId === doc.id) return;
@@ -1314,10 +1327,15 @@ const ShippingPage = () => {
     const ids = new Set(Array.isArray(selectedShipmentIds) ? selectedShipmentIds : []);
     const list = Array.isArray(documents) ? documents : [];
     const selected = list.filter((d) => d && ids.has(d.id));
-    const pendingDocs = selected.filter((d) => d.workflowStatus === "pending");
-    const nonPending = selected.filter((d) => d.workflowStatus !== "pending");
+    const actionable = selected.filter((d) => !isShipmentFinalizeBlockedAlreadyDone(d));
+    const pendingDocs = actionable.filter((d) => d.workflowStatus === "pending");
+    const nonPending = actionable.filter((d) => d.workflowStatus !== "pending");
     if (nonPending.length > 0) {
       toast.warning("В работу можно взять только отгрузки со статусом 'Новое'.");
+    }
+    if (selected.length > 0 && actionable.length === 0) {
+      toast.info("Отгрузка уже завершена");
+      return;
     }
     if (pendingDocs.length === 0) return;
     if (bulkTakingToWork || bulkConfirming) return;
@@ -1340,6 +1358,12 @@ const ShippingPage = () => {
 
   const submitPickFromCell = React.useCallback(
     async (shipmentId: string) => {
+      if (!selectedDoc || isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
+        if (selectedDoc && isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
+          toast.info("Отгрузка уже завершена");
+        }
+        return;
+      }
       const line = selectedShipmentPickRows.find((x) => x.shipmentId === shipmentId);
       if (!line) return;
       const draft = pickDraftByShipment[shipmentId];
@@ -1451,8 +1475,8 @@ const ShippingPage = () => {
       if (!selectedDoc) return;
       const shipmentsDoc = Array.isArray(selectedDoc.shipments) ? selectedDoc.shipments : [];
       const wfUi = shippingWorkflowFromGroup(shipmentsDoc);
-      if (isShippingTerminal(wfUi)) {
-        toast.error("Нельзя отменить подбор после отгрузки");
+      if (isShippingTerminal(wfUi) || isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
+        toast.info("Отгрузка уже завершена");
         return;
       }
       if (undoingPickId === shipmentId || isUpdatingOutboundDraft || isAppendingMovements) return;
@@ -1463,12 +1487,8 @@ const ShippingPage = () => {
       const factRaw = outboundPickedQty(latestShipment) ?? 0;
       const fact = Math.max(0, Math.trunc(Number(factRaw) || 0));
       const packed = outboundPackedQtyAssemblyGate(latestShipment);
-      if (
-        latestShipment.workflowStatus === "shipped" ||
-        latestShipment.workflowStatus === "shipped_with_diff" ||
-        latestShipment.status === "отгружено"
-      ) {
-        toast.error("Нельзя отменить подбор после отгрузки");
+      if (isOutboundShipmentRowTerminalGate(latestShipment)) {
+        toast.info("Отгрузка уже завершена");
         return;
       }
 
@@ -1756,24 +1776,25 @@ const ShippingPage = () => {
                     <TableRow className="border-slate-200 bg-slate-50/90 hover:bg-slate-50/90">
                       <TableHead className="h-9 w-10 px-2 py-2">
                         <Checkbox
+                          disabled={documentBulkSelectableIdsOnPage.length === 0}
                           checked={
-                            documentIdsOnPage.length > 0 &&
-                            documentIdsOnPage.every((id) => selectedShipmentIds.includes(id))
+                            documentBulkSelectableIdsOnPage.length > 0 &&
+                            documentBulkSelectableIdsOnPage.every((id) => selectedShipmentIds.includes(id))
                               ? true
-                              : documentIdsOnPage.some((id) => selectedShipmentIds.includes(id))
+                              : documentBulkSelectableIdsOnPage.some((id) => selectedShipmentIds.includes(id))
                                 ? "indeterminate"
                                 : false
                           }
                           onCheckedChange={() => {
-                            const allIds = documentIdsOnPage;
+                            const bulkIds = documentBulkSelectableIdsOnPage;
                             const allSelected =
-                              allIds.length > 0 && allIds.every((id) => selectedShipmentIds.includes(id));
+                              bulkIds.length > 0 && bulkIds.every((id) => selectedShipmentIds.includes(id));
                             setSelectedShipmentIds((prev) => {
                               const cur = new Set(Array.isArray(prev) ? prev : []);
                               if (allSelected) {
-                                allIds.forEach((id) => cur.delete(id));
+                                bulkIds.forEach((id) => cur.delete(id));
                               } else {
-                                allIds.forEach((id) => cur.add(id));
+                                bulkIds.forEach((id) => cur.add(id));
                               }
                               return [...cur];
                             });
@@ -1818,6 +1839,7 @@ const ShippingPage = () => {
                           ? "Недостаточно доступного товара по одной позиции. Подробности в подсказке."
                           : `Недостаточно доступного товара по ${stockWarnLines.length} позициям. Подробности в подсказке.`;
                       const rowSelected = selectedShipmentIds.includes(doc.id);
+                      const readOnlyShipment = isShippingTerminal(uiStatus);
                       return (
                         <React.Fragment key={doc.id}>
                           <TableRow
@@ -1837,6 +1859,7 @@ const ShippingPage = () => {
                           >
                             <TableCell className="w-10 px-2 py-2 align-middle" onClick={(e) => e.stopPropagation()}>
                               <Checkbox
+                                disabled={isShipmentFinalizeBlockedAlreadyDone(doc)}
                                 checked={rowSelected}
                                 onCheckedChange={(v) => {
                                   const on = v === true;
@@ -1940,67 +1963,71 @@ const ShippingPage = () => {
                                       </p>
                                     </div>
                                   ) : null}
-                                  <div className="rounded-md border border-slate-200 bg-white p-3">
-                                    <p className="mb-2 text-xs font-medium text-slate-600">Этапы отгрузки</p>
-                                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                      {[
-                                        { id: "pending", label: "Новое", order: 0 },
-                                        { id: "processing", label: "В работе", order: 1 },
-                                        { id: "assembled", label: "Собрано", order: 2 },
-                                        { id: "shipped", label: "Отгружено", order: 3 },
-                                      ].map((stage) => {
-                                        const passed = currentStage > stage.order;
-                                        const current = currentStage === stage.order;
-                                        const shippedWithDiffCurrent =
-                                          stage.id === "shipped" && current && uiStatus === "shipped_with_diff";
-                                        return (
-                                          <div
-                                            key={stage.id}
-                                            className={cn(
-                                              "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
-                                              passed && "border-emerald-200 bg-emerald-50 text-emerald-700",
-                                              current && "border-violet-200 bg-violet-50 text-violet-700",
-                                              shippedWithDiffCurrent && "border-amber-200 bg-amber-50 text-amber-800",
-                                              !passed && !current && "border-slate-200 bg-slate-50 text-slate-500",
-                                            )}
-                                          >
-                                            <span aria-hidden>{passed ? "✓" : "•"}</span>
-                                            <span>
-                                              {stage.label}
-                                              {shippedWithDiffCurrent ? " (с расхождением)" : ""}
-                                            </span>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                  <div className="rounded-md border border-slate-200 bg-white p-3">
-                                    <p className="mb-2 text-xs font-medium text-slate-600">История задачи</p>
-                                    {selectedShipmentTaskLogs.length === 0 ? (
-                                      <p className="text-sm text-slate-600">История по задаче пока пустая</p>
-                                    ) : (
-                                      <div className="divide-y divide-slate-100">
-                                        {selectedShipmentTaskLogs.map((log) => {
-                                          const ts = Date.parse(log.createdAt);
-                                          const when = Number.isFinite(ts)
-                                            ? format(new Date(ts), "dd.MM.yyyy HH:mm", { locale: ru })
-                                            : log.createdAt || "—";
+                                  {!readOnlyShipment ? (
+                                    <div className="rounded-md border border-slate-200 bg-white p-3">
+                                      <p className="mb-2 text-xs font-medium text-slate-600">Этапы отгрузки</p>
+                                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                        {[
+                                          { id: "pending", label: "Новое", order: 0 },
+                                          { id: "processing", label: "В работе", order: 1 },
+                                          { id: "assembled", label: "Собрано", order: 2 },
+                                          { id: "shipped", label: "Отгружено", order: 3 },
+                                        ].map((stage) => {
+                                          const passed = currentStage > stage.order;
+                                          const current = currentStage === stage.order;
+                                          const shippedWithDiffCurrent =
+                                            stage.id === "shipped" && current && uiStatus === "shipped_with_diff";
                                           return (
-                                            <div key={log.id} className="py-2.5 first:pt-0 last:pb-0">
-                                              <p className="text-xs tabular-nums text-slate-500">{when}</p>
-                                              <p className="mt-0.5 text-sm text-slate-900">
-                                                {formatOperationLogDescription(log.description)}
-                                              </p>
-                                              <p className="mt-0.5 text-xs text-slate-600">
-                                                {formatOperationLogShortStatus(log.type)}
-                                              </p>
+                                            <div
+                                              key={stage.id}
+                                              className={cn(
+                                                "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs",
+                                                passed && "border-emerald-200 bg-emerald-50 text-emerald-700",
+                                                current && "border-violet-200 bg-violet-50 text-violet-700",
+                                                shippedWithDiffCurrent && "border-amber-200 bg-amber-50 text-amber-800",
+                                                !passed && !current && "border-slate-200 bg-slate-50 text-slate-500",
+                                              )}
+                                            >
+                                              <span aria-hidden>{passed ? "✓" : "•"}</span>
+                                              <span>
+                                                {stage.label}
+                                                {shippedWithDiffCurrent ? " (с расхождением)" : ""}
+                                              </span>
                                             </div>
                                           );
                                         })}
                                       </div>
-                                    )}
-                                  </div>
-                                  {hasShippingProblem ? (
+                                    </div>
+                                  ) : null}
+                                  {!readOnlyShipment ? (
+                                    <div className="rounded-md border border-slate-200 bg-white p-3">
+                                      <p className="mb-2 text-xs font-medium text-slate-600">История задачи</p>
+                                      {selectedShipmentTaskLogs.length === 0 ? (
+                                        <p className="text-sm text-slate-600">История по задаче пока пустая</p>
+                                      ) : (
+                                        <div className="divide-y divide-slate-100">
+                                          {selectedShipmentTaskLogs.map((log) => {
+                                            const ts = Date.parse(log.createdAt);
+                                            const when = Number.isFinite(ts)
+                                              ? format(new Date(ts), "dd.MM.yyyy HH:mm", { locale: ru })
+                                              : log.createdAt || "—";
+                                            return (
+                                              <div key={log.id} className="py-2.5 first:pt-0 last:pb-0">
+                                                <p className="text-xs tabular-nums text-slate-500">{when}</p>
+                                                <p className="mt-0.5 text-sm text-slate-900">
+                                                  {formatOperationLogDescription(log.description)}
+                                                </p>
+                                                <p className="mt-0.5 text-xs text-slate-600">
+                                                  {formatOperationLogShortStatus(log.type)}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                  {!readOnlyShipment && hasShippingProblem ? (
                                     <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2">
                                       <p className="text-sm font-medium text-amber-800">⚠ Не хватает товара</p>
                                       <p className="text-xs text-amber-800/90">
@@ -2011,67 +2038,96 @@ const ShippingPage = () => {
                                       </Button>
                                     </div>
                                   ) : null}
-                                  <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                                    <div>
-                                      <span className="text-slate-500">Юрлицо</span>
-                                      <div className="font-medium text-slate-900">{legalLabel}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-500">Склад</span>
-                                      <div className="font-medium text-slate-900">{doc.sourceWarehouse}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-500">Статус</span>
-                                      <div className="mt-0.5 inline-flex flex-wrap items-center gap-1">
-                                        {uiStatus === "shipped_with_diff" ? (
-                                          <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
-                                            Отгружено с расхождением
-                                          </span>
-                                        ) : (
-                                          <StatusBadge status={uiStatus} />
-                                        )}
-                                        {showStockWarn ? (
-                                          <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
-                                            <span aria-hidden>⚠️</span>
-                                          </ShippingStockWarnTrigger>
-                                        ) : null}
+                                  {readOnlyShipment ? (
+                                    <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                                      <div>
+                                        <span className="text-slate-500">Статус</span>
+                                        <div className="mt-0.5">
+                                          {uiStatus === "shipped_with_diff" ? (
+                                            <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
+                                              Отгружено с расхождением
+                                            </span>
+                                          ) : (
+                                            <StatusBadge status={uiStatus} />
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">План</span>
+                                        <div className="font-medium tabular-nums text-slate-900">{doc.planned}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Подобрано</span>
+                                        <div className="font-medium tabular-nums text-slate-900">{doc.fact}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Упаковано</span>
+                                        <div className="font-medium tabular-nums text-slate-900">{doc.packed}</div>
                                       </div>
                                     </div>
-                                    <div>
-                                      <span className="text-slate-500">МП</span>
-                                      <div className="font-medium text-slate-900">{doc.marketplace.toUpperCase()}</div>
+                                  ) : (
+                                    <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                                      <div>
+                                        <span className="text-slate-500">Юрлицо</span>
+                                        <div className="font-medium text-slate-900">{legalLabel}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Склад</span>
+                                        <div className="font-medium text-slate-900">{doc.sourceWarehouse}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Статус</span>
+                                        <div className="mt-0.5 inline-flex flex-wrap items-center gap-1">
+                                          {uiStatus === "shipped_with_diff" ? (
+                                            <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
+                                              Отгружено с расхождением
+                                            </span>
+                                          ) : (
+                                            <StatusBadge status={uiStatus} />
+                                          )}
+                                          {showStockWarn ? (
+                                            <ShippingStockWarnTrigger tooltip={stockWarnTooltip} ariaLabel={stockWarnAria}>
+                                              <span aria-hidden>⚠️</span>
+                                            </ShippingStockWarnTrigger>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">МП</span>
+                                        <div className="font-medium text-slate-900">{doc.marketplace.toUpperCase()}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">План</span>
+                                        <div className="font-medium tabular-nums text-slate-900">{doc.planned}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Подобрано</span>
+                                        <div className="font-medium tabular-nums text-slate-900">{doc.fact}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Упаковано</span>
+                                        <div className="font-medium tabular-nums text-slate-900">{doc.packed}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Осталось</span>
+                                        <div className={`font-medium tabular-nums ${rem > 0 ? "text-amber-800" : "text-slate-900"}`}>{rem}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-500">Перерасход</span>
+                                        <div className={`font-medium tabular-nums ${over > 0 ? "text-red-700" : "text-slate-900"}`}>{over}</div>
+                                      </div>
                                     </div>
-                                    <div>
-                                      <span className="text-slate-500">План</span>
-                                      <div className="font-medium tabular-nums text-slate-900">{doc.planned}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-500">Подобрано</span>
-                                      <div className="font-medium tabular-nums text-slate-900">{doc.fact}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-500">Упаковано</span>
-                                      <div className="font-medium tabular-nums text-slate-900">{doc.packed}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-500">Осталось</span>
-                                      <div className={`font-medium tabular-nums ${rem > 0 ? "text-amber-800" : "text-slate-900"}`}>{rem}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-500">Перерасход</span>
-                                      <div className={`font-medium tabular-nums ${over > 0 ? "text-red-700" : "text-slate-900"}`}>{over}</div>
-                                    </div>
-                                  </div>
-                                  {!isShippingTerminal(uiStatus) &&
+                                  )}
+                                  {!readOnlyShipment &&
                                   doc.fact > 0 &&
                                   shippingOutboundPackedQtyGateSum(doc.shipments ?? []) < Number(doc.fact ?? 0) ? (
                                     <p className="text-xs font-medium text-amber-800">Упаковка не завершена: упаковано меньше подобранного.</p>
-                                  ) : !isShippingTerminal(uiStatus) &&
+                                  ) : !readOnlyShipment &&
                                     doc.fact > 0 &&
                                     shippingOutboundPackedQtyGateSum(doc.shipments ?? []) >= Number(doc.fact ?? 0) ? (
                                     <p className="text-xs font-medium text-emerald-800">Товар по подобранному объёму полностью упакован.</p>
                                   ) : null}
-                                  {!isShippingTerminal(uiStatus) && (doc.planned > doc.fact || doc.fact > doc.planned) && (
+                                  {!readOnlyShipment && (doc.planned > doc.fact || doc.fact > doc.planned) && (
                                     <div className="flex flex-wrap gap-3 text-sm">
                                       {doc.planned > doc.fact ? (
                                         <span className="font-medium text-amber-800">Осталось: {rem}</span>
@@ -2079,20 +2135,15 @@ const ShippingPage = () => {
                                       {doc.fact > doc.planned ? <span className="font-medium text-red-700">Перерасход: {over}</span> : null}
                                     </div>
                                   )}
-                                  {uiStatus === "shipped_with_diff" ? (
-                                    <div className="space-y-1">
-                                      <p className="text-sm font-medium text-amber-800">Расхождение: {Math.max(0, doc.planned - doc.fact)} шт</p>
-                                      <p className="text-sm text-amber-800">Причина: {doc.differenceReason || "—"}</p>
-                                    </div>
-                                  ) : null}
-                                  {uiStatus === "assembled" &&
+                                  {!readOnlyShipment &&
+                                  uiStatus === "assembled" &&
                                   !assemblyPackGateOk &&
                                   !canShipmentDiffFinalize(doc) ? (
                                     <p className="rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs font-medium text-amber-900">
                                       Сборка завершена некорректно: не все товары упакованы
                                     </p>
                                   ) : null}
-                                  {viewMode === "archive" || uiStatus === "shipped" || uiStatus === "shipped_with_diff"
+                                  {readOnlyShipment || viewMode === "archive"
                                     ? null
                                     : (
                                     <div className="space-y-2">

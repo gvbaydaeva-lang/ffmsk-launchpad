@@ -69,6 +69,12 @@ type LastScanResult =
   | { status: "success"; title: string; hint?: string }
   | { status: "error"; message: string };
 
+/** Строка отгрузки закрыта отгрузчиком — упаковка и подбор недоступны. */
+function isOutboundShipmentRowTerminal(sh: OutboundShipment): boolean {
+  const wf = String(sh.workflowStatus ?? "");
+  return wf === "shipped" || wf === "shipped_with_diff";
+}
+
 type ScanLine = {
   key: string;
   name: string;
@@ -190,8 +196,12 @@ const PackingPage = () => {
         const groupShipRaw = group.shipments ?? [];
         const groupShipSafe = Array.isArray(groupShipRaw) ? groupShipRaw : [];
         const packPlanGateOk = outboundShipmentsPackedQtyPlanSatisfied(groupShipSafe);
+        const allRowsShippedOut =
+          groupShipSafe.length > 0 && groupShipSafe.every((sh) => isOutboundShipmentRowTerminal(sh));
         const packingDone =
+          allRowsShippedOut ||
           wfNorm === "shipped" ||
+          wfNorm === "shipped_with_diff" ||
           (wfNorm === "completed" && packPlanGateOk) ||
           (wfNorm === "assembled" && packPlanGateOk);
         if (viewMode === "active" && packingDone) return false;
@@ -388,6 +398,10 @@ const PackingPage = () => {
   const applyScan = async () => {
     const code = scanValue.trim();
     if (!code || !startedAssignment) return;
+    if (startedShipmentList.some((sh) => isOutboundShipmentRowTerminal(sh))) {
+      toast.info("Отгрузка уже завершена");
+      return;
+    }
     const lineByBarcode = scanLines.find((x) => x.barcode && x.barcode === code);
     if (!lineByBarcode) {
       playScanErrorSound();
@@ -557,6 +571,10 @@ const PackingPage = () => {
 
   const finalizeAssignment = async () => {
     if (!startedAssignment || progress.totalPlan === 0) return;
+    if (startedShipmentList.some((sh) => isOutboundShipmentRowTerminal(sh))) {
+      toast.info("Отгрузка уже завершена");
+      return;
+    }
     const shipListGateRaw = startedShipmentList ?? [];
     const shipListGate = Array.isArray(shipListGateRaw) ? shipListGateRaw : [];
     if (!outboundShipmentsPackedQtyPlanSatisfied(shipListGate)) {
@@ -630,6 +648,10 @@ const PackingPage = () => {
       assignments.find((a) => {
         if (a.id === currentAssignmentId) return false;
         const w = normalizeWorkflowStatus(a.workflowStatus);
+        if (w === "shipped" || w === "shipped_with_diff") return false;
+        const ar = a.shipments ?? [];
+        const arSafe = Array.isArray(ar) ? ar : [];
+        if (arSafe.some((sh) => isOutboundShipmentRowTerminal(sh))) return false;
         return w === "pending" || w === "processing" || w === "assembling";
       }) ?? null;
     try {
@@ -758,7 +780,14 @@ const PackingPage = () => {
     const saRaw = assignment.shipments ?? [];
     const saList = Array.isArray(saRaw) ? saRaw : [];
     const saPackOk = outboundShipmentsPackedQtyPlanSatisfied(saList);
-    if (w === "shipped") return;
+    if (saList.some((sh) => isOutboundShipmentRowTerminal(sh))) {
+      toast.info("Отгрузка уже завершена");
+      return;
+    }
+    if (w === "shipped" || w === "shipped_with_diff") {
+      toast.info("Отгрузка уже завершена");
+      return;
+    }
     if ((w === "completed" || w === "assembled") && saPackOk) return;
     if (assignment.workflowStatus === "pending") {
       for (const sh of assignment.shipments) {
@@ -808,6 +837,26 @@ const PackingPage = () => {
     })();
   }, [searchParams, allGroupedAssignments, isLoading, error, setSearchParams]);
 
+  const packingReadOnlyShippedOut =
+    startedAssignment != null &&
+    startedShipmentList.length > 0 &&
+    startedShipmentList.every((sh) => isOutboundShipmentRowTerminal(sh));
+  const startedShipmentDiffReason = React.useMemo(() => {
+    const raw = startedShipmentList
+      .map((s) => String((s as OutboundShipment & { differenceReason?: string }).differenceReason ?? "").trim())
+      .find(Boolean);
+    return raw || null;
+  }, [startedShipmentList]);
+  const startedShippedAtLabel = React.useMemo(() => {
+    if (!startedShipmentList.length) return null as string | null;
+    const maxTs = startedShipmentList.reduce((m, sh) => {
+      const t = String(sh.shippedAt ?? "").trim();
+      if (t && t > m) return t;
+      return m;
+    }, "");
+    return maxTs ? formatTaskArchiveDateLabel(maxTs) : null;
+  }, [startedShipmentList]);
+
   const startedFirst = startedShipmentList[0] ?? null;
   const startedAssignmentNo =
     startedFirst?.assignmentNo?.trim() || startedFirst?.assignmentId?.trim() || startedFirst?.id || "—";
@@ -818,7 +867,10 @@ const PackingPage = () => {
     ? format(parseISO(startedFirst.createdAt), "dd.MM.yyyy HH:mm", { locale: ru })
     : "—";
   const startedWarehouse = startedFirst?.sourceWarehouse ?? "—";
-  const startedStatus = startedAssignment ? normalizeWorkflowStatus(startedAssignment.workflowStatus) : "pending";
+  const startedStatus =
+    startedAssignment && startedShipmentList.length > 0
+      ? workflowFromOutboundGroup(startedShipmentList)
+      : ("pending" as TaskWorkflowStatus);
 
   return (
     <div
@@ -863,6 +915,7 @@ const PackingPage = () => {
               <SelectItem value="assembled">Собрано</SelectItem>
               <SelectItem value="completed">Завершено</SelectItem>
               <SelectItem value="shipped">Отгружено</SelectItem>
+              <SelectItem value="shipped_with_diff">Отгружено с расхождением</SelectItem>
             </SelectContent>
           </Select>
           <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
@@ -1015,6 +1068,18 @@ const PackingPage = () => {
               </div>
               <div><span className="text-slate-500">Дата создания:</span><div className="font-medium text-slate-900">{startedCreatedLabel}</div></div>
             </div>
+            {packingReadOnlyShippedOut ? (
+              <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-sm text-amber-950">
+                <p className="font-medium">Отгрузка уже завершена. Упаковка недоступна.</p>
+                {startedShippedAtLabel ? (
+                  <p className="text-xs tabular-nums text-amber-900/90">Дата отгрузки: {startedShippedAtLabel}</p>
+                ) : null}
+                {startedShipmentDiffReason ? (
+                  <p className="text-xs text-amber-900/90">Причина расхождения: {startedShipmentDiffReason}</p>
+                ) : null}
+              </div>
+            ) : null}
+            {!packingReadOnlyShippedOut ? (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
               <Input
                 ref={scanInputRef}
@@ -1043,7 +1108,9 @@ const PackingPage = () => {
                 {isSubmittingScan || isUpdatingOutboundDraft ? "Обработка..." : "Пикнуть"}
               </Button>
             </div>
+            ) : null}
 
+            {!packingReadOnlyShippedOut ? (
             <div
               className={cn(
                 "rounded-lg border px-4 py-3 text-sm",
@@ -1064,6 +1131,7 @@ const PackingPage = () => {
                 <p className="font-semibold">{lastScanResult.message}</p>
               )}
             </div>
+            ) : null}
 
             <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -1169,6 +1237,7 @@ const PackingPage = () => {
               </table>
             </div>
 
+            {!packingReadOnlyShippedOut ? (
             <div className="space-y-2">
               <div className="flex max-w-sm flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
                 <Button
@@ -1204,6 +1273,7 @@ const PackingPage = () => {
                 </p>
               ) : null}
             </div>
+            ) : null}
             <Button variant="outline" className="h-10 w-full max-w-sm" onClick={() => setStartedAssignmentId(null)}>
               Назад к списку
             </Button>
