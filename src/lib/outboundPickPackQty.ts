@@ -50,3 +50,14 @@ export function outboundPackedQtyAssemblyGate(sh: OutboundShipment): number {
   if (!Number.isFinite(raw)) return 0;
   return Math.max(0, Math.trunc(raw));
 }
+
+/** Все строки с plan > 0: packedQty (?? 0) >= plan. Непустая группа строк. */
+export function outboundShipmentsPackedQtyPlanSatisfied(rows: OutboundShipment[] | null | undefined): boolean {
+  const safe = rows ?? [];
+  if (!Array.isArray(safe) || safe.length === 0) return false;
+  return safe.every((sh) => {
+    const plan = Number(sh.plannedUnits ?? 0) || 0;
+    if (plan <= 0) return true;
+    return outboundPackedQtyAssemblyGate(sh) >= plan;
+  });
+}

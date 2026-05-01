@@ -52,6 +52,7 @@ import {
   outboundPackedQtyAssemblyGate,
   outboundPackedQtyDisplay,
   outboundPickedQty,
+  outboundShipmentsPackedQtyPlanSatisfied,
 } from "@/lib/outboundPickPackQty";
 
 type ShipmentDoc = {
@@ -140,15 +141,10 @@ function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiSta
   return "pending";
 }
 
-/** Все строки с планом > 0: packedQty >= план (только явный счётчик, packedQty ?? 0). */
+/** Все строки с планом > 0: packedQty ?? 0 >= plan (см. outboundShipmentsPackedQtyPlanSatisfied). */
 function shippingGroupAllLinesPacked(shipments: OutboundShipment[] | undefined | null): boolean {
   const rows = Array.isArray(shipments) ? shipments : [];
-  if (rows.length === 0) return false;
-  return rows.every((sh) => {
-    const plan = Number(sh.plannedUnits ?? 0) || 0;
-    if (plan <= 0) return true;
-    return outboundPackedQtyAssemblyGate(sh) >= plan;
-  });
+  return outboundShipmentsPackedQtyPlanSatisfied(rows);
 }
 
 /** Сумма явного упакованного (packedQty ?? 0) по строкам — для текстов статуса, согласованных с завершением сборки. */
@@ -159,6 +155,17 @@ function shippingOutboundPackedQtyGateSum(shipments: OutboundShipment[] | undefi
 }
 
 /** По всем строкам с планом > 0: подобрано >= план (для подсказки «не упаковано» при полном подборе). */
+function docShipmentsPackedGateOk(doc: ShipmentDoc | null | undefined): boolean {
+  const raw = doc?.shipments ?? [];
+  const rows = Array.isArray(raw) ? raw : [];
+  return outboundShipmentsPackedQtyPlanSatisfied(rows);
+}
+
+function shipmentDocsPackedGateOk(docs: ShipmentDoc[] | null | undefined): boolean {
+  const list = Array.isArray(docs) ? docs : [];
+  return list.every((d) => docShipmentsPackedGateOk(d));
+}
+
 function shippingGroupFullyPickedForPlan(shipments: OutboundShipment[] | undefined | null): boolean {
   const rows = Array.isArray(shipments) ? shipments : [];
   if (rows.length === 0) return false;
@@ -883,7 +890,13 @@ const ShippingPage = () => {
     async (doc: ShipmentDoc) => {
       if (doc.workflowStatus !== "assembled") return;
       if (confirmingShipmentId === doc.id) return;
-      const hasDiff = doc.fact < doc.planned;
+      const packRowsRaw = doc?.shipments ?? [];
+      const packRows = Array.isArray(packRowsRaw) ? packRowsRaw : [];
+      if (!outboundShipmentsPackedQtyPlanSatisfied(packRows)) {
+        toast.error("Нельзя подтвердить отгрузку: упакованы не все товары по плану.");
+        return;
+      }
+      const hasDiff = Number(doc.fact ?? 0) < Number(doc.planned ?? 0);
       if (hasDiff) {
         setPendingBulkDiffDocs([]);
         setPendingBulkExactDocs([]);
@@ -895,8 +908,7 @@ const ShippingPage = () => {
       setConfirmingShipmentId(doc.id);
       const ts = new Date().toISOString();
       try {
-        const shipRows = Array.isArray(doc?.shipments) ? doc.shipments : [];
-        for (const sh of shipRows) {
+        for (const sh of packRows) {
           await updateOutboundDraft({
             id: sh.id,
             patch: {
@@ -921,11 +933,27 @@ const ShippingPage = () => {
 
     if (bulkDiff.length > 0) {
       if (bulkConfirming || bulkTakingToWork) return;
+      for (const doc of bulkDiff) {
+        const bdRowsRaw = doc?.shipments ?? [];
+        const bdRows = Array.isArray(bdRowsRaw) ? bdRowsRaw : [];
+        if (!outboundShipmentsPackedQtyPlanSatisfied(bdRows)) {
+          toast.error("Нельзя подтвердить: упакованы не все товары по плану.");
+          return;
+        }
+      }
+      for (const doc of bulkExact) {
+        const exRowsRaw = doc?.shipments ?? [];
+        const exRows = Array.isArray(exRowsRaw) ? exRowsRaw : [];
+        if (!outboundShipmentsPackedQtyPlanSatisfied(exRows)) {
+          toast.error("Нельзя подтвердить: упакованы не все товары по плану.");
+          return;
+        }
+      }
       setBulkConfirming(true);
       const ts = new Date().toISOString();
       try {
         for (const doc of bulkDiff) {
-          for (const sh of doc.shipments) {
+          for (const sh of doc.shipments ?? []) {
             const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
               workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
               completedAt: sh.completedAt ?? ts,
@@ -936,7 +964,7 @@ const ShippingPage = () => {
           }
         }
         for (const doc of bulkExact) {
-          for (const sh of doc.shipments) {
+          for (const sh of doc.shipments ?? []) {
             await updateOutboundDraft({
               id: sh.id,
               patch: {
@@ -962,10 +990,16 @@ const ShippingPage = () => {
 
     if (!pendingDiffDoc || pendingDiffDoc.workflowStatus !== "assembled") return;
     if (confirmingShipmentId === pendingDiffDoc.id) return;
+    const pendRowsRaw = pendingDiffDoc?.shipments ?? [];
+    const pendRows = Array.isArray(pendRowsRaw) ? pendRowsRaw : [];
+    if (!outboundShipmentsPackedQtyPlanSatisfied(pendRows)) {
+      toast.error("Нельзя подтвердить: упакованы не все товары по плану.");
+      return;
+    }
     setConfirmingShipmentId(pendingDiffDoc.id);
     const ts = new Date().toISOString();
     try {
-      for (const sh of pendingDiffDoc.shipments) {
+      for (const sh of pendRows) {
         const patch: Partial<OutboundShipment> & { differenceReason?: string } = {
             workflowStatus: "shipped_with_diff" as TaskWorkflowStatus,
             completedAt: sh.completedAt ?? ts,
@@ -1004,9 +1038,18 @@ const ShippingPage = () => {
       toast.warning("Подтвердить можно только отгрузки со статусом 'Собрано'.");
     }
     if (assembled.length === 0) return;
+    const assembledEligible = assembled.filter((d) => {
+      const sr = d?.shipments ?? [];
+      const rows = Array.isArray(sr) ? sr : [];
+      return outboundShipmentsPackedQtyPlanSatisfied(rows);
+    });
+    if (assembled.length > assembledEligible.length) {
+      toast.warning("Часть заданий исключена: не все товары упакованы по плану.");
+    }
+    if (assembledEligible.length === 0) return;
     if (bulkConfirming || bulkTakingToWork) return;
-    const withDiff = assembled.filter((d) => d.fact < d.planned);
-    const withoutDiff = assembled.filter((d) => d.fact >= d.planned);
+    const withDiff = assembledEligible.filter((d) => Number(d.fact ?? 0) < Number(d.planned ?? 0));
+    const withoutDiff = assembledEligible.filter((d) => Number(d.fact ?? 0) >= Number(d.planned ?? 0));
     if (withDiff.length > 0) {
       setPendingDiffDoc(null);
       setPendingBulkDiffDocs(withDiff);
@@ -1020,7 +1063,7 @@ const ShippingPage = () => {
     const ts = new Date().toISOString();
     try {
       for (const doc of withoutDiff) {
-        for (const sh of doc.shipments) {
+        for (const sh of doc.shipments ?? []) {
           await updateOutboundDraft({
             id: sh.id,
             patch: {
@@ -1342,8 +1385,11 @@ const ShippingPage = () => {
                     {documents.map((doc) => {
                       const uiStatus = shippingWorkflowFromGroup(doc.shipments);
                       const currentStage = shippingStageIndex(uiStatus);
-                      const rem = Math.max(0, doc.planned - doc.fact);
-                      const over = Math.max(0, doc.fact - doc.planned);
+                      const rem = Math.max(0, Number(doc.planned ?? 0) - Number(doc.fact ?? 0));
+                      const over = Math.max(0, Number(doc.fact ?? 0) - Number(doc.planned ?? 0));
+                      const docShipRaw = doc?.shipments ?? [];
+                      const docShipSafe = Array.isArray(docShipRaw) ? docShipRaw : [];
+                      const assemblyPackGateOk = outboundShipmentsPackedQtyPlanSatisfied(docShipSafe);
                       const isSel = selectedId === doc.id;
                       const legalLabel = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
                       const stockWarnLines = shippingDocStockWarning.get(doc.id)?.lines ?? [];
@@ -1599,6 +1645,11 @@ const ShippingPage = () => {
                                       <p className="text-sm text-amber-800">Причина: {doc.differenceReason || "—"}</p>
                                     </div>
                                   ) : null}
+                                  {uiStatus === "assembled" && !assemblyPackGateOk ? (
+                                    <p className="rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs font-medium text-amber-900">
+                                      Сборка завершена некорректно: не все товары упакованы
+                                    </p>
+                                  ) : null}
                                   {viewMode === "archive" ? null : (
                                     <div className="space-y-2">
                                       {(() => {
@@ -1621,19 +1672,25 @@ const ShippingPage = () => {
                                             ) : null}
                                             <div className="flex flex-wrap items-center gap-2">
                                               {uiStatus === "assembled" ? (
-                                                <Button
-                                                  type="button"
-                                                  size="sm"
-                                                  onClick={() => void confirmShipment(doc)}
-                                                  disabled={
-                                                    confirmingShipmentId === doc.id ||
-                                                    isUpdatingOutboundDraft ||
-                                                    bulkConfirming ||
-                                                    bulkTakingToWork
-                                                  }
-                                                >
-                                                  Подтвердить отгрузку
-                                                </Button>
+                                                assemblyPackGateOk ? (
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    onClick={() => void confirmShipment(doc)}
+                                                    disabled={
+                                                      confirmingShipmentId === doc.id ||
+                                                      isUpdatingOutboundDraft ||
+                                                      bulkConfirming ||
+                                                      bulkTakingToWork
+                                                    }
+                                                  >
+                                                    Подтвердить отгрузку
+                                                  </Button>
+                                                ) : (
+                                                  <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                                    Продолжить упаковку
+                                                  </Button>
+                                                )
                                               ) : uiStatus === "shipped" ? (
                                                 <p className="text-sm font-medium text-emerald-700">Отгрузка подтверждена</p>
                                               ) : uiStatus === "shipped_with_diff" ? (
@@ -1841,11 +1898,12 @@ const ShippingPage = () => {
                 !selectedDiffReason ||
                 bulkConfirming ||
                 bulkTakingToWork ||
-                (pendingBulkDiffDocs.length > 0
-                  ? false
+                (pendingBulkDiffDocs.length > 0 || pendingBulkExactDocs.length > 0
+                  ? !shipmentDocsPackedGateOk(pendingBulkDiffDocs) || !shipmentDocsPackedGateOk(pendingBulkExactDocs)
                   : !pendingDiffDoc ||
                     pendingDiffDoc.workflowStatus !== "assembled" ||
-                    confirmingShipmentId === pendingDiffDoc.id)
+                    confirmingShipmentId === pendingDiffDoc.id ||
+                    !docShipmentsPackedGateOk(pendingDiffDoc))
               }
             >
               Подтвердить

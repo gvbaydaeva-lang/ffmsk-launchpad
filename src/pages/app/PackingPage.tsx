@@ -51,6 +51,7 @@ import {
   outboundPackedQtyDisplay,
   outboundPackedQtyStoredOrZero,
   outboundPickedQty,
+  outboundShipmentsPackedQtyPlanSatisfied,
 } from "@/lib/outboundPickPackQty";
 
 type PackingAssignment = {
@@ -185,8 +186,13 @@ const PackingPage = () => {
         const first = group.shipments[0];
         if (!first) return false;
         const wfNorm = normalizeWorkflowStatus(group.workflowStatus);
+        const groupShipRaw = group.shipments ?? [];
+        const groupShipSafe = Array.isArray(groupShipRaw) ? groupShipRaw : [];
+        const packPlanGateOk = outboundShipmentsPackedQtyPlanSatisfied(groupShipSafe);
         const packingDone =
-          wfNorm === "completed" || wfNorm === "assembled" || wfNorm === "shipped";
+          wfNorm === "shipped" ||
+          (wfNorm === "completed" && packPlanGateOk) ||
+          (wfNorm === "assembled" && packPlanGateOk);
         if (viewMode === "active" && packingDone) return false;
         if (viewMode === "archive" && !packingDone) return false;
         if (statusFilter !== "all" && normalizeWorkflowStatus(group.workflowStatus) !== statusFilter) return false;
@@ -359,6 +365,11 @@ const PackingPage = () => {
   const taskNeedsReview = React.useMemo(
     () => progress.totalPlan > 0 && scanLines.some((line) => line.plan !== line.packed),
     [scanLines, progress.totalPlan],
+  );
+
+  const finalizePackPlanOk = React.useMemo(
+    () => outboundShipmentsPackedQtyPlanSatisfied(startedShipmentList),
+    [startedShipmentList],
   );
 
   const triggerFlash = React.useCallback((kind: "ok" | "error") => {
@@ -537,7 +548,12 @@ const PackingPage = () => {
 
   const finalizeAssignment = async () => {
     if (!startedAssignment || progress.totalPlan === 0) return;
-    const fullyPacked = progress.totalPacked >= progress.totalPlan || progress.remaining === 0;
+    const shipListGateRaw = startedShipmentList ?? [];
+    const shipListGate = Array.isArray(shipListGateRaw) ? shipListGateRaw : [];
+    if (!outboundShipmentsPackedQtyPlanSatisfied(shipListGate)) {
+      toast.error("Нельзя завершить: упакованы не все товары");
+      return;
+    }
     const taskId = startedAssignment.id;
     const invSnapshot =
       (queryClient.getQueryData<InventoryMovement[]>(["wms", "inventory-movements"]) ?? movementsSafe) ?? [];
@@ -730,7 +746,11 @@ const PackingPage = () => {
 
   const startAssignment = async (assignment: PackingAssignment) => {
     const w = normalizeWorkflowStatus(assignment.workflowStatus);
-    if (w === "completed" || w === "assembled" || w === "shipped") return;
+    const saRaw = assignment.shipments ?? [];
+    const saList = Array.isArray(saRaw) ? saRaw : [];
+    const saPackOk = outboundShipmentsPackedQtyPlanSatisfied(saList);
+    if (w === "shipped") return;
+    if ((w === "completed" || w === "assembled") && saPackOk) return;
     if (assignment.workflowStatus === "pending") {
       for (const sh of assignment.shipments) {
         await updateOutboundDraft({ id: sh.id, patch: { workflowStatus: "processing", status: "к отгрузке" } });
@@ -1147,19 +1167,29 @@ const PackingPage = () => {
                   variant="ghost"
                   className="h-11 w-full shrink-0 rounded-lg bg-emerald-600 font-semibold text-white shadow-none hover:bg-emerald-700 disabled:opacity-50 sm:w-auto sm:min-w-[200px]"
                   onClick={() => void finalizeAssignment()}
-                  disabled={isUpdatingOutboundDraft || isUpdatingOutbound || progress.totalPlan === 0}
+                  disabled={
+                    isUpdatingOutboundDraft ||
+                    isUpdatingOutbound ||
+                    progress.totalPlan === 0 ||
+                    !finalizePackPlanOk
+                  }
                 >
                   Завершить задание
                 </Button>
-                {finalizePlanFactWarning ? (
+                {!finalizePackPlanOk ? (
+                  <p className="text-xs font-medium leading-snug text-amber-800 sm:pt-2">
+                    Нельзя завершить: упакованы не все товары
+                  </p>
+                ) : null}
+                {finalizePackPlanOk && finalizePlanFactWarning ? (
                   <p className="text-xs font-medium leading-snug text-amber-800 sm:pt-2">{finalizePlanFactWarning}</p>
                 ) : null}
               </div>
-              {!finalizePlanFactWarning && taskNeedsReview ? (
+              {finalizePackPlanOk && !finalizePlanFactWarning && taskNeedsReview ? (
                 <p className="text-xs font-medium text-amber-800">
                   Есть расхождения план/упаковано. Завершение доступно с предупреждением; при отсутствии подбора со склада создаётся движение по min(план, упаковано).
                 </p>
-              ) : !finalizePlanFactWarning && progress.totalPacked < progress.totalPlan ? (
+              ) : finalizePackPlanOk && !finalizePlanFactWarning && progress.totalPacked < progress.totalPlan ? (
                 <p className="text-xs text-slate-600">
                   До плана по упаковке: {progress.remaining} шт. · Отсканировать из подбора: {progress.remainingPack} шт.
                 </p>
