@@ -133,6 +133,12 @@ function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiSta
 }
 
 type ShippingStockWarnLine = { barcode: string; plan: number; available: number; shortage: number };
+type ShippingLocationAvailabilityLine = { label: string; available: number };
+type ShippingLocationAvailability = {
+  storage: ShippingLocationAvailabilityLine[];
+  other: ShippingLocationAvailabilityLine[];
+  storageAvailableTotal: number;
+};
 
 function shippingAvailableFromBalanceReserve(balance: number, reserve: number): number {
   return Math.max(0, balance - reserve);
@@ -142,14 +148,16 @@ function shippingShortage(plan: number, available: number): number {
   return Math.max(0, plan - available);
 }
 
-/** Доступно по местам для отображения в карточке отгрузки: остаток по locationId из движений, резерв списывается последовательно с крупнейших остатков (без изменения расчёта резерва в целом). */
+/** Остатки по местам: логика отгрузки использует только storage, receiving/без места — только в «Прочее». */
 function shipmentLineAvailableByLocations(params: {
   movements: InventoryMovement[];
   locationById: Map<string, Location>;
+  storageLocationIds: Set<string>;
+  receivingLocationIds: Set<string>;
   balanceKey: string;
   warehouseName: string;
   reserveQty: number;
-}): { label: string; available: number }[] {
+}): ShippingLocationAvailability {
   const movementsSafe = Array.isArray(params.movements) ? params.movements : [];
   const wh = (params.warehouseName || "").trim() || "—";
   const byLoc = new Map<string, number>();
@@ -161,30 +169,44 @@ function shipmentLineAvailableByLocations(params: {
     const k = lid || "__no_location__";
     byLoc.set(k, (byLoc.get(k) ?? 0) + m.qty);
   }
-  const entries = [...byLoc.entries()]
+  const allEntries = [...byLoc.entries()]
     .map(([k, balance]) => ({
       k,
       balance,
-      label: k === "__no_location__" ? "Без места" : (params.locationById.get(k)?.name ?? "Без места"),
+      label:
+        k === "__no_location__"
+          ? "Без места"
+          : params.receivingLocationIds.has(k)
+            ? (params.locationById.get(k)?.name ?? "ПРИЕМКА")
+            : (params.locationById.get(k)?.name ?? "Без места"),
     }))
     .filter((e) => e.balance > 0)
     .sort((a, b) => b.balance - a.balance);
 
+  const storageEntries = allEntries.filter((e) => params.storageLocationIds.has(e.k));
+  const otherEntries = allEntries.filter((e) => !params.storageLocationIds.has(e.k));
+
+  // Резерв распределяем только по storage, так как отгрузка разрешена только из ячеек хранения.
   let rem = Math.max(0, Number(params.reserveQty) || 0);
-  const out: { label: string; available: number }[] = [];
-  for (const e of entries) {
+  const storage: ShippingLocationAvailabilityLine[] = [];
+  for (const e of storageEntries) {
     const take = Math.min(Math.max(0, e.balance), rem);
     const available = Math.max(0, e.balance - take);
     rem -= take;
-    if (available > 0) out.push({ label: e.label, available });
+    if (available > 0) storage.push({ label: e.label, available });
   }
-  return out;
+  const other = otherEntries.map((e) => ({ label: e.label, available: e.balance }));
+  const storageAvailableTotal = storage.reduce((sum, x) => sum + x.available, 0);
+  return { storage, other, storageAvailableTotal };
 }
 
 /** Та же логика, что для ⚠ нехватки: plan>0, fact<plan, plan>доступно, доступно=max(0, остаток−резерв). Без движений — пусто. */
 function shippingStockShortageLinesForDoc(
   doc: ShipmentDoc,
   inventoryMovements: InventoryMovement[],
+  locationById: Map<string, Location>,
+  storageLocationIds: Set<string>,
+  receivingLocationIds: Set<string>,
   outboundRows: OutboundShipment[] | undefined,
   catalog: ProductCatalogItem[] | undefined,
 ): ShippingStockWarnLine[] {
@@ -200,9 +222,17 @@ function shippingStockShortageLinesForDoc(
     if (fact >= plan) continue;
     const product = byProduct.get(sh.productId) ?? null;
     const key = balanceKeyFromOutboundShipment(sh, product);
-    const balanceQty = balanceByKey.get(key) ?? 0;
     const reserveQty = reserveByKey.get(key) ?? 0;
-    const available = shippingAvailableFromBalanceReserve(balanceQty, reserveQty);
+    const locationsBreakdown = shipmentLineAvailableByLocations({
+      movements: inventoryMovements,
+      locationById,
+      storageLocationIds,
+      receivingLocationIds,
+      balanceKey: key,
+      warehouseName: sh.sourceWarehouse || "",
+      reserveQty,
+    });
+    const available = locationsBreakdown.storageAvailableTotal;
     if (plan > available) {
       const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
       lines.push({ barcode, plan, available, shortage: shippingShortage(plan, available) });
@@ -303,6 +333,14 @@ const ShippingPage = () => {
   );
   const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
   const locationById = React.useMemo(() => new Map(locationsSafe.map((l) => [l.id, l])), [locationsSafe]);
+  const storageLocationIds = React.useMemo(
+    () => new Set(locationsSafe.filter((l) => l?.type === "storage").map((l) => l.id)),
+    [locationsSafe],
+  );
+  const receivingLocationIds = React.useMemo(
+    () => new Set(locationsSafe.filter((l) => l?.type === "receiving").map((l) => l.id)),
+    [locationsSafe],
+  );
 
   const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
   const reasonFromUrl = React.useMemo(() => {
@@ -406,7 +444,17 @@ const ShippingPage = () => {
       return true;
     });
     return problemFromUrl === "shortage"
-      ? withFilters.filter((d) => shippingStockShortageLinesForDoc(d, movementDataSafe, data, catalog ?? []).length > 0)
+      ? withFilters.filter((d) =>
+          shippingStockShortageLinesForDoc(
+            d,
+            movementDataSafe,
+            locationById,
+            storageLocationIds,
+            receivingLocationIds,
+            data,
+            catalog ?? [],
+          ).length > 0,
+        )
       : withFilters;
   }, [
     filtered,
@@ -420,6 +468,9 @@ const ShippingPage = () => {
     reasonFromUrl,
     problemFromUrl,
     movementDataSafe,
+    locationById,
+    storageLocationIds,
+    receivingLocationIds,
     data,
     catalog,
   ]);
@@ -432,8 +483,15 @@ const ShippingPage = () => {
     let assembled = 0;
     for (const d of base) {
       const ui = shippingWorkflowFromGroup(d.shipments);
-      const hasShortage =
-        shippingStockShortageLinesForDoc(d, movementDataSafe, data, catalog ?? []).length > 0;
+      const hasShortage = shippingStockShortageLinesForDoc(
+        d,
+        movementDataSafe,
+        locationById,
+        storageLocationIds,
+        receivingLocationIds,
+        data,
+        catalog ?? [],
+      ).length > 0;
       if (hasShortage || ui === "shipped_with_diff") problematic += 1;
       if (hasShortage) shortage += 1;
       if (ui === "shipped_with_diff") shippedWithDiff += 1;
@@ -446,7 +504,7 @@ const ShippingPage = () => {
       shipped_with_diff: shippedWithDiff,
       assembled,
     };
-  }, [documentsBeforeQuickFilter, movementDataSafe, data, catalog]);
+  }, [documentsBeforeQuickFilter, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog]);
 
   const documents = React.useMemo(() => {
     const afterProblem = Array.isArray(documentsBeforeQuickFilter) ? documentsBeforeQuickFilter : [];
@@ -455,8 +513,15 @@ const ShippingPage = () => {
         ? afterProblem
         : afterProblem.filter((d) => {
             const ui = shippingWorkflowFromGroup(d.shipments);
-            const hasShortage =
-              shippingStockShortageLinesForDoc(d, movementDataSafe, data, catalog ?? []).length > 0;
+            const hasShortage = shippingStockShortageLinesForDoc(
+              d,
+              movementDataSafe,
+              locationById,
+              storageLocationIds,
+              receivingLocationIds,
+              data,
+              catalog ?? [],
+            ).length > 0;
             if (shippingQuickFilter === "problematic") return hasShortage || ui === "shipped_with_diff";
             if (shippingQuickFilter === "shortage") return hasShortage;
             if (shippingQuickFilter === "shipped_with_diff") return ui === "shipped_with_diff";
@@ -469,7 +534,7 @@ const ShippingPage = () => {
       }
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
-  }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, movementDataSafe, data, catalog]);
+  }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog]);
 
   const documentIdsOnPage = React.useMemo(() => documents.map((d) => d.id), [documents]);
 
@@ -565,10 +630,20 @@ const ShippingPage = () => {
   const shippingDocStockWarning = React.useMemo(() => {
     const map = new Map<string, { lines: ShippingStockWarnLine[] }>();
     for (const doc of documents) {
-      map.set(doc.id, { lines: shippingStockShortageLinesForDoc(doc, movementDataSafe, data, catalog ?? []) });
+      map.set(doc.id, {
+        lines: shippingStockShortageLinesForDoc(
+          doc,
+          movementDataSafe,
+          locationById,
+          storageLocationIds,
+          receivingLocationIds,
+          data,
+          catalog ?? [],
+        ),
+      });
     }
     return map;
-  }, [documents, movementDataSafe, data, catalog]);
+  }, [documents, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog]);
 
   const selectedDoc = documents.find((x) => x.id === selectedId) ?? null;
 
@@ -586,14 +661,14 @@ const ShippingPage = () => {
 
   /** Строки отгрузки из хранилища часто без import* — подставляем поля из каталога по productId (как в упаковщике). */
   const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
-    if (!selectedDoc?.shipments?.length) return [];
+    const itemsSafe = Array.isArray(selectedDoc?.shipments) ? selectedDoc.shipments : [];
+    if (!itemsSafe.length) return [];
     const catalogSafe = Array.isArray(catalog) ? catalog : [];
     const byProduct = new Map(catalogSafe.map((p) => [p.id, p]));
     const showStock = !isShippingTerminal(selectedDoc.workflowStatus);
     const movementsReady = movementDataSafe.length > 0;
-    const balanceByKey = showStock && movementsReady ? getBalanceByKeyMap(movementDataSafe) : null;
     const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalogSafe) : null;
-    return selectedDoc.shipments.map((sh) => {
+    return itemsSafe.map((sh) => {
       const product = byProduct.get(sh.productId) ?? null;
       const name = (sh.importName || product?.name || "").trim() || "—";
       const article = (sh.importArticle || product?.supplierArticle || "").trim() || "—";
@@ -604,11 +679,19 @@ const ShippingPage = () => {
       const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
       let shippingStock: TaskItemRow["shippingStock"] = undefined;
       let shippingLocations: TaskItemRow["shippingLocations"] = undefined;
-      if (showStock && balanceByKey && reserveByKey) {
+      if (showStock && reserveByKey) {
         const key = balanceKeyFromOutboundShipment(sh, product);
-        const balanceQty = balanceByKey.get(key) ?? 0;
         const reserveQty = reserveByKey.get(key) ?? 0;
-        const available = shippingAvailableFromBalanceReserve(balanceQty, reserveQty);
+        const locationsBreakdown = shipmentLineAvailableByLocations({
+          movements: movementDataSafe,
+          locationById,
+          storageLocationIds,
+          receivingLocationIds,
+          balanceKey: key,
+          warehouseName: sh.sourceWarehouse || "",
+          reserveQty,
+        });
+        const available = locationsBreakdown.storageAvailableTotal;
         if (fact >= plan) {
           shippingStock = { state: "sufficient" };
         } else if (plan > available) {
@@ -616,13 +699,10 @@ const ShippingPage = () => {
         } else {
           shippingStock = { state: "sufficient" };
         }
-        shippingLocations = shipmentLineAvailableByLocations({
-          movements: movementDataSafe,
-          locationById,
-          balanceKey: key,
-          warehouseName: sh.sourceWarehouse || "",
-          reserveQty,
-        });
+        shippingLocations = {
+          storage: locationsBreakdown.storage,
+          other: locationsBreakdown.other,
+        };
       }
       return {
         id: sh.id,
@@ -640,7 +720,7 @@ const ShippingPage = () => {
         shippingLocations,
       };
     });
-  }, [selectedDoc, catalog, movementDataSafe, data, locationById]);
+  }, [selectedDoc, catalog, movementDataSafe, data, locationById, storageLocationIds, receivingLocationIds]);
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 

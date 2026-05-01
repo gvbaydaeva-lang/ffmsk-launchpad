@@ -40,8 +40,11 @@ export type TaskItemRow = {
   status?: TaskWorkflowStatus;
   /** Только экран «Отгрузки»: доступно по WMS (остаток − резерв) vs план строки */
   shippingStock?: { state: "sufficient" } | { state: "short"; available: number; shortage: number };
-  /** Только экран «Отгрузки»: распределение доступного остатка по местам (только отображение) */
-  shippingLocations?: Array<{ label: string; available: number }>;
+  /** Только экран «Отгрузки»: доступный остаток по местам (storage влияет на логику, other — только информативно). */
+  shippingLocations?: {
+    storage: Array<{ label: string; available: number }>;
+    other: Array<{ label: string; available: number }>;
+  };
 };
 
 type TaskItemsTableProps = {
@@ -146,16 +149,35 @@ export default function TaskItemsTable({
                 <TableCell className="px-3 py-2 align-top text-xs text-slate-800">
                   {row.shippingLocations === undefined ? (
                     "—"
-                  ) : row.shippingLocations.length > 0 ? (
-                    <ul className="list-none space-y-0.5">
-                      {row.shippingLocations.map((line, idx) => (
-                        <li key={`${line.label}-${idx}`} className="tabular-nums">
-                          {line.label} — {line.available.toLocaleString("ru-RU")} шт
-                        </li>
-                      ))}
-                    </ul>
                   ) : (
-                    <span className="text-slate-500">Нет доступных остатков по местам</span>
+                    <div className="space-y-1.5">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Ячейки хранения</div>
+                        {row.shippingLocations.storage.length > 0 ? (
+                          <ul className="mt-0.5 list-none space-y-0.5">
+                            {row.shippingLocations.storage.map((line, idx) => (
+                              <li key={`storage-${line.label}-${idx}`} className="tabular-nums">
+                                {line.label} — {line.available.toLocaleString("ru-RU")} шт
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="text-slate-500">Нет доступных остатков в ячейках хранения</span>
+                        )}
+                      </div>
+                      {row.shippingLocations.other.length > 0 ? (
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Прочее</div>
+                          <ul className="mt-0.5 list-none space-y-0.5">
+                            {row.shippingLocations.other.map((line, idx) => (
+                              <li key={`other-${line.label}-${idx}`} className="tabular-nums">
+                                {line.label} — {line.available.toLocaleString("ru-RU")} шт
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
                   )}
                 </TableCell>
               ) : null}
