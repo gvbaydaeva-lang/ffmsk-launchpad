@@ -136,17 +136,27 @@ function canShowCancelShipmentButton(ui: ShippingUiStatus): boolean {
   return ui === "pending" || ui === "processing" || ui === "assembling" || ui === "assembled";
 }
 
-/** Все строки задания уже в финальном статусе отгрузки (на случай рассогласования с групповым статусом). */
+/**
+ * Строка «закрыта отгрузкой» для отмены подбора и т.п.: учитывает legacy status «отгружено».
+ * Не использовать для блокировки диспетчерского «Подтвердить отгрузку»: после упаковщика возможно assembled + «отгружено».
+ */
 function isOutboundShipmentRowTerminalGate(sh: OutboundShipment | null | undefined): boolean {
   if (!sh) return false;
   const wf = String(sh.workflowStatus ?? "");
   return wf === "shipped" || wf === "shipped_with_diff" || String(sh.status ?? "").trim() === "отгружено";
 }
 
+/** Финал по workflow: только shipped / shipped_with_diff; при смеси статусов по строкам — задание не считается отгруженным. */
+function isOutboundShipmentRowWorkflowShippedTerminal(sh: OutboundShipment | null | undefined): boolean {
+  if (!sh) return false;
+  const wf = String(sh.workflowStatus ?? "");
+  return wf === "shipped" || wf === "shipped_with_diff";
+}
+
 function shipmentOutboundRowsAllShippedTerminal(doc: ShipmentDoc | null | undefined): boolean {
   const rows = Array.isArray(doc?.shipments) ? doc!.shipments! : [];
   if (rows.length === 0) return false;
-  return rows.every((s) => isOutboundShipmentRowTerminalGate(s));
+  return rows.every((s) => isOutboundShipmentRowWorkflowShippedTerminal(s));
 }
 
 /** Нельзя снова подтверждать: документ уже в терминальном статусе или все строки отгружены. */
