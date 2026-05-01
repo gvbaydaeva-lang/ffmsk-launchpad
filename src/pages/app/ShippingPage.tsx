@@ -113,8 +113,8 @@ function shippingDispatcherHint(status: ShippingUiStatus): string {
   if (status === "assembling") return "Задание в сборке на складе";
   if (status === "assembled") return "Задание собрано, ожидает отгрузки";
   if (status === "shipped") return "Отгрузка завершена";
-  if (status === "shipped_with_diff") return "Отгружено с расхождением";
-  if (status === "cancelled") return "Отгрузка отменена";
+  if (status === "shipped_with_diff") return "Отгрузка завершена с расхождением";
+  if (status === "cancelled") return "Отгрузка отменена. Действия недоступны.";
   return "Сборка завершена";
 }
 
@@ -169,10 +169,14 @@ function shipmentOutboundRowsAllShippedTerminal(doc: ShipmentDoc | null | undefi
   return rows.every((s) => isOutboundShipmentRowWorkflowShippedTerminal(s));
 }
 
-/** Нельзя снова подтверждать: документ уже в терминальном статусе или все строки отгружены. */
+/** Нельзя снова подтверждать: документ уже в терминальном статусе или все строки отгружены. Учитывает сводку по группе строк. */
 function isShipmentFinalizeBlockedAlreadyDone(doc: ShipmentDoc | null | undefined): boolean {
   if (!doc) return false;
+  const rows = Array.isArray(doc.shipments) ? doc.shipments : [];
+  const grp = shippingWorkflowFromGroup(rows);
+  if (grp === "cancelled") return true;
   if (doc.workflowStatus === "cancelled") return true;
+  if (isShippingTerminal(grp)) return true;
   if (isShippingTerminal(doc.workflowStatus as ShippingUiStatus)) return true;
   return shipmentOutboundRowsAllShippedTerminal(doc);
 }
@@ -476,6 +480,19 @@ const ShippingPage = () => {
   const [assemblyCompletingId, setAssemblyCompletingId] = React.useState<string | null>(null);
   const [pickDraftByShipment, setPickDraftByShipment] = React.useState<Record<string, { locationId: string; qty: string }>>({});
   const [undoingPickId, setUndoingPickId] = React.useState<string | null>(null);
+
+  /** Любая исходящая операция по отгрузкам — блокируем повторные клики по панели. */
+  const shippingDispatchActionsGloballyBusy = Boolean(
+    isUpdatingOutboundDraft ||
+      isAppendingMovements ||
+      bulkConfirming ||
+      bulkTakingToWork ||
+      diffReasonDialogOpen ||
+      cancellingShipmentId !== null ||
+      confirmingShipmentId !== null ||
+      assemblyCompletingId !== null ||
+      undoingPickId !== null,
+  );
 
   const movementDataSafe = React.useMemo(() => {
     const m = inventoryMovements ?? [];
@@ -1039,14 +1056,27 @@ const ShippingPage = () => {
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 
   const goToPacker = React.useCallback(
-    (assignmentId: string) => {
-      navigate(`/packing?openAssignment=${encodeURIComponent(assignmentId)}`);
+    (doc: ShipmentDoc) => {
+      const grp = shippingWorkflowFromGroup(doc.shipments ?? []);
+      if (grp === "cancelled") {
+        toast.info("Отгрузка отменена");
+        return;
+      }
+      if (isShippingTerminal(grp)) {
+        toast.info("Отгрузка уже завершена");
+        return;
+      }
+      navigate(`/packing?openAssignment=${encodeURIComponent(doc.id)}`);
     },
     [navigate],
   );
 
   const completeShipmentAssembly = React.useCallback(
     async (doc: ShipmentDoc) => {
+      if (shippingWorkflowFromGroup(doc.shipments ?? []) === "cancelled") {
+        toast.info("Отгрузка отменена");
+        return;
+      }
       if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
         toast.info("Отгрузка уже завершена");
         return;
@@ -1079,7 +1109,8 @@ const ShippingPage = () => {
 
   const cancelShipmentGroup = React.useCallback(
     async (doc: ShipmentDoc) => {
-      const uiEarly = shippingWorkflowFromGroup(doc.shipments ?? []);
+      const rows = Array.isArray(doc.shipments) ? doc.shipments : [];
+      const uiEarly = shippingWorkflowFromGroup(rows);
       if (uiEarly === "cancelled" || doc.workflowStatus === "cancelled") {
         toast.info("Отгрузка уже отменена");
         return;
@@ -1091,8 +1122,6 @@ const ShippingPage = () => {
       }
       if (!canShowCancelShipmentButton(ui, rows)) return;
       if (cancelShipmentInFlightRef.current.has(doc.id)) return;
-
-      const rows = Array.isArray(doc.shipments) ? doc.shipments : [];
       if (rows.length === 0) return;
 
       const okConfirm =
@@ -1223,7 +1252,7 @@ const ShippingPage = () => {
 
   const openShipmentDiffFinalizeDialog = React.useCallback((doc: ShipmentDoc | null | undefined) => {
     if (!doc) return;
-    if (doc.workflowStatus === "cancelled") {
+    if (shippingWorkflowFromGroup(doc.shipments ?? []) === "cancelled" || doc.workflowStatus === "cancelled") {
       toast.info("Отгрузка отменена");
       return;
     }
@@ -1248,7 +1277,7 @@ const ShippingPage = () => {
 
   const finalizeShipmentExact = React.useCallback(
     async (doc: ShipmentDoc) => {
-      if (doc.workflowStatus === "cancelled") {
+      if (shippingWorkflowFromGroup(doc.shipments ?? []) === "cancelled" || doc.workflowStatus === "cancelled") {
         toast.info("Отгрузка отменена");
         return;
       }
@@ -1389,6 +1418,13 @@ const ShippingPage = () => {
     }
 
     if (!pendingDiffDoc || !canShipmentDiffFinalize(pendingDiffDoc)) return;
+    if (shippingWorkflowFromGroup(pendingDiffDoc.shipments ?? []) === "cancelled") {
+      toast.info("Отгрузка отменена");
+      setDiffReasonDialogOpen(false);
+      setPendingDiffDoc(null);
+      setSelectedDiffReason("");
+      return;
+    }
     if (isShipmentFinalizeBlockedAlreadyDone(pendingDiffDoc)) {
       toast.info("Отгрузка уже завершена");
       setDiffReasonDialogOpen(false);
@@ -2063,7 +2099,7 @@ const ShippingPage = () => {
                           >
                             <TableCell className="w-10 px-2 py-2 align-middle" onClick={(e) => e.stopPropagation()}>
                               <Checkbox
-                                disabled={isShipmentFinalizeBlockedAlreadyDone(doc)}
+                                disabled={isShipmentFinalizeBlockedAlreadyDone(doc) || shippingDispatchActionsGloballyBusy}
                                 checked={rowSelected}
                                 onCheckedChange={(v) => {
                                   const on = v === true;
@@ -2084,7 +2120,11 @@ const ShippingPage = () => {
                             </TableCell>
                             <TableCell className="whitespace-nowrap px-3 py-2 font-medium">
                               {uiStatus === "shipped_with_diff" ? (
-                                <span className="mr-1 inline-block text-amber-600" title="Отгружено с расхождением" aria-hidden>
+                                <span
+                                  className="mr-1 inline-block text-amber-600"
+                                  title="Отгрузка завершена с расхождением"
+                                  aria-hidden
+                                >
                                   ⚠
                                 </span>
                               ) : null}
@@ -2102,7 +2142,7 @@ const ShippingPage = () => {
                               <div className="inline-flex flex-wrap items-center gap-1">
                                 {uiStatus === "shipped_with_diff" ? (
                                   <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
-                                    Отгружено с расхождением
+                                    Отгрузка завершена с расхождением
                                   </span>
                                 ) : uiStatus === "cancelled" ? (
                                   <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-slate-200 text-slate-800 ring-slate-300">
@@ -2165,7 +2205,7 @@ const ShippingPage = () => {
                                     </div>
                                   ) : uiStatus === "shipped_with_diff" ? (
                                     <div className="rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2">
-                                      <p className="text-sm font-medium text-amber-900">Отгружено с расхождением</p>
+                                      <p className="text-sm font-medium text-amber-900">Отгрузка завершена с расхождением</p>
                                       <p className="mt-1 text-xs tabular-nums text-amber-900/85">
                                         Дата отгрузки:{" "}
                                         {formatTaskArchiveDateLabel(outboundShipmentsShippedAtIso(doc?.shipments ?? []))}
@@ -2257,7 +2297,7 @@ const ShippingPage = () => {
                                         <div className="mt-0.5">
                                           {uiStatus === "shipped_with_diff" ? (
                                             <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
-                                              Отгружено с расхождением
+                                              Отгрузка завершена с расхождением
                                             </span>
                                           ) : uiStatus === "cancelled" ? (
                                             <StatusBadge status="cancelled" />
@@ -2294,7 +2334,7 @@ const ShippingPage = () => {
                                         <div className="mt-0.5 inline-flex flex-wrap items-center gap-1">
                                           {uiStatus === "shipped_with_diff" ? (
                                             <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
-                                              Отгружено с расхождением
+                                              Отгрузка завершена с расхождением
                                             </span>
                                           ) : uiStatus === "cancelled" ? (
                                             <StatusBadge status="cancelled" />
@@ -2389,10 +2429,8 @@ const ShippingPage = () => {
                                                     size="sm"
                                                     onClick={() => void finalizeShipmentExact(doc)}
                                                     disabled={
-                                                      confirmingShipmentId === doc.id ||
-                                                      isUpdatingOutboundDraft ||
-                                                      bulkConfirming ||
-                                                      bulkTakingToWork
+                                                      shippingDispatchActionsGloballyBusy ||
+                                                      confirmingShipmentId === doc.id
                                                     }
                                                   >
                                                     Подтвердить отгрузку
@@ -2403,13 +2441,7 @@ const ShippingPage = () => {
                                                     size="sm"
                                                     variant="secondary"
                                                     onClick={() => openShipmentDiffFinalizeDialog(doc)}
-                                                    disabled={
-                                                      confirmingShipmentId === doc.id ||
-                                                      isUpdatingOutboundDraft ||
-                                                      bulkConfirming ||
-                                                      bulkTakingToWork ||
-                                                      Boolean(diffReasonDialogOpen)
-                                                    }
+                                                    disabled={shippingDispatchActionsGloballyBusy || confirmingShipmentId === doc.id}
                                                   >
                                                     Завершить с расхождением
                                                   </Button>
@@ -2430,18 +2462,17 @@ const ShippingPage = () => {
                                                       size="sm"
                                                       variant="secondary"
                                                       onClick={() => openShipmentDiffFinalizeDialog(doc)}
-                                                      disabled={
-                                                        confirmingShipmentId === doc.id ||
-                                                        isUpdatingOutboundDraft ||
-                                                        bulkConfirming ||
-                                                        bulkTakingToWork ||
-                                                        Boolean(diffReasonDialogOpen)
-                                                      }
+                                                      disabled={shippingDispatchActionsGloballyBusy || confirmingShipmentId === doc.id}
                                                     >
                                                       Завершить с расхождением
                                                     </Button>
                                                   ) : null}
-                                                  <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    disabled={shippingDispatchActionsGloballyBusy}
+                                                    onClick={() => goToPacker(doc)}
+                                                  >
                                                     {hasShippingProblem ? "Продолжить с расхождением" : "Продолжить сборку"}
                                                   </Button>
                                                 </>
@@ -2453,18 +2484,17 @@ const ShippingPage = () => {
                                                       size="sm"
                                                       variant="secondary"
                                                       onClick={() => openShipmentDiffFinalizeDialog(doc)}
-                                                      disabled={
-                                                        confirmingShipmentId === doc.id ||
-                                                        isUpdatingOutboundDraft ||
-                                                        bulkConfirming ||
-                                                        bulkTakingToWork ||
-                                                        Boolean(diffReasonDialogOpen)
-                                                      }
+                                                      disabled={shippingDispatchActionsGloballyBusy || confirmingShipmentId === doc.id}
                                                     >
                                                       Завершить с расхождением
                                                     </Button>
                                                   ) : null}
-                                                  <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    disabled={shippingDispatchActionsGloballyBusy}
+                                                    onClick={() => goToPacker(doc)}
+                                                  >
                                                     Открыть в упаковщике
                                                   </Button>
                                                 </>
@@ -2477,14 +2507,10 @@ const ShippingPage = () => {
                                                   className="border-red-200 text-red-800 hover:bg-red-50"
                                                   onClick={() => void cancelShipmentGroup(doc)}
                                                   disabled={
+                                                    shippingDispatchActionsGloballyBusy ||
                                                     cancellingShipmentId === doc.id ||
                                                     confirmingShipmentId === doc.id ||
-                                                    assemblyCompletingId === doc.id ||
-                                                    isUpdatingOutboundDraft ||
-                                                    isAppendingMovements ||
-                                                    bulkConfirming ||
-                                                    bulkTakingToWork ||
-                                                    undoingPickId !== null
+                                                    assemblyCompletingId === doc.id
                                                   }
                                                 >
                                                   {cancellingShipmentId === doc.id ? "Отмена…" : "Отменить отгрузку"}
@@ -2496,12 +2522,10 @@ const ShippingPage = () => {
                                                   size="sm"
                                                   variant="secondary"
                                                   disabled={
+                                                    shippingDispatchActionsGloballyBusy ||
                                                     !allLinesPackedDoc ||
                                                     assemblyCompletingId === doc.id ||
-                                                    confirmingShipmentId === doc.id ||
-                                                    isUpdatingOutboundDraft ||
-                                                    bulkConfirming ||
-                                                    bulkTakingToWork
+                                                    confirmingShipmentId === doc.id
                                                   }
                                                   onClick={() => void completeShipmentAssembly(doc)}
                                                 >
@@ -2541,7 +2565,8 @@ const ShippingPage = () => {
                                           const showUndoPick =
                                             factLine > 0 &&
                                             packedLine <= 0 &&
-                                            !isShippingTerminal(uiStatus);
+                                            !isShippingTerminal(uiStatus) &&
+                                            uiStatus !== "cancelled";
                                           return (
                                             <div key={line.shipmentId} className="grid gap-2 rounded-md border border-slate-200 p-2 md:grid-cols-12 md:items-end">
                                               <div className="md:col-span-4">
@@ -2569,7 +2594,9 @@ const ShippingPage = () => {
                                                       },
                                                     }))
                                                   }
-                                                  disabled={line.storageOptions.length === 0 || pickingDone}
+                                                  disabled={
+                                                    line.storageOptions.length === 0 || pickingDone || shippingDispatchActionsGloballyBusy
+                                                  }
                                                 >
                                                   <SelectTrigger className="h-8">
                                                     <SelectValue placeholder="Выберите ячейку" />
@@ -2596,7 +2623,9 @@ const ShippingPage = () => {
                                                       [line.shipmentId]: { ...prev[line.shipmentId], qty: e.target.value, locationId: prev[line.shipmentId]?.locationId ?? "" },
                                                     }))
                                                   }
-                                                  disabled={line.storageOptions.length === 0 || pickingDone}
+                                                  disabled={
+                                                    line.storageOptions.length === 0 || pickingDone || shippingDispatchActionsGloballyBusy
+                                                  }
                                                   className="h-8"
                                                 />
                                               </div>
@@ -2608,12 +2637,11 @@ const ShippingPage = () => {
                                                     className="h-8 min-w-[104px] flex-1 sm:flex-none sm:min-w-[100px]"
                                                     onClick={() => void submitPickFromCell(line.shipmentId)}
                                                     disabled={
+                                                      shippingDispatchActionsGloballyBusy ||
                                                       line.storageOptions.length === 0 ||
                                                       pickingDone ||
                                                       !draft.locationId ||
                                                       !pickQtyOk ||
-                                                      isUpdatingOutboundDraft ||
-                                                      isAppendingMovements ||
                                                       undoingPickId === line.shipmentId
                                                     }
                                                   >
@@ -2626,11 +2654,7 @@ const ShippingPage = () => {
                                                       size="sm"
                                                       className="h-8 min-w-[104px] flex-1 sm:flex-none sm:min-w-[120px]"
                                                       onClick={() => void undoPickFromCell(line.shipmentId)}
-                                                      disabled={
-                                                        isUpdatingOutboundDraft ||
-                                                        isAppendingMovements ||
-                                                        undoingPickId === line.shipmentId
-                                                      }
+                                                      disabled={shippingDispatchActionsGloballyBusy || undoingPickId === line.shipmentId}
                                                     >
                                                       {undoingPickId === line.shipmentId ? "Отмена…" : "Отменить подбор"}
                                                     </Button>
