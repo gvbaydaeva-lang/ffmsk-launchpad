@@ -132,6 +132,22 @@ function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiSta
   return "pending";
 }
 
+/** Упаковано по строке (поле упаковщика). */
+function shippingLinePackedQty(sh: OutboundShipment): number {
+  return Math.max(0, Math.trunc(Number(sh.packedUnits ?? 0) || 0));
+}
+
+/** Все строки с планом > 0: упаковано >= план. */
+function shippingGroupAllLinesPacked(shipments: OutboundShipment[] | undefined | null): boolean {
+  const rows = Array.isArray(shipments) ? shipments : [];
+  if (rows.length === 0) return false;
+  return rows.every((sh) => {
+    const plan = Number(sh.plannedUnits) || 0;
+    if (plan <= 0) return true;
+    return shippingLinePackedQty(sh) >= plan;
+  });
+}
+
 type ShippingStockWarnLine = { barcode: string; plan: number; available: number; shortage: number };
 type ShippingLocationAvailabilityLine = { locationId: string; label: string; available: number };
 type ShippingLocationAvailability = {
@@ -329,6 +345,7 @@ const ShippingPage = () => {
   const [selectedShipmentIds, setSelectedShipmentIds] = React.useState<string[]>([]);
   const [bulkConfirming, setBulkConfirming] = React.useState(false);
   const [bulkTakingToWork, setBulkTakingToWork] = React.useState(false);
+  const [assemblyCompletingId, setAssemblyCompletingId] = React.useState<string | null>(null);
   const [pickDraftByShipment, setPickDraftByShipment] = React.useState<Record<string, { locationId: string; qty: string }>>({});
 
   const movementDataSafe = React.useMemo(
@@ -804,6 +821,34 @@ const ShippingPage = () => {
     [navigate],
   );
 
+  const completeShipmentAssembly = React.useCallback(
+    async (doc: ShipmentDoc) => {
+      const rows = Array.isArray(doc?.shipments) ? doc.shipments : [];
+      if (!shippingGroupAllLinesPacked(rows)) return;
+      if (assemblyCompletingId === doc.id) return;
+      if (isUpdatingOutboundDraft) return;
+      setAssemblyCompletingId(doc.id);
+      const ts = new Date().toISOString();
+      try {
+        for (const sh of rows) {
+          await updateOutboundDraft({
+            id: sh.id,
+            patch: {
+              workflowStatus: "assembled",
+              updatedAt: ts,
+            },
+          });
+        }
+        toast.success("Сборка завершена", { description: "Статус задания переведён в «Собрано»." });
+      } catch {
+        toast.error("Не удалось завершить сборку");
+      } finally {
+        setAssemblyCompletingId(null);
+      }
+    },
+    [updateOutboundDraft, assemblyCompletingId, isUpdatingOutboundDraft],
+  );
+
   const confirmShipment = React.useCallback(
     async (doc: ShipmentDoc) => {
       if (doc.workflowStatus !== "assembled") return;
@@ -820,7 +865,8 @@ const ShippingPage = () => {
       setConfirmingShipmentId(doc.id);
       const ts = new Date().toISOString();
       try {
-        for (const sh of doc.shipments) {
+        const shipRows = Array.isArray(doc?.shipments) ? doc.shipments : [];
+        for (const sh of shipRows) {
           await updateOutboundDraft({
             id: sh.id,
             patch: {
@@ -1511,38 +1557,71 @@ const ShippingPage = () => {
                                     </div>
                                   ) : null}
                                   {viewMode === "archive" ? null : (
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      {uiStatus === "assembled" ? (
-                                        <Button
-                                          type="button"
-                                          size="sm"
-                                          onClick={() => void confirmShipment(doc)}
-                                          disabled={
-                                            confirmingShipmentId === doc.id ||
-                                            isUpdatingOutboundDraft ||
-                                            bulkConfirming ||
-                                            bulkTakingToWork
-                                          }
-                                        >
-                                          Подтвердить отгрузку
-                                        </Button>
-                                      ) : uiStatus === "shipped" ? (
-                                        <p className="text-sm font-medium text-emerald-700">Отгрузка подтверждена</p>
-                                      ) : uiStatus === "shipped_with_diff" ? (
-                                        <p className="text-sm font-medium text-amber-700">Отгружено с расхождением</p>
-                                      ) : isShippingTerminal(uiStatus) ? (
-                                        <Button type="button" size="sm" variant="secondary" disabled>
-                                          {uiStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
-                                        </Button>
-                                      ) : uiStatus === "processing" || uiStatus === "assembling" ? (
-                                        <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                          {hasShippingProblem ? "Продолжить с расхождением" : "Продолжить сборку"}
-                                        </Button>
-                                      ) : (
-                                        <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
-                                          Открыть в упаковщике
-                                        </Button>
-                                      )}
+                                    <div className="space-y-2">
+                                      {(() => {
+                                        const shipmentsRow = Array.isArray(doc?.shipments) ? doc.shipments : [];
+                                        const allLinesPackedDoc = shippingGroupAllLinesPacked(shipmentsRow);
+                                        const showCompleteAssemblyUi =
+                                          !isShippingTerminal(uiStatus) && uiStatus !== "assembled";
+                                        return (
+                                          <>
+                                            {showCompleteAssemblyUi && !allLinesPackedDoc ? (
+                                              <p className="text-xs text-slate-600">Упакуйте все товары для завершения</p>
+                                            ) : null}
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              {uiStatus === "assembled" ? (
+                                                <Button
+                                                  type="button"
+                                                  size="sm"
+                                                  onClick={() => void confirmShipment(doc)}
+                                                  disabled={
+                                                    confirmingShipmentId === doc.id ||
+                                                    isUpdatingOutboundDraft ||
+                                                    bulkConfirming ||
+                                                    bulkTakingToWork
+                                                  }
+                                                >
+                                                  Подтвердить отгрузку
+                                                </Button>
+                                              ) : uiStatus === "shipped" ? (
+                                                <p className="text-sm font-medium text-emerald-700">Отгрузка подтверждена</p>
+                                              ) : uiStatus === "shipped_with_diff" ? (
+                                                <p className="text-sm font-medium text-amber-700">Отгружено с расхождением</p>
+                                              ) : isShippingTerminal(uiStatus) ? (
+                                                <Button type="button" size="sm" variant="secondary" disabled>
+                                                  {uiStatus === "shipped" ? "Отгружено" : "Сборка завершена"}
+                                                </Button>
+                                              ) : uiStatus === "processing" || uiStatus === "assembling" ? (
+                                                <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                                  {hasShippingProblem ? "Продолжить с расхождением" : "Продолжить сборку"}
+                                                </Button>
+                                              ) : (
+                                                <Button type="button" size="sm" onClick={() => goToPacker(doc.id)}>
+                                                  Открыть в упаковщике
+                                                </Button>
+                                              )}
+                                              {showCompleteAssemblyUi ? (
+                                                <Button
+                                                  type="button"
+                                                  size="sm"
+                                                  variant="secondary"
+                                                  disabled={
+                                                    !allLinesPackedDoc ||
+                                                    assemblyCompletingId === doc.id ||
+                                                    confirmingShipmentId === doc.id ||
+                                                    isUpdatingOutboundDraft ||
+                                                    bulkConfirming ||
+                                                    bulkTakingToWork
+                                                  }
+                                                  onClick={() => void completeShipmentAssembly(doc)}
+                                                >
+                                                  {assemblyCompletingId === doc.id ? "Завершение…" : "Завершить сборку"}
+                                                </Button>
+                                              ) : null}
+                                            </div>
+                                          </>
+                                        );
+                                      })()}
                                     </div>
                                   )}
                                   <div>
