@@ -148,6 +148,8 @@ export type InboundWarehouseReceivingMode = "manual" | "scan";
 /** Заявка на приёмку: планируемое поступление (POST /inbounds) */
 export type InboundWarehouseRequest = {
   id: string;
+  /** Для строки-после частичной приёмки — id заявки, по которой создано продолжение; иначе null */
+  originInboundId: string | null;
   partnerId: string;
   plannedDate: string;
   status: InboundWarehouseRequestStatus;

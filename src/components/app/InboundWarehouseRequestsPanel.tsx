@@ -357,6 +357,16 @@ const InboundWarehouseRequestsPanel = () => {
 
   const productDisplayName = React.useCallback((productId: string) => productNameById.get(productId) ?? productId, [productNameById]);
 
+  /** Один связанный id продолжения на исходную заявку (идемпотентное создание в API). */
+  const continuationInboundIdByOrigin = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of inboundList ?? []) {
+      const oid = (r.originInboundId ?? "").trim();
+      if (oid) m.set(oid, r.id);
+    }
+    return m;
+  }, [inboundList]);
+
   const storageLocations = React.useMemo(() => {
     const list = Array.isArray(locationsData) ? locationsData : [];
     return list.filter((l) => l?.type === "storage").map((l) => ({ id: l.id, name: l.name || l.id }));
@@ -667,7 +677,15 @@ const InboundWarehouseRequestsPanel = () => {
                   {inboundList.map((row) => (
                     <React.Fragment key={row.id}>
                       <TableRow>
-                        <TableCell className="max-w-[140px] truncate font-mono text-xs tabular-nums">{row.id}</TableCell>
+                        <TableCell className="max-w-[180px]">
+                          <div className="truncate font-mono text-xs tabular-nums">{row.id}</div>
+                          {row.originInboundId ? (
+                            <div className="mt-0.5 text-[11px] leading-tight text-slate-500">
+                              Продолжение для{" "}
+                              <span className="break-all font-mono text-[10px]">{row.originInboundId}</span>
+                            </div>
+                          ) : null}
+                        </TableCell>
                         <TableCell className="text-sm">{entityName(row.partnerId)}</TableCell>
                         <TableCell className="text-sm tabular-nums">{formatPlannedDate(row.plannedDate)}</TableCell>
                         <TableCell>
@@ -714,17 +732,38 @@ const InboundWarehouseRequestsPanel = () => {
                           <TableCell colSpan={7} className="p-0 align-top">
                             <div className="space-y-2 p-3">
                               {row.status === "received" ? (
-                                <p className="text-xs text-slate-600">
-                                  Приёмка завершена. Факт зафиксирован, движения созданы, правки недоступны.
-                                </p>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-slate-600">
+                                    Приёмка завершена. Факт зафиксирован, движения созданы, правки недоступны.
+                                  </p>
+                                  {continuationInboundIdByOrigin.has(row.id) ? (
+                                    <p className="text-xs text-sky-800">
+                                      Заявка на остаток (частичная приёмка):{" "}
+                                      <span className="font-mono tabular-nums">
+                                        {continuationInboundIdByOrigin.get(row.id)}
+                                      </span>
+                                    </p>
+                                  ) : null}
+                                </div>
                               ) : row.status === "placed" ? (
-                                <p className="text-xs text-slate-600">
-                                  Размещение завершено. Движения из зоны приёмки в ячейки созданы, заявка закрыта.
-                                </p>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-slate-600">
+                                    Размещение завершено. Движения из зоны приёмки в ячейки созданы, заявка закрыта.
+                                  </p>
+                                  {continuationInboundIdByOrigin.has(row.id) ? (
+                                    <p className="text-xs text-sky-800">
+                                      Заявка на остаток после приёмки:{" "}
+                                      <span className="font-mono tabular-nums">
+                                        {continuationInboundIdByOrigin.get(row.id)}
+                                      </span>
+                                    </p>
+                                  ) : null}
+                                </div>
                               ) : (
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <p className="text-xs text-slate-600">
-                                    Внесите факт по строкам. При завершении будут созданы INBOUND-движения в зону приёмки.
+                                    Внесите факт по строкам. При завершении будут созданы INBOUND-движения в зону приёмки. Если
+                                    по строке принято меньше плана — автоматически создаётся одна новая заявка на остаток.
                                   </p>
                                   <Button
                                     type="button"

@@ -64,10 +64,14 @@ function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): Inbound
     receivingMode = raw.receivingMode;
   }
   const itemsRaw = Array.isArray(raw.items) ? raw.items : [];
+  const originRaw = (raw as InboundWarehouseRequest).originInboundId;
+  const originInboundId =
+    typeof originRaw === "string" && originRaw.trim() ? originRaw.trim() : null;
   return {
     ...raw,
     status,
     receivingMode,
+    originInboundId,
     items: itemsRaw.map((x) => normalizeInboundItem(x as InboundWarehouseItem)),
   };
 }
@@ -88,6 +92,57 @@ function readStored(): InboundWarehouseRequest[] {
 function writeStored(rows: InboundWarehouseRequest[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+}
+
+function inboundHasContinuationInList(originId: string, rows: InboundWarehouseRequest[]): boolean {
+  const o = (originId || "").trim();
+  if (!o) return false;
+  return rows.some((r) => (r.originInboundId || "").trim() === o);
+}
+
+/** Остаток плана по строкам после фиксации факта (только строки с remaining > 0). */
+function continuationItemsFromPartialReceive(row: InboundWarehouseRequest): { productId: string; plannedQty: number }[] {
+  const out: { productId: string; plannedQty: number }[] = [];
+  for (const it of row.items) {
+    const planned = Math.max(0, Math.trunc(Number(it.plannedQty) || 0));
+    const recv = Math.max(0, Math.trunc(Number(it.receivedQty) || 0));
+    if (recv >= planned) continue;
+    const remainingQty = planned - recv;
+    if (remainingQty > 0 && it.productId?.trim()) {
+      out.push({ productId: it.productId.trim(), plannedQty: remainingQty });
+    }
+  }
+  return out;
+}
+
+function appendContinuationInbound(
+  rows: InboundWarehouseRequest[],
+  closedRow: InboundWarehouseRequest,
+  bodyItems: { productId: string; plannedQty: number }[],
+): InboundWarehouseRequest[] {
+  if (bodyItems.length === 0) return rows;
+  const createdAt = new Date().toISOString();
+  const id = `inb-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const lines: InboundWarehouseItem[] = bodyItems.map((it, idx) => ({
+    id: `${id}-line-${idx + 1}`,
+    inboundId: id,
+    productId: it.productId.trim(),
+    plannedQty: Math.trunc(Number(it.plannedQty)),
+    receivedQty: 0,
+    placements: [],
+  }));
+  const continuation: InboundWarehouseRequest = {
+    id,
+    originInboundId: closedRow.id,
+    partnerId: closedRow.partnerId,
+    plannedDate: closedRow.plannedDate,
+    status: "new",
+    receivingMode: null,
+    comment: closedRow.comment,
+    createdAt,
+    items: lines,
+  };
+  return [continuation, ...rows];
 }
 
 /** Тело POST /inbounds */
@@ -249,8 +304,20 @@ export async function completeInboundReceiving(inboundId: string): Promise<Inbou
   };
   const next = [...rowsAfterMoves];
   next[idxAfter] = updated;
-  writeStored(next);
-  return updated;
+
+  let toStore = next;
+  if (!inboundHasContinuationInList(inboundId, toStore)) {
+    const continuationBody = continuationItemsFromPartialReceive(updated);
+    if (continuationBody.length > 0) {
+      toStore = appendContinuationInbound(toStore, updated, continuationBody);
+    }
+  }
+
+  writeStored(toStore);
+
+  const afterWrite = readStored();
+  const finalIdx = afterWrite.findIndex((r) => r.id === inboundId);
+  return finalIdx >= 0 ? afterWrite[finalIdx] : updated;
 }
 
 /** Обновление плана размещения по строке (только статус «Принято», без движений и без смены receivedQty). */
@@ -460,6 +527,7 @@ export async function postInboundWarehouseRequest(body: PostInboundsPayload): Pr
   }));
   const row: InboundWarehouseRequest = {
     id,
+    originInboundId: null,
     partnerId: body.partnerId.trim(),
     plannedDate: (body.plannedDate || "").trim().slice(0, 10) || createdAt.slice(0, 10),
     status,
