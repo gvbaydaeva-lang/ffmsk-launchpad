@@ -133,10 +133,10 @@ function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiSta
 }
 
 type ShippingStockWarnLine = { barcode: string; plan: number; available: number; shortage: number };
-type ShippingLocationAvailabilityLine = { label: string; available: number };
+type ShippingLocationAvailabilityLine = { locationId: string; label: string; available: number };
 type ShippingLocationAvailability = {
   storage: ShippingLocationAvailabilityLine[];
-  other: ShippingLocationAvailabilityLine[];
+  other: Array<{ label: string; available: number }>;
   storageAvailableTotal: number;
 };
 
@@ -193,7 +193,7 @@ function shipmentLineAvailableByLocations(params: {
     const take = Math.min(Math.max(0, e.balance), rem);
     const available = Math.max(0, e.balance - take);
     rem -= take;
-    if (available > 0) storage.push({ label: e.label, available });
+    if (available > 0) storage.push({ locationId: e.k, label: e.label, available });
   }
   const other = otherEntries.map((e) => ({ label: e.label, available: e.balance }));
   const storageAvailableTotal = storage.reduce((sum, x) => sum + x.available, 0);
@@ -296,7 +296,7 @@ const ShippingPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { data, isLoading, error, updateOutboundDraft, isUpdatingOutboundDraft } = useOutboundShipments();
-  const { data: inventoryMovements = [] } = useInventoryMovements();
+  const { data: inventoryMovements = [], addInventoryMovements, isAppending: isAppendingMovements } = useInventoryMovements();
   const { data: locationsData } = useLocations();
   const { data: catalog } = useProductCatalog();
   const { data: entities } = useLegalEntities();
@@ -326,6 +326,7 @@ const ShippingPage = () => {
   const [selectedShipmentIds, setSelectedShipmentIds] = React.useState<string[]>([]);
   const [bulkConfirming, setBulkConfirming] = React.useState(false);
   const [bulkTakingToWork, setBulkTakingToWork] = React.useState(false);
+  const [pickDraftByShipment, setPickDraftByShipment] = React.useState<Record<string, { locationId: string; qty: string }>>({});
 
   const movementDataSafe = React.useMemo(
     () => (Array.isArray(inventoryMovements) ? inventoryMovements : []),
@@ -722,6 +723,70 @@ const ShippingPage = () => {
     });
   }, [selectedDoc, catalog, movementDataSafe, data, locationById, storageLocationIds, receivingLocationIds]);
 
+  const selectedShipmentPickRows = React.useMemo(() => {
+    const itemsSafe = Array.isArray(selectedDoc?.shipments) ? selectedDoc.shipments : [];
+    const catalogSafe = Array.isArray(catalog) ? catalog : [];
+    const byProduct = new Map(catalogSafe.map((p) => [p.id, p]));
+    const reserveByKey = reservedQtyByBalanceKey(data ?? [], catalogSafe);
+    return itemsSafe.map((sh) => {
+      const product = byProduct.get(sh.productId) ?? null;
+      const key = balanceKeyFromOutboundShipment(sh, product);
+      const reserveQty = reserveByKey.get(key) ?? 0;
+      const byLocations = shipmentLineAvailableByLocations({
+        movements: movementDataSafe,
+        locationById,
+        storageLocationIds,
+        receivingLocationIds,
+        balanceKey: key,
+        warehouseName: sh.sourceWarehouse || "",
+        reserveQty,
+      });
+      const fact = Number(sh.shippedUnits ?? sh.packedUnits ?? 0) || 0;
+      const plan = Number(sh.plannedUnits) || 0;
+      const remaining = Math.max(0, plan - fact);
+      const name = (sh.importName || product?.name || "").trim() || "—";
+      const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+      return {
+        shipmentId: sh.id,
+        name,
+        barcode,
+        plan,
+        fact,
+        remaining,
+        legalEntityId: sh.legalEntityId,
+        legalEntityName: entities?.find((e) => e.id === sh.legalEntityId)?.shortName ?? sh.legalEntityId,
+        warehouseName: sh.sourceWarehouse || "—",
+        marketplace: sh.marketplace,
+        article: (sh.importArticle || product?.supplierArticle || "").trim() || "—",
+        color: (sh.importColor || product?.color || "").trim() || "—",
+        size: (sh.importSize || product?.size || "").trim() || "—",
+        taskId: (sh.assignmentId || sh.id || "").trim() || sh.id,
+        taskNumber: (sh.assignmentNo || sh.assignmentId || sh.id || "").trim() || sh.id,
+        storageOptions: byLocations.storage,
+        otherLocations: byLocations.other,
+      };
+    });
+  }, [selectedDoc, catalog, data, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, entities]);
+
+  React.useEffect(() => {
+    const lines = Array.isArray(selectedShipmentPickRows) ? selectedShipmentPickRows : [];
+    setPickDraftByShipment((prev) => {
+      const next: Record<string, { locationId: string; qty: string }> = {};
+      for (const line of lines) {
+        const prevDraft = prev[line.shipmentId];
+        const hasPrevLoc = prevDraft?.locationId && line.storageOptions.some((o) => o.locationId === prevDraft.locationId);
+        const locationId = hasPrevLoc
+          ? prevDraft.locationId
+          : (line.storageOptions[0]?.locationId ?? "");
+        next[line.shipmentId] = {
+          locationId,
+          qty: prevDraft?.qty ?? "",
+        };
+      }
+      return next;
+    });
+  }, [selectedShipmentPickRows]);
+
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);
 
   const goToPacker = React.useCallback(
@@ -916,6 +981,80 @@ const ShippingPage = () => {
       setBulkTakingToWork(false);
     }
   }, [selectedShipmentIds, documents, bulkTakingToWork, bulkConfirming, updateOutboundDraft]);
+
+  const submitPickFromCell = React.useCallback(
+    async (shipmentId: string) => {
+      const line = selectedShipmentPickRows.find((x) => x.shipmentId === shipmentId);
+      if (!line) return;
+      const draft = pickDraftByShipment[shipmentId];
+      const locationId = (draft?.locationId || "").trim();
+      if (!locationId) {
+        toast.error("Выберите ячейку хранения");
+        return;
+      }
+      const selectedCell = line.storageOptions.find((opt) => opt.locationId === locationId);
+      if (!selectedCell) {
+        toast.error("Выбранная ячейка недоступна для подбора");
+        return;
+      }
+      const qty = Math.trunc(Number(draft?.qty) || 0);
+      if (qty <= 0) {
+        toast.error("Укажите корректное количество");
+        return;
+      }
+      if (qty > selectedCell.available) {
+        toast.error("Нельзя подобрать больше доступного в выбранной ячейке");
+        return;
+      }
+      if (qty > line.remaining) {
+        toast.error("Нельзя подобрать больше, чем осталось по заданию");
+        return;
+      }
+      const ts = new Date().toISOString();
+      try {
+        await addInventoryMovements([
+          {
+            id: `pick-${shipmentId}-${Date.now()}`,
+            type: "OUTBOUND",
+            source: "shipping",
+            taskId: line.taskId,
+            taskNumber: line.taskNumber,
+            legalEntityId: line.legalEntityId,
+            legalEntityName: line.legalEntityName,
+            warehouseName: line.warehouseName,
+            locationId,
+            name: line.name,
+            article: line.article,
+            sku: line.article,
+            barcode: line.barcode,
+            marketplace: line.marketplace,
+            color: line.color,
+            size: line.size,
+            qty: -qty,
+            createdAt: ts,
+          },
+        ]);
+        await updateOutboundDraft({
+          id: shipmentId,
+          patch: {
+            packedUnits: line.fact + qty,
+            updatedAt: ts,
+          },
+        });
+        setPickDraftByShipment((prev) => ({
+          ...prev,
+          [shipmentId]: {
+            locationId,
+            qty: "",
+          },
+        }));
+        toast.success("Подбор выполнен");
+      } catch {
+        toast.error("Не удалось выполнить подбор");
+      }
+    },
+    [selectedShipmentPickRows, pickDraftByShipment, addInventoryMovements, updateOutboundDraft],
+  );
 
   return (
     <div className="space-y-4">
@@ -1403,6 +1542,94 @@ const ShippingPage = () => {
                                       <TaskItemsTable variant="outboundLines" rows={selectedShipmentItemRows} />
                                     )}
                                   </div>
+                                  {!isShippingTerminal(uiStatus) && selectedShipmentPickRows.length > 0 ? (
+                                    <div className="space-y-2 rounded-md border border-slate-200 bg-white p-3">
+                                      <p className="text-xs font-medium text-slate-600">Подбор из ячейки хранения</p>
+                                      <div className="space-y-2">
+                                        {selectedShipmentPickRows.map((line) => {
+                                          const draft = pickDraftByShipment[line.shipmentId] ?? { locationId: "", qty: "" };
+                                          const selectedCell = line.storageOptions.find((opt) => opt.locationId === draft.locationId);
+                                          const maxQty = Math.min(line.remaining, selectedCell?.available ?? 0);
+                                          const pickingDone = line.remaining <= 0;
+                                          return (
+                                            <div key={line.shipmentId} className="grid gap-2 rounded-md border border-slate-200 p-2 md:grid-cols-12 md:items-end">
+                                              <div className="md:col-span-4">
+                                                <div className="text-sm font-medium text-slate-900">{line.name}</div>
+                                                <div className="text-xs text-slate-600">
+                                                  {line.barcode} · Осталось: {line.remaining.toLocaleString("ru-RU")}
+                                                </div>
+                                                {pickingDone ? (
+                                                  <div className="mt-1 text-xs font-medium text-emerald-700">Подбор выполнен</div>
+                                                ) : null}
+                                              </div>
+                                              <div className="md:col-span-3">
+                                                <div className="mb-1 text-[11px] text-slate-600">Ячейка</div>
+                                                <Select
+                                                  value={draft.locationId}
+                                                  onValueChange={(value) =>
+                                                    setPickDraftByShipment((prev) => ({
+                                                      ...prev,
+                                                      [line.shipmentId]: { ...prev[line.shipmentId], locationId: value, qty: prev[line.shipmentId]?.qty ?? "" },
+                                                    }))
+                                                  }
+                                                  disabled={line.storageOptions.length === 0 || pickingDone}
+                                                >
+                                                  <SelectTrigger className="h-8">
+                                                    <SelectValue placeholder="Выберите ячейку" />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                    {line.storageOptions.map((opt) => (
+                                                      <SelectItem key={opt.locationId} value={opt.locationId}>
+                                                        {opt.label} — {opt.available.toLocaleString("ru-RU")} шт
+                                                      </SelectItem>
+                                                    ))}
+                                                  </SelectContent>
+                                                </Select>
+                                              </div>
+                                              <div className="md:col-span-2">
+                                                <div className="mb-1 text-[11px] text-slate-600">Количество</div>
+                                                <Input
+                                                  type="number"
+                                                  min={1}
+                                                  max={maxQty > 0 ? maxQty : undefined}
+                                                  value={draft.qty}
+                                                  onChange={(e) =>
+                                                    setPickDraftByShipment((prev) => ({
+                                                      ...prev,
+                                                      [line.shipmentId]: { ...prev[line.shipmentId], qty: e.target.value, locationId: prev[line.shipmentId]?.locationId ?? "" },
+                                                    }))
+                                                  }
+                                                  disabled={line.storageOptions.length === 0 || pickingDone}
+                                                  className="h-8"
+                                                />
+                                              </div>
+                                              <div className="md:col-span-3">
+                                                <Button
+                                                  type="button"
+                                                  size="sm"
+                                                  className="h-8 w-full"
+                                                  onClick={() => void submitPickFromCell(line.shipmentId)}
+                                                  disabled={
+                                                    line.storageOptions.length === 0 ||
+                                                    pickingDone ||
+                                                    !draft.locationId ||
+                                                    !draft.qty.trim() ||
+                                                    isUpdatingOutboundDraft ||
+                                                    isAppendingMovements
+                                                  }
+                                                >
+                                                  Подобрать
+                                                </Button>
+                                                {line.storageOptions.length === 0 ? (
+                                                  <div className="mt-1 text-[11px] text-slate-500">Нет доступных остатков в ячейках хранения</div>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </TableCell>
                             </TableRow>

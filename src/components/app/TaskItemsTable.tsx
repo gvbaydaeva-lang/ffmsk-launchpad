@@ -42,7 +42,7 @@ export type TaskItemRow = {
   shippingStock?: { state: "sufficient" } | { state: "short"; available: number; shortage: number };
   /** Только экран «Отгрузки»: доступный остаток по местам (storage влияет на логику, other — только информативно). */
   shippingLocations?: {
-    storage: Array<{ label: string; available: number }>;
+    storage: Array<{ locationId: string; label: string; available: number }>;
     other: Array<{ label: string; available: number }>;
   };
 };
