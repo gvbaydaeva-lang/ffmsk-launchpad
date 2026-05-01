@@ -45,6 +45,11 @@ import {
 import { addOperationLog as persistOperationLog, fetchOperationLogs } from "@/services/mockOperationLogs";
 import { mergeLegalWarehouseCounts } from "@/services/scanWorkflow";
 import { appendMockLocation, fetchMockLocations, saveMockLocations } from "@/services/mockLocations";
+import {
+  fetchInboundsWarehouseRequests,
+  postInboundWarehouseRequest,
+  type PostInboundsPayload,
+} from "@/services/warehouseInboundApi";
 
 async function pushLegacyOperationHistory(
   qc: ReturnType<typeof useQueryClient>,
@@ -601,6 +606,27 @@ export function useCloseOperationalDay() {
       qc.setQueryData(["wms", "operation-history"], next);
     },
   });
+}
+
+/** GET/POST /inbounds (планируемые заявки на приёмку; не затрагивает InboundSupply / outbound) */
+export function useWarehouseInboundRequests() {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: ["wms", "warehouse-inbound-requests"],
+    queryFn: fetchInboundsWarehouseRequests,
+  });
+  const create = useMutation({
+    mutationFn: (body: PostInboundsPayload) => postInboundWarehouseRequest(body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
+    },
+  });
+  return {
+    ...query,
+    /** POST /inbounds */
+    postInbounds: create.mutateAsync,
+    isPostingInbounds: create.isPending,
+  };
 }
 
 export function useOrgUsers() {

@@ -139,6 +139,28 @@ export type InboundLineItem = {
   factualQuantity: number;
 };
 
+/** Статус заявки на приёмку (API /inbounds), отдельно от операционной InboundSupply */
+export type InboundWarehouseRequestStatus = "new";
+
+/** Заявка на приёмку: планируемое поступление (POST /inbounds) */
+export type InboundWarehouseRequest = {
+  id: string;
+  partnerId: string;
+  plannedDate: string;
+  status: InboundWarehouseRequestStatus;
+  comment: string;
+  createdAt: string;
+  items: InboundWarehouseItem[];
+};
+
+/** Позиция заявки на приёмку (аналог InboundItem в ТЗ) */
+export type InboundWarehouseItem = {
+  id: string;
+  inboundId: string;
+  productId: string;
+  plannedQty: number;
+};
+
 /** Тарифы фулфилмента по клиенту (договорные ставки) */
 export type FulfillmentTariffs = {
   /** Хранение, ₽ за единицу в сутки */

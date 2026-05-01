@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import GlobalFiltersBar from "@/components/app/GlobalFiltersBar";
 import TaskRegistryTable from "@/components/app/TaskRegistryTable";
 import ReceivingTaskWorkScreen from "@/components/app/ReceivingTaskWorkScreen";
+import InboundWarehouseRequestsPanel from "@/components/app/InboundWarehouseRequestsPanel";
 import StatusBadge from "@/components/app/StatusBadge";
 import { useAppFilters } from "@/contexts/AppFiltersContext";
 import { useAppendOperationLog, useInboundSupplies, useInventoryMovements, useLegalEntities, useLocations } from "@/hooks/useWmsMock";
@@ -229,7 +230,9 @@ const ReceivingPage = () => {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Приёмка</h2>
-          <p className="mt-1 text-sm text-slate-600">Входящие поставки по маркетплейсам и юрлицам.</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Плановые заявки на поступление и операционная приёмка поставок по маркетплейсам и юрлицам.
+          </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
@@ -293,6 +296,8 @@ const ReceivingPage = () => {
       <GlobalFiltersBar />
 
       {!receivingWorkOpen ? (
+        <div className="space-y-4">
+        <InboundWarehouseRequestsPanel />
         <Card className="border-slate-200 bg-white shadow-sm">
           <CardHeader>
             <CardTitle className="font-display text-lg text-slate-900">Очередь на приёмку</CardTitle>
@@ -488,6 +493,7 @@ const ReceivingPage = () => {
             )}
           </CardContent>
         </Card>
+        </div>
       ) : null}
 
       {receivingWorkOpen && startedSupply ? (
