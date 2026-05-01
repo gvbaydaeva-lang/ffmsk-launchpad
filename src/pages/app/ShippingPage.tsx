@@ -49,6 +49,7 @@ import { formatOperationLogDescription, formatOperationLogShortStatus } from "@/
 import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
 import { toast } from "sonner";
 import {
+  outboundPackedQtyAssemblyGate,
   outboundPackedQtyDisplay,
   outboundPickedQty,
 } from "@/lib/outboundPickPackQty";
@@ -139,14 +140,34 @@ function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiSta
   return "pending";
 }
 
-/** Все строки с планом > 0: упаковано >= план. */
+/** Все строки с планом > 0: packedQty >= план (только явный счётчик, packedQty ?? 0). */
 function shippingGroupAllLinesPacked(shipments: OutboundShipment[] | undefined | null): boolean {
   const rows = Array.isArray(shipments) ? shipments : [];
   if (rows.length === 0) return false;
   return rows.every((sh) => {
-    const plan = Number(sh.plannedUnits) || 0;
+    const plan = Number(sh.plannedUnits ?? 0) || 0;
     if (plan <= 0) return true;
-    return outboundPackedQtyDisplay(sh) >= plan;
+    return outboundPackedQtyAssemblyGate(sh) >= plan;
+  });
+}
+
+/** Сумма явного упакованного (packedQty ?? 0) по строкам — для текстов статуса, согласованных с завершением сборки. */
+function shippingOutboundPackedQtyGateSum(shipments: OutboundShipment[] | undefined | null): number {
+  const rows = shipments ?? [];
+  const safe = Array.isArray(rows) ? rows : [];
+  return safe.reduce((s, sh) => s + outboundPackedQtyAssemblyGate(sh), 0);
+}
+
+/** По всем строкам с планом > 0: подобрано >= план (для подсказки «не упаковано» при полном подборе). */
+function shippingGroupFullyPickedForPlan(shipments: OutboundShipment[] | undefined | null): boolean {
+  const rows = Array.isArray(shipments) ? shipments : [];
+  if (rows.length === 0) return false;
+  return rows.every((sh) => {
+    const plan = Number(sh.plannedUnits ?? 0) || 0;
+    if (plan <= 0) return true;
+    const factRaw = Number(outboundPickedQty(sh) ?? 0);
+    const factQty = Number.isFinite(factRaw) ? Math.max(0, Math.trunc(factRaw)) : 0;
+    return factQty >= plan;
   });
 }
 
@@ -414,8 +435,8 @@ const ShippingPage = () => {
       const first = rows[0];
       if (!first) continue;
       const createdAt = rows.reduce((max, s) => (s.createdAt > max ? s.createdAt : max), first.createdAt);
-      const planned = rows.reduce((s, sh) => s + (Number(sh.plannedUnits) || 0), 0);
-      const fact = rows.reduce((s, sh) => s + outboundPickedQty(sh), 0);
+      const planned = rows.reduce((s, sh) => s + (Number(sh.plannedUnits ?? 0) || 0), 0);
+      const fact = rows.reduce((s, sh) => s + Number(outboundPickedQty(sh) ?? 0), 0);
       const packed = rows.reduce((s, sh) => s + outboundPackedQtyDisplay(sh), 0);
       const workflowStatus = shippingWorkflowFromGroup(rows);
       const priority = mergePriorityFromShipments(rows);
@@ -689,7 +710,8 @@ const ShippingPage = () => {
 
   /** Строки отгрузки из хранилища часто без import* — подставляем поля из каталога по productId (как в упаковщике). */
   const selectedShipmentItemRows = React.useMemo<TaskItemRow[]>(() => {
-    const itemsSafe = Array.isArray(selectedDoc?.shipments) ? selectedDoc.shipments : [];
+    const itemsRaw = selectedDoc?.shipments ?? [];
+    const itemsSafe = Array.isArray(itemsRaw) ? itemsRaw : [];
     if (!itemsSafe.length) return [];
     const catalogSafe = Array.isArray(catalog) ? catalog : [];
     const byProduct = new Map(catalogSafe.map((p) => [p.id, p]));
@@ -703,8 +725,8 @@ const ShippingPage = () => {
       const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
       const color = (sh.importColor || product?.color || "").trim() || "—";
       const size = (sh.importSize || product?.size || "").trim() || "—";
-      const plan = Number(sh.plannedUnits) || 0;
-      const fact = outboundPickedQty(sh);
+      const plan = Number(sh.plannedUnits ?? 0) || 0;
+      const fact = Number(outboundPickedQty(sh) ?? 0) || 0;
       let shippingStock: TaskItemRow["shippingStock"] = undefined;
       let shippingLocations: TaskItemRow["shippingLocations"] = undefined;
       if (showStock && reserveByKey) {
@@ -752,7 +774,8 @@ const ShippingPage = () => {
   }, [selectedDoc, catalog, movementDataSafe, data, locationById, storageLocationIds, receivingLocationIds]);
 
   const selectedShipmentPickRows = React.useMemo(() => {
-    const itemsSafe = Array.isArray(selectedDoc?.shipments) ? selectedDoc.shipments : [];
+    const pickItemsRaw = selectedDoc?.shipments ?? [];
+    const itemsSafe = Array.isArray(pickItemsRaw) ? pickItemsRaw : [];
     const catalogSafe = Array.isArray(catalog) ? catalog : [];
     const byProduct = new Map(catalogSafe.map((p) => [p.id, p]));
     const reserveByKey = reservedQtyByBalanceKey(data ?? [], catalogSafe);
@@ -769,8 +792,8 @@ const ShippingPage = () => {
         warehouseName: sh.sourceWarehouse || "",
         reserveQty,
       });
-      const fact = outboundPickedQty(sh);
-      const plan = Number(sh.plannedUnits) || 0;
+      const fact = Number(outboundPickedQty(sh) ?? 0) || 0;
+      const plan = Number(sh.plannedUnits ?? 0) || 0;
       const remaining = Math.max(0, plan - fact);
       const name = (sh.importName || product?.name || "").trim() || "—";
       const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
@@ -830,8 +853,8 @@ const ShippingPage = () => {
 
   const completeShipmentAssembly = React.useCallback(
     async (doc: ShipmentDoc) => {
-      const rows = Array.isArray(doc?.shipments) ? doc.shipments : [];
-      if (!shippingGroupAllLinesPacked(rows)) return;
+      const rows = doc?.shipments ?? [];
+      if (!Array.isArray(rows) || !shippingGroupAllLinesPacked(rows)) return;
       if (assemblyCompletingId === doc.id) return;
       if (isUpdatingOutboundDraft) return;
       setAssemblyCompletingId(doc.id);
@@ -1555,9 +1578,11 @@ const ShippingPage = () => {
                                       <div className={`font-medium tabular-nums ${over > 0 ? "text-red-700" : "text-slate-900"}`}>{over}</div>
                                     </div>
                                   </div>
-                                  {doc.fact > 0 && doc.packed < doc.fact ? (
+                                  {doc.fact > 0 &&
+                                  shippingOutboundPackedQtyGateSum(doc.shipments ?? []) < Number(doc.fact ?? 0) ? (
                                     <p className="text-xs font-medium text-amber-800">Упаковка не завершена: упаковано меньше подобранного.</p>
-                                  ) : doc.fact > 0 ? (
+                                  ) : doc.fact > 0 &&
+                                    shippingOutboundPackedQtyGateSum(doc.shipments ?? []) >= Number(doc.fact ?? 0) ? (
                                     <p className="text-xs font-medium text-emerald-800">Товар по подобранному объёму полностью упакован.</p>
                                   ) : null}
                                   {(doc.planned > doc.fact || doc.fact > doc.planned) && (
@@ -1577,14 +1602,22 @@ const ShippingPage = () => {
                                   {viewMode === "archive" ? null : (
                                     <div className="space-y-2">
                                       {(() => {
-                                        const shipmentsRow = Array.isArray(doc?.shipments) ? doc.shipments : [];
-                                        const allLinesPackedDoc = shippingGroupAllLinesPacked(shipmentsRow);
+                                        const shipmentsRow = doc?.shipments ?? [];
+                                        const shipmentsSafe = Array.isArray(shipmentsRow) ? shipmentsRow : [];
+                                        const allLinesPackedDoc = shippingGroupAllLinesPacked(shipmentsSafe);
+                                        const fullyPickedVsPlan =
+                                          shipmentsSafe.length > 0 &&
+                                          shippingGroupFullyPickedForPlan(shipmentsSafe);
                                         const showCompleteAssemblyUi =
                                           !isShippingTerminal(uiStatus) && uiStatus !== "assembled";
                                         return (
                                           <>
                                             {showCompleteAssemblyUi && !allLinesPackedDoc ? (
-                                              <p className="text-xs text-slate-600">Упакуйте все товары для завершения</p>
+                                              fullyPickedVsPlan ? (
+                                                <p className="text-xs font-medium text-amber-800">Не все товары упакованы</p>
+                                              ) : (
+                                                <p className="text-xs text-slate-600">Упакуйте все товары для завершения</p>
+                                              )
                                             ) : null}
                                             <div className="flex flex-wrap items-center gap-2">
                                               {uiStatus === "assembled" ? (

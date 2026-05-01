@@ -41,3 +41,12 @@ export function outboundPackRemainingForShipment(sh: OutboundShipment): number {
   const cap = outboundPackCapForShipment(sh);
   return Math.max(0, cap - outboundPackedQtyStoredOrZero(sh));
 }
+
+/**
+ * Переход отгрузки в «Собрано»: только явный счётчик packedQty без fallback «как подобрано».
+ */
+export function outboundPackedQtyAssemblyGate(sh: OutboundShipment): number {
+  const raw = Number(sh.packedQty ?? 0);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.trunc(raw));
+}
