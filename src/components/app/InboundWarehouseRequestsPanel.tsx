@@ -23,6 +23,7 @@ import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWareho
 import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
 import WarehouseImportPreviewPanel from "@/components/app/WarehouseImportPreviewPanel";
 import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
+import { downloadWarehouseImportTemplateXlsx } from "@/lib/warehouseImportTemplateXlsx";
 import { inspectWarehouseImportPaste, mergeInboundImportDraftLines } from "@/lib/warehouseImportPaste";
 import type { WarehouseImportInspectionResult } from "@/lib/warehouseImportPaste";
 import { toast } from "sonner";
@@ -746,6 +747,15 @@ const InboundWarehouseRequestsPanel = () => {
                   onClick={() => setInboundPasteOpen((o) => !o)}
                 >
                   Вставить данные из Excel
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 text-slate-700"
+                  onClick={() => downloadWarehouseImportTemplateXlsx("inbound")}
+                >
+                  Скачать шаблон
                 </Button>
               </div>
             </div>

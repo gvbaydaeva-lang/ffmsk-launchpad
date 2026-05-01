@@ -62,6 +62,7 @@ import {
   inspectWarehouseImportPaste,
   type WarehouseImportInspectionResult,
 } from "@/lib/warehouseImportPaste";
+import { downloadWarehouseImportTemplateXlsx } from "@/lib/warehouseImportTemplateXlsx";
 import {
   outboundPackedQtyAssemblyGate,
   outboundPickedQty,
@@ -2773,6 +2774,15 @@ const ShippingPage = () => {
                                       <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
                                         <p className="text-xs font-medium text-slate-800">Импорт из Excel</p>
                                         <p className="mt-1 text-xs text-slate-600">{shippingExcelImportBlocked}</p>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="mt-2 h-8 px-0 text-slate-700"
+                                          onClick={() => downloadWarehouseImportTemplateXlsx("outbound")}
+                                        >
+                                          Скачать шаблон
+                                        </Button>
                                       </div>
                                     ) : (
                                       <div className="space-y-2 rounded-md border border-dashed border-slate-300 bg-slate-50/60 p-3">
@@ -2813,6 +2823,15 @@ const ShippingPage = () => {
                                               onClick={() => setShippingImportPasteOpen((o) => !o)}
                                             >
                                               Вставить данные из Excel
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-8 shrink-0 text-slate-700"
+                                              onClick={() => downloadWarehouseImportTemplateXlsx("outbound")}
+                                            >
+                                              Скачать шаблон
                                             </Button>
                                           </div>
                                         </div>
