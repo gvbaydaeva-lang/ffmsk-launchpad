@@ -4,6 +4,7 @@ const shortStatusByType: Record<string, string> = {
   SHIPPING_CREATED: "Создано",
   SHIPMENT_CONFIRMED: "Отгрузка",
   SHIPMENT_DIFF_COMPLETED: "Отгрузка с расхождением",
+  SHIPMENT_CANCELLED: "Отмена отгрузки",
   SHIPPING_PICK: "Подбор",
   SHIPPING_PICK_CANCEL: "Отмена подбора",
   PACK_ITEM: "Упаковка",
@@ -37,6 +38,8 @@ export function operationLogTypeBadgeClass(type: string): string {
       return `${badgeBase} border-emerald-200 bg-emerald-50 text-emerald-900`;
     case "SHIPMENT_DIFF_COMPLETED":
       return `${badgeBase} border-amber-200 bg-amber-50 text-amber-900`;
+    case "SHIPMENT_CANCELLED":
+      return `${badgeBase} border-slate-200 bg-slate-100 text-slate-700`;
     case "SHIPPING_PICK":
     case "SHIPPING_PICK_CANCEL":
       return `${badgeBase} border-sky-200 bg-sky-50 text-sky-900`;

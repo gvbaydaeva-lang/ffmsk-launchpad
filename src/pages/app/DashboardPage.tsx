@@ -46,12 +46,14 @@ const DISCREPANCY_REASON_LABELS = ["Нет товара", "Пересорт", "�
 function dashboardOutboundGroupUiStatus(shipments: OutboundShipment[]): TaskWorkflowStatus | "shipped_with_diff" {
   const perRow = shipments.map((s): TaskWorkflowStatus | "shipped_with_diff" => {
     const wf = (s.workflowStatus ?? "pending") as string;
+    if (wf === "cancelled" || s.status === "отменено") return "cancelled";
     if (wf === "shipped_with_diff") return "shipped_with_diff";
     if (wf === "completed") return "assembled";
     if (wf === "processing" || wf === "assembling" || wf === "assembled" || wf === "shipped") return wf;
     if (s.status === "отгружено") return "shipped";
     return "pending";
   });
+  if (perRow.some((x) => x === "cancelled")) return "cancelled";
   if (perRow.some((x) => x === "processing")) return "processing";
   if (perRow.some((x) => x === "assembling")) return "assembling";
   if (perRow.every((x) => x === "shipped_with_diff")) return "shipped_with_diff";

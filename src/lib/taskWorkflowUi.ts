@@ -7,7 +7,7 @@ export function normalizeWorkflowStatus(status: TaskWorkflowStatus | undefined |
 
 /** Завершённые по отгрузке этапы: закрыто в архиве вместе с «Завершено». */
 export function isOutboundWorkflowTerminal(status: TaskWorkflowStatus): boolean {
-  return status === "completed" || status === "shipped" || status === "shipped_with_diff";
+  return status === "completed" || status === "shipped" || status === "shipped_with_diff" || status === "cancelled";
 }
 
 /** Обводка и фон карточки задания */
@@ -86,6 +86,8 @@ export function compareWorkflowPriority(a: TaskWorkflowStatus, b: TaskWorkflowSt
         return 5;
       case "shipped_with_diff":
         return 5;
+      case "cancelled":
+        return 5;
     }
   };
   return order(a) - order(b);
@@ -104,12 +106,14 @@ export function workflowFromOutboundGroup(shipments: OutboundShipment[]): TaskWo
   const perRow = shipments.map((s): TaskWorkflowStatus => {
     const wfRaw = s.workflowStatus;
     /** Явный workflow важнее legacy `status === "отгружено"` (например после упаковки — «Собрано»). */
+    if (wfRaw === "cancelled" || s.status === "отменено") return "cancelled";
     if (wfRaw === "shipped_with_diff") return "shipped_with_diff";
     if (wfRaw === "assembled" || wfRaw === "assembling" || wfRaw === "shipped") return wfRaw;
     if (wfRaw === "completed" || s.status === "отгружено") return "completed";
     if (wfRaw === "processing") return "processing";
     return (wfRaw ?? "pending") as TaskWorkflowStatus;
   });
+  if (perRow.some((x) => x === "cancelled")) return "cancelled";
   if (perRow.some((x) => x === "processing")) return "processing";
   if (perRow.some((x) => x === "assembling")) return "assembling";
   if (perRow.length === 0) return "pending";

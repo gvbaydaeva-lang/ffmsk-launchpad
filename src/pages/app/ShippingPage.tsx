@@ -111,6 +111,7 @@ function shippingDispatcherHint(status: ShippingUiStatus): string {
   if (status === "assembled") return "Задание собрано, ожидает отгрузки";
   if (status === "shipped") return "Отгрузка завершена";
   if (status === "shipped_with_diff") return "Отгружено с расхождением";
+  if (status === "cancelled") return "Отгрузка отменена";
   return "Сборка завершена";
 }
 
@@ -123,6 +124,16 @@ function shippingStageIndex(status: ShippingUiStatus): number {
 
 function isShippingTerminal(status: ShippingUiStatus): boolean {
   return status === "shipped" || status === "shipped_with_diff";
+}
+
+function isShipmentDocArchivedClosed(d: ShipmentDoc): boolean {
+  return isShippingTerminal(d.workflowStatus as ShippingUiStatus) || d.workflowStatus === "cancelled";
+}
+
+/** Отмена доступна до финальной отгрузки: новое / в работе / в сборке / собрано. */
+function canShowCancelShipmentButton(ui: ShippingUiStatus): boolean {
+  if (ui === "shipped" || ui === "shipped_with_diff" || ui === "cancelled") return false;
+  return ui === "pending" || ui === "processing" || ui === "assembling" || ui === "assembled";
 }
 
 /** Все строки задания уже в финальном статусе отгрузки (на случай рассогласования с групповым статусом). */
@@ -141,6 +152,7 @@ function shipmentOutboundRowsAllShippedTerminal(doc: ShipmentDoc | null | undefi
 /** Нельзя снова подтверждать: документ уже в терминальном статусе или все строки отгружены. */
 function isShipmentFinalizeBlockedAlreadyDone(doc: ShipmentDoc | null | undefined): boolean {
   if (!doc) return false;
+  if (doc.workflowStatus === "cancelled") return true;
   if (isShippingTerminal(doc.workflowStatus as ShippingUiStatus)) return true;
   return shipmentOutboundRowsAllShippedTerminal(doc);
 }
@@ -148,12 +160,14 @@ function isShipmentFinalizeBlockedAlreadyDone(doc: ShipmentDoc | null | undefine
 function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiStatus {
   const perRow = shipments.map((s): ShippingUiStatus => {
     const wf = (s.workflowStatus ?? "pending") as string;
+    if (wf === "cancelled" || String(s.status ?? "").trim() === "отменено") return "cancelled";
     if (wf === "shipped_with_diff") return "shipped_with_diff";
     if (wf === "completed") return "assembled";
     if (wf === "processing" || wf === "assembling" || wf === "assembled" || wf === "shipped") return wf;
     if (s.status === "отгружено") return "shipped";
     return "pending";
   });
+  if (perRow.some((x) => x === "cancelled")) return "cancelled";
   if (perRow.some((x) => x === "processing")) return "processing";
   if (perRow.some((x) => x === "assembling")) return "assembling";
   if (perRow.every((x) => x === "shipped_with_diff")) return "shipped_with_diff";
@@ -437,6 +451,8 @@ const ShippingPage = () => {
   const finalizeInFlightIdsRef = React.useRef<Set<string>>(new Set());
   const diffBulkSubmitInFlightRef = React.useRef(false);
   const bulkExactBulkInFlightRef = React.useRef(false);
+  const cancelShipmentInFlightRef = React.useRef<Set<string>>(new Set());
+  const [cancellingShipmentId, setCancellingShipmentId] = React.useState<string | null>(null);
   const [diffReasonDialogOpen, setDiffReasonDialogOpen] = React.useState(false);
   const [pendingDiffDoc, setPendingDiffDoc] = React.useState<ShipmentDoc | null>(null);
   const [pendingBulkDiffDocs, setPendingBulkDiffDocs] = React.useState<ShipmentDoc[]>([]);
@@ -551,8 +567,8 @@ const ShippingPage = () => {
           return `${entity} ${d.assignmentNo} ${lines}`.toLowerCase().includes(q);
         });
     const withFilters = searched.filter((d) => {
-      if (viewMode === "active" && isShippingTerminal(d.workflowStatus)) return false;
-      if (viewMode === "archive" && !isShippingTerminal(d.workflowStatus)) return false;
+      if (viewMode === "active" && isShipmentDocArchivedClosed(d)) return false;
+      if (viewMode === "archive" && !isShipmentDocArchivedClosed(d)) return false;
       if (statusFilter !== "all" && d.workflowStatus !== statusFilter) return false;
       if (warehouseFilter !== "all" && d.sourceWarehouse !== warehouseFilter) return false;
       const created = Date.parse(d.createdAt || "");
@@ -832,6 +848,30 @@ const ShippingPage = () => {
     [appendOperationLog, entities, queryClient],
   );
 
+  const appendShipmentCancelledLog = React.useCallback(
+    (doc: ShipmentDoc) => {
+      const no = ((doc?.assignmentNo ?? "") as string).trim() || "—";
+      const desc = `Отгрузка отменена. № отгрузки: ${no}.`;
+      const logsRaw = queryClient.getQueryData<OperationLog[]>(["wms", "operation-logs"]);
+      const logs = Array.isArray(logsRaw) ? logsRaw : [];
+      const dup = logs.some(
+        (log) => operationLogBelongsToShipmentDoc(doc, log) && String(log.description ?? "").trim() === desc,
+      );
+      if (dup) return;
+
+      const leName = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
+      appendOperationLog({
+        type: "SHIPMENT_CANCELLED",
+        legalEntityId: doc.legalEntityId,
+        legalEntityName: leName,
+        taskId: doc.id,
+        taskNumber: (doc?.assignmentNo ?? "").trim() || "—",
+        description: desc,
+      });
+    },
+    [appendOperationLog, entities, queryClient],
+  );
+
   const operationLogsList = React.useMemo(
     () => (Array.isArray(operationLogsRaw) ? operationLogsRaw : []),
     [operationLogsRaw],
@@ -855,7 +895,7 @@ const ShippingPage = () => {
     const showStock =
       grpStatus === undefined ||
       grpStatus === null ||
-      !isShippingTerminal(grpStatus as ShippingUiStatus);
+      (!isShippingTerminal(grpStatus as ShippingUiStatus) && grpStatus !== "cancelled");
     const movementsReady = movementDataSafe.length > 0;
     const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalogSafe) : null;
     return itemsSafe.map((sh) => {
@@ -1025,8 +1065,145 @@ const ShippingPage = () => {
     [updateOutboundDraft, assemblyCompletingId, isUpdatingOutboundDraft],
   );
 
+  const cancelShipmentGroup = React.useCallback(
+    async (doc: ShipmentDoc) => {
+      if (doc.workflowStatus === "cancelled") {
+        toast.info("Отгрузка уже отменена");
+        return;
+      }
+      const ui = shippingWorkflowFromGroup(doc.shipments ?? []);
+      if (isShippingTerminal(ui)) {
+        toast.info("Нельзя отменить уже отгруженное задание");
+        return;
+      }
+      if (!canShowCancelShipmentButton(ui)) return;
+      if (cancelShipmentInFlightRef.current.has(doc.id)) return;
+
+      const rows = Array.isArray(doc.shipments) ? doc.shipments : [];
+      if (rows.length === 0) return;
+
+      const okConfirm =
+        typeof globalThis.confirm === "function"
+          ? globalThis.confirm("Отменить отгрузку? Все подобранные товары будут возвращены в ячейки")
+          : true;
+      if (!okConfirm) return;
+
+      const snapshot = Array.isArray(data) ? data : [];
+      const safeMoves = Array.isArray(inventoryMovements) ? inventoryMovements : [];
+
+      for (const sh of rows) {
+        const latest = snapshot.find((x) => x.id === sh.id) ?? sh;
+        if (String(latest.workflowStatus ?? "") === "cancelled" || String(latest.status ?? "").trim() === "отменено") {
+          toast.info("Отгрузка уже отменена");
+          return;
+        }
+        const fact = Math.max(0, Math.trunc(Number(outboundPickedQty(latest) ?? 0)));
+        if (fact <= 0) continue;
+        const pickMoves = safeMoves.filter(
+          (m) =>
+            m.type === "OUTBOUND" &&
+            m.source === "shipping" &&
+            (m.itemId ?? "").trim() === latest.id,
+        );
+        if (pickMoves.length === 0) {
+          toast.error("Не найдены движения подбора для возврата в ячейки");
+          return;
+        }
+        let sumPickQty = 0;
+        for (const m of pickMoves) {
+          const q = Number(m.qty);
+          sumPickQty += Number.isFinite(q) ? q : 0;
+        }
+        const totalOutAbs = Math.abs(Math.trunc(Number(sumPickQty) || 0));
+        if (totalOutAbs !== fact) {
+          toast.error("Объём подбора не совпадает с движениями; отмена отгрузки невозможна");
+          return;
+        }
+        if (pickMoves.some((m) => !(m.locationId ?? "").trim())) {
+          toast.error("У движения подбора не указана ячейка возврата");
+          return;
+        }
+      }
+
+      cancelShipmentInFlightRef.current.add(doc.id);
+      setCancellingShipmentId(doc.id);
+      const ts = new Date().toISOString();
+      let moveSeq = 0;
+      try {
+        const allInMoves: InventoryMovement[] = [];
+        for (const sh of rows) {
+          const latest = snapshot.find((x) => x.id === sh.id) ?? sh;
+          const fact = Math.max(0, Math.trunc(Number(outboundPickedQty(latest) ?? 0)));
+          if (fact <= 0) continue;
+          const pickMoves = safeMoves.filter(
+            (m) =>
+              m.type === "OUTBOUND" &&
+              m.source === "shipping" &&
+              (m.itemId ?? "").trim() === latest.id,
+          );
+          for (let idx = 0; idx < pickMoves.length; idx += 1) {
+            const m = pickMoves[idx];
+            const absQty = Math.trunc(Math.abs(Number.isFinite(Number(m.qty)) ? Number(m.qty) : 0));
+            if (absQty <= 0) continue;
+            allInMoves.push({
+              id: `cancel-ship-${latest.id}-${ts}-${moveSeq++}`,
+              type: "INBOUND",
+              source: "shipping",
+              taskId: m.taskId,
+              taskNumber: m.taskNumber,
+              legalEntityId: m.legalEntityId,
+              legalEntityName: m.legalEntityName,
+              warehouseName: m.warehouseName,
+              locationId: (m.locationId ?? "").trim(),
+              itemId: m.itemId,
+              name: m.name,
+              article: m.article ?? m.sku ?? "",
+              sku: m.sku ?? m.article ?? "",
+              barcode: m.barcode ?? "",
+              marketplace: m.marketplace,
+              color: m.color ?? "—",
+              size: m.size ?? "—",
+              qty: absQty,
+              createdAt: ts,
+            });
+          }
+        }
+        if (allInMoves.length > 0) {
+          await addInventoryMovements(allInMoves);
+        }
+        for (const sh of rows) {
+          await updateOutboundDraft({
+            id: sh.id,
+            patch: {
+              workflowStatus: "cancelled",
+              status: "отменено",
+              pickedUnits: 0,
+              shippedUnits: 0,
+              packedQty: 0,
+              packedUnits: 0,
+              updatedAt: ts,
+            },
+          });
+        }
+        appendShipmentCancelledLog(doc);
+        toast.success("Отгрузка отменена");
+      } catch {
+        toast.error("Не удалось отменить отгрузку");
+      } finally {
+        cancelShipmentInFlightRef.current.delete(doc.id);
+        setCancellingShipmentId(null);
+      }
+    },
+    [data, inventoryMovements, addInventoryMovements, updateOutboundDraft, appendShipmentCancelledLog],
+  );
+
   const openShipmentDiffFinalizeDialog = React.useCallback((doc: ShipmentDoc | null | undefined) => {
-    if (!doc || doc.workflowStatus !== "assembled") return;
+    if (!doc) return;
+    if (doc.workflowStatus === "cancelled") {
+      toast.info("Отгрузка отменена");
+      return;
+    }
+    if (doc.workflowStatus !== "assembled") return;
     if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
       toast.info("Отгрузка уже завершена");
       return;
@@ -1048,6 +1225,10 @@ const ShippingPage = () => {
 
   const finalizeShipmentExact = React.useCallback(
     async (doc: ShipmentDoc) => {
+      if (doc.workflowStatus === "cancelled") {
+        toast.info("Отгрузка отменена");
+        return;
+      }
       if (isShipmentFinalizeBlockedAlreadyDone(doc)) {
         toast.info("Отгрузка уже завершена");
         return;
@@ -1360,7 +1541,8 @@ const ShippingPage = () => {
     async (shipmentId: string) => {
       if (!selectedDoc || isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
         if (selectedDoc && isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
-          toast.info("Отгрузка уже завершена");
+          const wfPick = shippingWorkflowFromGroup(selectedDoc.shipments ?? []);
+          toast.info(wfPick === "cancelled" ? "Отгрузка отменена" : "Отгрузка уже завершена");
         }
         return;
       }
@@ -1475,6 +1657,10 @@ const ShippingPage = () => {
       if (!selectedDoc) return;
       const shipmentsDoc = Array.isArray(selectedDoc.shipments) ? selectedDoc.shipments : [];
       const wfUi = shippingWorkflowFromGroup(shipmentsDoc);
+      if (wfUi === "cancelled") {
+        toast.info("Отгрузка отменена");
+        return;
+      }
       if (isShippingTerminal(wfUi) || isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
         toast.info("Отгрузка уже завершена");
         return;
@@ -1672,6 +1858,7 @@ const ShippingPage = () => {
               <SelectItem value="assembled">Собрано</SelectItem>
               <SelectItem value="shipped">Отгружено</SelectItem>
               <SelectItem value="shipped_with_diff">С расхождением</SelectItem>
+              <SelectItem value="cancelled">Отменена</SelectItem>
             </SelectContent>
           </Select>
           <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
@@ -1833,13 +2020,16 @@ const ShippingPage = () => {
                       const stockWarnLines = shippingDocStockWarning.get(doc.id)?.lines ?? [];
                       const stockWarnTooltip = formatShippingStockTooltip(stockWarnLines);
                       const showStockWarn = stockWarnLines.length > 0;
-                      const hasShippingProblem = !isShippingTerminal(uiStatus) && (showStockWarn || rem > 0 || doc.fact < doc.planned);
+                      const hasShippingProblem =
+                        !isShippingTerminal(uiStatus) &&
+                        uiStatus !== "cancelled" &&
+                        (showStockWarn || rem > 0 || doc.fact < doc.planned);
                       const stockWarnAria =
                         stockWarnLines.length === 1
                           ? "Недостаточно доступного товара по одной позиции. Подробности в подсказке."
                           : `Недостаточно доступного товара по ${stockWarnLines.length} позициям. Подробности в подсказке.`;
                       const rowSelected = selectedShipmentIds.includes(doc.id);
-                      const readOnlyShipment = isShippingTerminal(uiStatus);
+                      const readOnlyShipment = isShippingTerminal(uiStatus) || uiStatus === "cancelled";
                       return (
                         <React.Fragment key={doc.id}>
                           <TableRow
@@ -1852,6 +2042,7 @@ const ShippingPage = () => {
                               uiStatus === "assembled" ? "bg-emerald-50/50" : "",
                               uiStatus === "shipped" ? "bg-emerald-50/40" : "",
                               uiStatus === "shipped_with_diff" ? "bg-amber-50/60" : "",
+                              uiStatus === "cancelled" ? "bg-slate-100/70" : "",
                               openTaskHighlightId === doc.id &&
                                 "z-[1] ring-2 ring-amber-400/50 ring-inset bg-amber-50/50",
                             )}
@@ -1900,6 +2091,10 @@ const ShippingPage = () => {
                                   <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
                                     Отгружено с расхождением
                                   </span>
+                                ) : uiStatus === "cancelled" ? (
+                                  <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-slate-200 text-slate-800 ring-slate-300">
+                                    Отменена
+                                  </span>
                                 ) : (
                                   <StatusBadge status={uiStatus} />
                                 )}
@@ -1943,7 +2138,11 @@ const ShippingPage = () => {
                                     <h3 className="font-display text-base font-semibold text-slate-900">Задание №{doc.assignmentNo}</h3>
                                     <p className="mt-1 text-sm text-slate-600">{shippingDispatcherHint(uiStatus)}</p>
                                   </div>
-                                  {uiStatus === "shipped" ? (
+                                  {uiStatus === "cancelled" ? (
+                                    <div className="rounded-md border border-slate-200 bg-slate-100 px-3 py-2">
+                                      <p className="text-sm font-medium text-slate-800">Отгрузка отменена</p>
+                                    </div>
+                                  ) : uiStatus === "shipped" ? (
                                     <div className="rounded-md border border-emerald-200 bg-emerald-50/90 px-3 py-2">
                                       <p className="text-sm font-medium text-emerald-800">Отгрузка завершена</p>
                                       <p className="mt-1 text-xs tabular-nums text-emerald-900/85">
@@ -2047,6 +2246,8 @@ const ShippingPage = () => {
                                             <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
                                               Отгружено с расхождением
                                             </span>
+                                          ) : uiStatus === "cancelled" ? (
+                                            <StatusBadge status="cancelled" />
                                           ) : (
                                             <StatusBadge status={uiStatus} />
                                           )}
@@ -2082,6 +2283,8 @@ const ShippingPage = () => {
                                             <span className="inline-flex min-w-[88px] justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 bg-amber-100 text-amber-800 ring-amber-200">
                                               Отгружено с расхождением
                                             </span>
+                                          ) : uiStatus === "cancelled" ? (
+                                            <StatusBadge status="cancelled" />
                                           ) : (
                                             <StatusBadge status={uiStatus} />
                                           )}
@@ -2215,6 +2418,26 @@ const ShippingPage = () => {
                                                   Открыть в упаковщике
                                                 </Button>
                                               )}
+                                              {canShowCancelShipmentButton(uiStatus) ? (
+                                                <Button
+                                                  type="button"
+                                                  size="sm"
+                                                  variant="outline"
+                                                  className="border-red-200 text-red-800 hover:bg-red-50"
+                                                  onClick={() => void cancelShipmentGroup(doc)}
+                                                  disabled={
+                                                    cancellingShipmentId === doc.id ||
+                                                    confirmingShipmentId === doc.id ||
+                                                    isUpdatingOutboundDraft ||
+                                                    isAppendingMovements ||
+                                                    bulkConfirming ||
+                                                    bulkTakingToWork ||
+                                                    undoingPickId !== null
+                                                  }
+                                                >
+                                                  {cancellingShipmentId === doc.id ? "Отмена…" : "Отменить отгрузку"}
+                                                </Button>
+                                              ) : null}
                                               {showCompleteAssemblyUi ? (
                                                 <Button
                                                   type="button"
@@ -2247,7 +2470,7 @@ const ShippingPage = () => {
                                       <TaskItemsTable variant="outboundLines" rows={selectedShipmentItemRows} />
                                     )}
                                   </div>
-                                  {!isShippingTerminal(uiStatus) && selectedShipmentPickRows.length > 0 ? (
+                                  {!readOnlyShipment && selectedShipmentPickRows.length > 0 ? (
                                     <div className="space-y-2 rounded-md border border-slate-200 bg-white p-3">
                                       <p className="text-xs font-medium text-slate-600">Подбор из ячейки хранения</p>
                                       <div className="space-y-2">

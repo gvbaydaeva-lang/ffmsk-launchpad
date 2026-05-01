@@ -75,6 +75,16 @@ function isOutboundShipmentRowTerminal(sh: OutboundShipment): boolean {
   return wf === "shipped" || wf === "shipped_with_diff";
 }
 
+function isOutboundShipmentRowCancelled(sh: OutboundShipment): boolean {
+  const wf = String(sh.workflowStatus ?? "");
+  const st = String(sh.status ?? "").trim();
+  return wf === "cancelled" || st === "отменено";
+}
+
+function isOutboundShipmentRowClosedForPacking(sh: OutboundShipment): boolean {
+  return isOutboundShipmentRowTerminal(sh) || isOutboundShipmentRowCancelled(sh);
+}
+
 type ScanLine = {
   key: string;
   name: string;
@@ -199,6 +209,7 @@ const PackingPage = () => {
         const allRowsShippedOut =
           groupShipSafe.length > 0 && groupShipSafe.every((sh) => isOutboundShipmentRowTerminal(sh));
         const packingDone =
+          wfNorm === "cancelled" ||
           allRowsShippedOut ||
           wfNorm === "shipped" ||
           wfNorm === "shipped_with_diff" ||
@@ -398,6 +409,10 @@ const PackingPage = () => {
   const applyScan = async () => {
     const code = scanValue.trim();
     if (!code || !startedAssignment) return;
+    if (startedShipmentList.some((sh) => isOutboundShipmentRowCancelled(sh))) {
+      toast.info("Отгрузка отменена");
+      return;
+    }
     if (startedShipmentList.some((sh) => isOutboundShipmentRowTerminal(sh))) {
       toast.info("Отгрузка уже завершена");
       return;
@@ -571,6 +586,10 @@ const PackingPage = () => {
 
   const finalizeAssignment = async () => {
     if (!startedAssignment || progress.totalPlan === 0) return;
+    if (startedShipmentList.some((sh) => isOutboundShipmentRowCancelled(sh))) {
+      toast.info("Отгрузка отменена");
+      return;
+    }
     if (startedShipmentList.some((sh) => isOutboundShipmentRowTerminal(sh))) {
       toast.info("Отгрузка уже завершена");
       return;
@@ -648,9 +667,10 @@ const PackingPage = () => {
       assignments.find((a) => {
         if (a.id === currentAssignmentId) return false;
         const w = normalizeWorkflowStatus(a.workflowStatus);
-        if (w === "shipped" || w === "shipped_with_diff") return false;
+        if (w === "cancelled" || w === "shipped" || w === "shipped_with_diff") return false;
         const ar = a.shipments ?? [];
         const arSafe = Array.isArray(ar) ? ar : [];
+        if (arSafe.some((sh) => isOutboundShipmentRowCancelled(sh))) return false;
         if (arSafe.some((sh) => isOutboundShipmentRowTerminal(sh))) return false;
         return w === "pending" || w === "processing" || w === "assembling";
       }) ?? null;
@@ -780,6 +800,14 @@ const PackingPage = () => {
     const saRaw = assignment.shipments ?? [];
     const saList = Array.isArray(saRaw) ? saRaw : [];
     const saPackOk = outboundShipmentsPackedQtyPlanSatisfied(saList);
+    if (w === "cancelled") {
+      toast.info("Отгрузка отменена");
+      return;
+    }
+    if (saList.some((sh) => isOutboundShipmentRowCancelled(sh))) {
+      toast.info("Отгрузка отменена");
+      return;
+    }
     if (saList.some((sh) => isOutboundShipmentRowTerminal(sh))) {
       toast.info("Отгрузка уже завершена");
       return;
@@ -840,7 +868,10 @@ const PackingPage = () => {
   const packingReadOnlyShippedOut =
     startedAssignment != null &&
     startedShipmentList.length > 0 &&
-    startedShipmentList.every((sh) => isOutboundShipmentRowTerminal(sh));
+    startedShipmentList.every((sh) => isOutboundShipmentRowClosedForPacking(sh));
+  const packingReadOnlyDueToCancellation =
+    packingReadOnlyShippedOut &&
+    startedShipmentList.some((sh) => isOutboundShipmentRowCancelled(sh));
   const startedShipmentDiffReason = React.useMemo(() => {
     const raw = startedShipmentList
       .map((s) => String((s as OutboundShipment & { differenceReason?: string }).differenceReason ?? "").trim())
@@ -916,6 +947,7 @@ const PackingPage = () => {
               <SelectItem value="completed">Завершено</SelectItem>
               <SelectItem value="shipped">Отгружено</SelectItem>
               <SelectItem value="shipped_with_diff">Отгружено с расхождением</SelectItem>
+              <SelectItem value="cancelled">Отменена</SelectItem>
             </SelectContent>
           </Select>
           <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
@@ -1069,15 +1101,21 @@ const PackingPage = () => {
               <div><span className="text-slate-500">Дата создания:</span><div className="font-medium text-slate-900">{startedCreatedLabel}</div></div>
             </div>
             {packingReadOnlyShippedOut ? (
-              <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-sm text-amber-950">
-                <p className="font-medium">Отгрузка уже завершена. Упаковка недоступна.</p>
-                {startedShippedAtLabel ? (
-                  <p className="text-xs tabular-nums text-amber-900/90">Дата отгрузки: {startedShippedAtLabel}</p>
-                ) : null}
-                {startedShipmentDiffReason ? (
-                  <p className="text-xs text-amber-900/90">Причина расхождения: {startedShipmentDiffReason}</p>
-                ) : null}
-              </div>
+              packingReadOnlyDueToCancellation ? (
+                <div className="space-y-2 rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-900">
+                  <p className="font-medium">Отгрузка отменена. Упаковка недоступна.</p>
+                </div>
+              ) : (
+                <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-sm text-amber-950">
+                  <p className="font-medium">Отгрузка уже завершена. Упаковка недоступна.</p>
+                  {startedShippedAtLabel ? (
+                    <p className="text-xs tabular-nums text-amber-900/90">Дата отгрузки: {startedShippedAtLabel}</p>
+                  ) : null}
+                  {startedShipmentDiffReason ? (
+                    <p className="text-xs text-amber-900/90">Причина расхождения: {startedShipmentDiffReason}</p>
+                  ) : null}
+                </div>
+              )
             ) : null}
             {!packingReadOnlyShippedOut ? (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">

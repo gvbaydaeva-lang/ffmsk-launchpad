@@ -102,7 +102,9 @@ export type TaskWorkflowStatus =
   | "assembled"
   | "shipped"
   /** Отгрузка закрыта без полного плана (диспетчерская ветка FF). */
-  | "shipped_with_diff";
+  | "shipped_with_diff"
+  /** Отмена до финальной отгрузки (возврат подобранного в ячейки). */
+  | "cancelled";
 
 /** Входящая поставка (приёмка) */
 export type InboundSupply = {
@@ -261,7 +263,7 @@ export type OutboundShipment = {
   plannedUnits: number;
   plannedShipDate: string | null;
   shippedUnits: number | null;
-  status: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено";
+  status: "готов к отгрузке (резерв)" | "к отгрузке" | "отгружено" | "отменено";
   workflowStatus?: TaskWorkflowStatus;
   /** Внутренний приоритет задания (менеджер/склад; по умолчанию — как не задано = normal) */
   priority?: "high" | "normal" | "low";
