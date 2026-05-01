@@ -756,7 +756,11 @@ const ShippingPage = () => {
     if (!itemsSafe.length) return [];
     const catalogSafe = Array.isArray(catalog) ? catalog : [];
     const byProduct = new Map(catalogSafe.map((p) => [p.id, p]));
-    const showStock = !isShippingTerminal(selectedDoc.workflowStatus);
+    const grpStatus = selectedDoc?.workflowStatus;
+    const showStock =
+      grpStatus === undefined ||
+      grpStatus === null ||
+      !isShippingTerminal(grpStatus as ShippingUiStatus);
     const movementsReady = movementDataSafe.length > 0;
     const reserveByKey = showStock && movementsReady ? reservedQtyByBalanceKey(data ?? [], catalogSafe) : null;
     return itemsSafe.map((sh) => {
@@ -800,14 +804,14 @@ const ShippingPage = () => {
         name,
         article,
         barcode,
-        marketplace: sh.marketplace.toUpperCase(),
+        marketplace: String(sh.marketplace ?? "").trim().toUpperCase() || "—",
         color,
         size,
         plan,
         fact,
         shippingPackedQty: outboundPackedQtyAssemblyGate(sh),
         warehouse: sh.sourceWarehouse || "—",
-        status: sh.workflowStatus ?? "pending",
+        status: (sh.workflowStatus ?? "pending") as TaskItemRow["status"],
         shippingStock,
         shippingLocations,
       };
@@ -846,7 +850,6 @@ const ShippingPage = () => {
         plan,
         fact,
         packedQtyEffective,
-        pickOutboundMoves,
         remaining,
         legalEntityId: sh.legalEntityId,
         legalEntityName: (entities ?? []).find((e) => e.id === sh.legalEntityId)?.shortName ?? sh.legalEntityId,
@@ -1577,12 +1580,12 @@ const ShippingPage = () => {
                   </TableHeader>
                   <TableBody>
                     {documents.map((doc) => {
-                      const uiStatus = shippingWorkflowFromGroup(doc.shipments);
+                      const docShipRaw = doc?.shipments ?? [];
+                      const docShipSafe = Array.isArray(docShipRaw) ? docShipRaw : [];
+                      const uiStatus = shippingWorkflowFromGroup(docShipSafe);
                       const currentStage = shippingStageIndex(uiStatus);
                       const rem = Math.max(0, Number(doc.planned ?? 0) - Number(doc.fact ?? 0));
                       const over = Math.max(0, Number(doc.fact ?? 0) - Number(doc.planned ?? 0));
-                      const docShipRaw = doc?.shipments ?? [];
-                      const docShipSafe = Array.isArray(docShipRaw) ? docShipRaw : [];
                       const assemblyPackGateOk = outboundShipmentsPackedQtyPlanSatisfied(docShipSafe);
                       const isSel = selectedId === doc.id;
                       const legalLabel = entities?.find((e) => e.id === doc.legalEntityId)?.shortName ?? doc.legalEntityId;
@@ -1701,7 +1704,8 @@ const ShippingPage = () => {
                                     <div className="rounded-md border border-emerald-200 bg-emerald-50/90 px-3 py-2">
                                       <p className="text-sm font-medium text-emerald-800">Отгрузка завершена</p>
                                       <p className="mt-1 text-xs tabular-nums text-emerald-900/85">
-                                        Дата отгрузки: {formatTaskArchiveDateLabel(outboundShipmentsShippedAtIso(doc.shipments))}
+                                        Дата отгрузки:{" "}
+                                        {formatTaskArchiveDateLabel(outboundShipmentsShippedAtIso(doc?.shipments ?? []))}
                                       </p>
                                     </div>
                                   ) : null}
