@@ -226,14 +226,29 @@ export async function completeInboundReceiving(inboundId: string): Promise<Inbou
     throw new Error("Нет строк с положительным принятым количеством");
   }
 
+  const rowsBeforeWrite = readStored();
+  const idxFresh = rowsBeforeWrite.findIndex((r) => r.id === inboundId);
+  if (idxFresh < 0) throw new Error("Заявка не найдена");
+  if (rowsBeforeWrite[idxFresh].status !== "receiving") {
+    throw new Error("Заявка уже не в статусе «Приёмка», повторно завершить приёмку нельзя");
+  }
+  const invNow = typeof window !== "undefined" ? getInventoryMovementsSync() : [];
+  if (hasReceivingInboundMovements(inboundId, invNow)) {
+    throw new Error("По этой заявке движения приёмки уже созданы");
+  }
+
   addInventoryMovements(moves);
 
+  const rowsAfterMoves = readStored();
+  const idxAfter = rowsAfterMoves.findIndex((r) => r.id === inboundId);
+  if (idxAfter < 0) throw new Error("Заявка не найдена");
+
   const updated: InboundWarehouseRequest = {
-    ...row,
+    ...rowsAfterMoves[idxAfter],
     status: "received",
   };
-  const next = [...rows];
-  next[idx] = updated;
+  const next = [...rowsAfterMoves];
+  next[idxAfter] = updated;
   writeStored(next);
   return updated;
 }
@@ -394,14 +409,29 @@ export async function completeInboundPlacement(inboundId: string): Promise<Inbou
     throw new Error("Нет размещений для создания движений");
   }
 
+  const rowsBeforeWrite = readStored();
+  const idxFresh = rowsBeforeWrite.findIndex((r) => r.id === inboundId);
+  if (idxFresh < 0) throw new Error("Заявка не найдена");
+  if (rowsBeforeWrite[idxFresh].status !== "received") {
+    throw new Error("Заявка уже не в статусе «Принято», повторно завершить размещение нельзя");
+  }
+  const invNow = typeof window !== "undefined" ? getInventoryMovementsSync() : [];
+  if (hasWarehouseInboundPlacementTransfers(inboundId, invNow)) {
+    throw new Error("По этой заявке размещение уже отражено в движениях");
+  }
+
   addInventoryMovements(moves);
 
+  const rowsAfterMoves = readStored();
+  const idxAfter = rowsAfterMoves.findIndex((r) => r.id === inboundId);
+  if (idxAfter < 0) throw new Error("Заявка не найдена");
+
   const updated: InboundWarehouseRequest = {
-    ...row,
+    ...rowsAfterMoves[idxAfter],
     status: "placed",
   };
-  const next = [...rows];
-  next[idx] = updated;
+  const next = [...rowsAfterMoves];
+  next[idxAfter] = updated;
   writeStored(next);
   return updated;
 }

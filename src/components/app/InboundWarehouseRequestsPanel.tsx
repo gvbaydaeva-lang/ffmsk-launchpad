@@ -497,6 +497,23 @@ const InboundWarehouseRequestsPanel = () => {
     [isUpdatingWarehouseInboundPlacement, updatingWarehouseInboundPlacementVars],
   );
 
+  const anyPlacementSavingForInbound = React.useCallback(
+    (inboundId: string) =>
+      Boolean(
+        isUpdatingWarehouseInboundPlacement &&
+          updatingWarehouseInboundPlacementVars?.inboundId === inboundId,
+      ),
+    [isUpdatingWarehouseInboundPlacement, updatingWarehouseInboundPlacementVars],
+  );
+
+  const anyReceivedQtySavingForInbound = React.useCallback(
+    (inboundId: string) =>
+      Boolean(
+        isUpdatingInboundReceivedQty && updatingInboundReceivedVars?.inboundId === inboundId,
+      ),
+    [isUpdatingInboundReceivedQty, updatingInboundReceivedVars],
+  );
+
   const completePlacementBusy = (rowId: string) =>
     Boolean(isCompletingWarehouseInboundPlacement && completingWarehouseInboundPlacementId === rowId);
 
@@ -715,6 +732,7 @@ const InboundWarehouseRequestsPanel = () => {
                                     className="shrink-0"
                                     disabled={
                                       completeReceivingBusy(row.id) ||
+                                      anyReceivedQtySavingForInbound(row.id) ||
                                       !row.items.some((it) => Math.max(0, Math.trunc(Number(it.receivedQty) || 0)) > 0)
                                     }
                                     onClick={() => void completeInboundReceivingFor(row.id)}
@@ -730,7 +748,9 @@ const InboundWarehouseRequestsPanel = () => {
                                       <TableHead className="text-xs font-semibold">Товар</TableHead>
                                       <TableHead className="text-right text-xs font-semibold">План</TableHead>
                                       <TableHead className="text-right text-xs font-semibold">Принято</TableHead>
-                                      <TableHead className="text-xs font-semibold">Изменить факт</TableHead>
+                                      <TableHead className="text-xs font-semibold">
+                                        {row.status === "receiving" ? "Изменить факт" : "Факт"}
+                                      </TableHead>
                                       <TableHead className="text-right text-xs font-semibold">Факт / план</TableHead>
                                     </TableRow>
                                   </TableHeader>
@@ -741,7 +761,9 @@ const InboundWarehouseRequestsPanel = () => {
                                         item={item}
                                         productName={productDisplayName(item.productId)}
                                         editable={row.status === "receiving"}
-                                        disabled={lineReceivedQtyBusy(row.id, item.id)}
+                                        disabled={
+                                          lineReceivedQtyBusy(row.id, item.id) || completeReceivingBusy(row.id)
+                                        }
                                         onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
                                       />
                                     ))}
@@ -750,10 +772,15 @@ const InboundWarehouseRequestsPanel = () => {
                               </div>
                               {row.status === "received" || row.status === "placed" ? (
                                 <div className="space-y-3 pt-2">
-                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                    Размещение по ячейкам
-                                  </p>
-                                  {!storageLocations.length ? (
+                                  <div>
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                      Размещение по ячейкам
+                                    </p>
+                                    {row.status === "placed" ? (
+                                      <p className="mt-0.5 text-xs text-slate-500">Только просмотр, изменение недоступно.</p>
+                                    ) : null}
+                                  </div>
+                                  {!storageLocations.length && row.status === "received" ? (
                                     <p className="text-xs text-amber-800">В справочнике нет ячеек хранения — добавьте места типа «Хранение».</p>
                                   ) : null}
                                   {row.items.map((item) => (
@@ -775,6 +802,7 @@ const InboundWarehouseRequestsPanel = () => {
                                         size="sm"
                                         disabled={
                                           completePlacementBusy(row.id) ||
+                                          anyPlacementSavingForInbound(row.id) ||
                                           !isInboundPlacementFullyDistributed(row) ||
                                           !storageLocations.length
                                         }
