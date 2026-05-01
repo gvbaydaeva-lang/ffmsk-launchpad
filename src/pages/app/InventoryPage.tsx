@@ -226,8 +226,20 @@ const InventoryPage = () => {
         return x.balanceQty - reserveQty <= 0;
       });
     }
+    // В таблице «Складские остатки» показываем только реальные storage-ячейки.
+    rows = rows.filter((x) => {
+      const locId = (x.locationId || "").trim();
+      const locType = locId ? locationById.get(locId)?.type : undefined;
+      return locType === "storage";
+    });
+    // Скрываем полностью нулевые строки (остаток=0, резерв=0, доступно=0).
+    rows = rows.filter((x) => {
+      const reserveQty = reservedByKey.get(x.baseKey) ?? 0;
+      const available = x.balanceQty - reserveQty;
+      return !(x.balanceQty === 0 && reserveQty === 0 && available === 0);
+    });
     return rows;
-  }, [rowsWithLocation, entityId, warehouse, mp, search, availableZeroFromUrl, reservedByKey]);
+  }, [rowsWithLocation, entityId, warehouse, mp, search, availableZeroFromUrl, reservedByKey, locationById]);
 
   const reserveShownByBaseKey = React.useMemo(() => {
     const map = new Map<string, string>();
