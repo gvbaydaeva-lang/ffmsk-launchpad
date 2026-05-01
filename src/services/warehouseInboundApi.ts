@@ -3,7 +3,15 @@ import type {
   InboundWarehouseRequest,
   InboundWarehouseRequestStatus,
   InboundWarehouseReceivingMode,
+  InventoryMovement,
 } from "@/types/domain";
+import { fetchMockProductCatalog } from "@/services/mockProductCatalog";
+import { fetchMockLegalEntities } from "@/services/mockWms";
+import {
+  addInventoryMovements,
+  getInventoryMovementsSync,
+  hasReceivingInboundMovements,
+} from "@/services/mockInventoryMovements";
 
 const STORAGE_KEY = "ffmsk.api.inbounds";
 
@@ -21,9 +29,16 @@ function normalizeInboundItem(it: InboundWarehouseItem): InboundWarehouseItem {
   };
 }
 
+/** Id зоны приёмки для движений (без размещения по ячейкам хранения) */
+export const WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID = "RECEIVING_AREA";
+
 function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): InboundWarehouseRequest {
   const status: InboundWarehouseRequestStatus =
-    raw.status === "receiving" ? "receiving" : "new";
+    raw.status === "received"
+      ? "received"
+      : raw.status === "receiving"
+        ? "receiving"
+        : "new";
   let receivingMode: InboundWarehouseReceivingMode | null = null;
   if (raw.receivingMode === "manual" || raw.receivingMode === "scan") {
     receivingMode = raw.receivingMode;
@@ -124,6 +139,78 @@ export async function updateInboundReceivedQty(
     i === lineIdx ? { ...it, receivedQty: q } : it,
   );
   const updated: InboundWarehouseRequest = { ...row, items: nextItems };
+  const next = [...rows];
+  next[idx] = updated;
+  writeStored(next);
+  return updated;
+}
+
+/**
+ * Закрыть приёмку по заявке: статус received, INBOUND-движения только по строкам с receivedQty > 0,
+ * без размещения (locationId = RECEIVING_AREA).
+ */
+export async function completeInboundReceiving(inboundId: string): Promise<InboundWarehouseRequest> {
+  await delay(140);
+  const rows = readStored();
+  const idx = rows.findIndex((r) => r.id === inboundId);
+  if (idx < 0) throw new Error("Заявка не найдена");
+  const row = rows[idx];
+  if (row.status !== "receiving") {
+    throw new Error('Завершить можно только заявку в статусе «Приёмка»');
+  }
+  if (!row.items.some((it) => Math.trunc(Number(it.receivedQty) || 0) > 0)) {
+    throw new Error("Укажите принятое количество хотя бы по одной позиции");
+  }
+
+  const invSnapshot = typeof window !== "undefined" ? getInventoryMovementsSync() : [];
+  if (hasReceivingInboundMovements(inboundId, invSnapshot)) {
+    throw new Error("По этой заявке движения приёмки уже созданы");
+  }
+
+  const [catalog, entities] = await Promise.all([fetchMockProductCatalog(), fetchMockLegalEntities()]);
+  const leName = entities.find((e) => e.id === row.partnerId)?.shortName ?? row.partnerId;
+  const ts = new Date().toISOString();
+  const stamp = Date.now();
+
+  const moves: InventoryMovement[] = [];
+  for (let i = 0; i < row.items.length; i += 1) {
+    const it = row.items[i];
+    const q = Math.max(0, Math.trunc(Number(it.receivedQty) || 0));
+    if (q <= 0) continue;
+    const product = catalog.find((p) => p.id === it.productId);
+    moves.push({
+      id: `im-whreq-${row.id}-${it.id}-${stamp}-${i}`,
+      type: "INBOUND",
+      source: "receiving",
+      taskId: row.id,
+      taskNumber: row.id,
+      legalEntityId: row.partnerId,
+      legalEntityName: leName,
+      warehouseName: "Зона приёмки",
+      locationId: WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID,
+      itemId: it.productId,
+      name: (product?.name ?? "—").trim() || "—",
+      sku: product?.supplierArticle,
+      article: (product?.supplierArticle ?? "").trim() || "—",
+      barcode: (product?.barcode ?? "").trim() || "—",
+      marketplace: "WB",
+      color: (product?.color ?? "—").trim() || "—",
+      size: (product?.size ?? "—").trim() || "—",
+      qty: q,
+      createdAt: ts,
+    });
+  }
+
+  if (moves.length === 0) {
+    throw new Error("Нет строк с положительным принятым количеством");
+  }
+
+  addInventoryMovements(moves);
+
+  const updated: InboundWarehouseRequest = {
+    ...row,
+    status: "received",
+  };
   const next = [...rows];
   next[idx] = updated;
   writeStored(next);

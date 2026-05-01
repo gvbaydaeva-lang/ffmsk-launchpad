@@ -140,7 +140,7 @@ export type InboundLineItem = {
 };
 
 /** Статус заявки на приёмку (API /inbounds), отдельно от операционной InboundSupply */
-export type InboundWarehouseRequestStatus = "new" | "receiving";
+export type InboundWarehouseRequestStatus = "new" | "receiving" | "received";
 
 /** Режим фиксации факта (следующий шаг разработки) */
 export type InboundWarehouseReceivingMode = "manual" | "scan";

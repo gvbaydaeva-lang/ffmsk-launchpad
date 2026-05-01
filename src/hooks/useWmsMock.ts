@@ -49,6 +49,7 @@ import {
   fetchInboundsWarehouseRequests,
   postInboundWarehouseRequest,
   startInboundReceiving,
+  completeInboundReceiving,
   updateInboundReceivedQty,
   type PostInboundsPayload,
 } from "@/services/warehouseInboundApi";
@@ -640,6 +641,14 @@ export function useWarehouseInboundRequests() {
     },
   });
 
+  const completeReceiving = useMutation({
+    mutationFn: (inboundId: string) => completeInboundReceiving(inboundId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["wms", "warehouse-inbound-requests"] });
+      void qc.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
+    },
+  });
+
   return {
     ...query,
     /** POST /inbounds */
@@ -651,6 +660,9 @@ export function useWarehouseInboundRequests() {
     updateInboundReceivedQty: updateReceived.mutateAsync,
     isUpdatingInboundReceivedQty: updateReceived.isPending,
     updatingInboundReceivedVars: updateReceived.variables,
+    completeWarehouseInboundReceiving: completeReceiving.mutateAsync,
+    isCompletingWarehouseInboundReceiving: completeReceiving.isPending,
+    completingWarehouseInboundId: completeReceiving.variables,
   };
 }
 

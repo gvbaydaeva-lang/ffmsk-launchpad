@@ -35,6 +35,7 @@ function receivingModeLabel(mode: InboundWarehouseReceivingMode): string {
 }
 
 function statusLabel(row: InboundWarehouseRequest): string {
+  if (row.status === "received") return "Принято";
   if (row.status === "receiving") return "Приёмка";
   return "Новая";
 }
@@ -44,11 +45,13 @@ function InboundReceivingQtyRow({
   productName,
   onSave,
   disabled,
+  editable = true,
 }: {
   item: InboundWarehouseItem;
   productName: string;
   onSave: (qty: number) => Promise<void>;
   disabled?: boolean;
+  editable?: boolean;
 }) {
   const [val, setVal] = React.useState(String(item.receivedQty));
   React.useEffect(() => {
@@ -75,31 +78,35 @@ function InboundReceivingQtyRow({
       <TableCell className="text-right tabular-nums text-sm">{item.plannedQty}</TableCell>
       <TableCell className="text-right tabular-nums text-sm">{item.receivedQty}</TableCell>
       <TableCell className="w-[140px]">
-        <Input
-          type="number"
-          min={0}
-          step={1}
-          className="h-9 tabular-nums"
-          value={val}
-          disabled={disabled}
-          onChange={(e) => {
-            const next = e.target.value;
-            setVal(next);
-            if (tRef.current) window.clearTimeout(tRef.current);
-            tRef.current = window.setTimeout(() => {
-              void persist(next);
-            }, 450);
-          }}
-          onBlur={() => {
-            if (tRef.current) {
-              window.clearTimeout(tRef.current);
-              tRef.current = null;
-            }
-            const n = Math.max(0, Math.trunc(Number(val) || 0));
-            setVal(String(n));
-            if (n !== item.receivedQty) void persist(String(n));
-          }}
-        />
+        {editable ? (
+          <Input
+            type="number"
+            min={0}
+            step={1}
+            className="h-9 tabular-nums"
+            value={val}
+            disabled={disabled}
+            onChange={(e) => {
+              const next = e.target.value;
+              setVal(next);
+              if (tRef.current) window.clearTimeout(tRef.current);
+              tRef.current = window.setTimeout(() => {
+                void persist(next);
+              }, 450);
+            }}
+            onBlur={() => {
+              if (tRef.current) {
+                window.clearTimeout(tRef.current);
+                tRef.current = null;
+              }
+              const n = Math.max(0, Math.trunc(Number(val) || 0));
+              setVal(String(n));
+              if (n !== item.receivedQty) void persist(String(n));
+            }}
+          />
+        ) : (
+          <span className="text-sm text-slate-400">—</span>
+        )}
       </TableCell>
       <TableCell className="text-right text-xs tabular-nums text-slate-600">
         {item.receivedQty} / {item.plannedQty}
@@ -123,6 +130,9 @@ const InboundWarehouseRequestsPanel = () => {
     updateInboundReceivedQty,
     isUpdatingInboundReceivedQty,
     updatingInboundReceivedVars,
+    completeWarehouseInboundReceiving,
+    isCompletingWarehouseInboundReceiving,
+    completingWarehouseInboundId,
   } = useWarehouseInboundRequests();
 
   const [modeDialogInboundId, setModeDialogInboundId] = React.useState<string | null>(null);
@@ -233,6 +243,22 @@ const InboundWarehouseRequestsPanel = () => {
 
   const rowReceivingBusy = (rowId: string) =>
     isStartingInboundReceiving && startingInboundReceivingVars?.id === rowId;
+
+  const completeReceivingBusy = (rowId: string) =>
+    Boolean(isCompletingWarehouseInboundReceiving && completingWarehouseInboundId === rowId);
+
+  const completeInboundReceivingFor = React.useCallback(
+    async (inboundId: string) => {
+      try {
+        await completeWarehouseInboundReceiving(inboundId);
+        toast.success("Приёмка завершена, движения учтены");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Не удалось завершить приёмку";
+        toast.error(msg);
+      }
+    },
+    [completeWarehouseInboundReceiving],
+  );
 
   return (
     <div className="space-y-4">
@@ -377,16 +403,18 @@ const InboundWarehouseRequestsPanel = () => {
                         <TableCell>
                           <span
                             className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
-                              row.status === "receiving"
-                                ? "border-violet-200 bg-violet-50 text-violet-900"
-                                : "border-slate-200 bg-slate-50 text-slate-700"
+                              row.status === "received"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                : row.status === "receiving"
+                                  ? "border-violet-200 bg-violet-50 text-violet-900"
+                                  : "border-slate-200 bg-slate-50 text-slate-700"
                             }`}
                           >
                             {statusLabel(row)}
                           </span>
                         </TableCell>
                         <TableCell className="text-sm text-slate-700">
-                          {row.status === "receiving" && row.receivingMode
+                          {(row.status === "receiving" || row.status === "received") && row.receivingMode
                             ? receivingModeLabel(row.receivingMode)
                             : "—"}
                         </TableCell>
@@ -408,13 +436,34 @@ const InboundWarehouseRequestsPanel = () => {
                           )}
                         </TableCell>
                       </TableRow>
-                      {row.status === "receiving" ? (
+                      {row.status === "receiving" || row.status === "received" ? (
                         <TableRow className="border-t-0 bg-slate-50/70 hover:bg-slate-50/70">
                           <TableCell colSpan={7} className="p-0 align-top">
                             <div className="space-y-2 p-3">
-                              <p className="text-xs text-slate-600">
-                                Факт по строкам сохраняется здесь; движения остатков и завершение приёмки не выполняются.
-                              </p>
+                              {row.status === "received" ? (
+                                <p className="text-xs text-slate-600">
+                                  Приёмка завершена. Факт по заявке зафиксирован, правки недоступны.
+                                </p>
+                              ) : (
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <p className="text-xs text-slate-600">
+                                    Внесите факт по строкам; по кнопке ниже создаются движения INBOUND в зону приёмки и заявка закрывается без
+                                    размещения по ячейкам.
+                                  </p>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    className="shrink-0"
+                                    disabled={
+                                      completeReceivingBusy(row.id) ||
+                                      !row.items.some((it) => Math.max(0, Math.trunc(Number(it.receivedQty) || 0)) > 0)
+                                    }
+                                    onClick={() => void completeInboundReceivingFor(row.id)}
+                                  >
+                                    {completeReceivingBusy(row.id) ? "Завершение…" : "Завершить приёмку"}
+                                  </Button>
+                                </div>
+                              )}
                               <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
                                 <Table>
                                   <TableHeader>
@@ -432,6 +481,7 @@ const InboundWarehouseRequestsPanel = () => {
                                         key={item.id}
                                         item={item}
                                         productName={productDisplayName(item.productId)}
+                                        editable={row.status !== "received"}
                                         disabled={lineReceivedQtyBusy(row.id, item.id)}
                                         onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
                                       />
