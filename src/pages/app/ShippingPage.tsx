@@ -778,10 +778,14 @@ const ShippingPage = () => {
       const next: Record<string, { locationId: string; qty: string }> = {};
       for (const line of lines) {
         const prevDraft = prev[line.shipmentId];
-        const hasPrevLoc = prevDraft?.locationId && line.storageOptions.some((o) => o.locationId === prevDraft.locationId);
-        const locationId = hasPrevLoc
-          ? prevDraft.locationId
-          : (line.storageOptions[0]?.locationId ?? "");
+        const opts = line.storageOptions ?? [];
+        const stillValid =
+          Boolean(prevDraft?.locationId) && opts.some((o) => o.locationId === prevDraft?.locationId);
+        const locationId = stillValid
+          ? prevDraft!.locationId
+          : prevDraft?.locationId === ""
+            ? ""
+            : opts[0]?.locationId ?? "";
         next[line.shipmentId] = {
           locationId,
           qty: prevDraft?.qty ?? "",
@@ -1015,6 +1019,9 @@ const ShippingPage = () => {
         return;
       }
       const ts = new Date().toISOString();
+      const nextFact = line.fact + qty;
+      const plan = line.plan;
+      const lineDone = nextFact >= plan && plan > 0;
       try {
         await addInventoryMovements([
           {
@@ -1027,6 +1034,7 @@ const ShippingPage = () => {
             legalEntityName: line.legalEntityName,
             warehouseName: line.warehouseName,
             locationId,
+            itemId: shipmentId,
             name: line.name,
             article: line.article,
             sku: line.article,
@@ -1041,14 +1049,16 @@ const ShippingPage = () => {
         await updateOutboundDraft({
           id: shipmentId,
           patch: {
-            packedUnits: line.fact + qty,
+            packedUnits: nextFact,
+            shippedUnits: nextFact,
             updatedAt: ts,
+            ...(lineDone ? { workflowStatus: "completed" as const } : {}),
           },
         });
         setPickDraftByShipment((prev) => ({
           ...prev,
           [shipmentId]: {
-            locationId,
+            locationId: "",
             qty: "",
           },
         }));
@@ -1555,6 +1565,9 @@ const ShippingPage = () => {
                                           const selectedCell = line.storageOptions.find((opt) => opt.locationId === draft.locationId);
                                           const maxQty = Math.min(line.remaining, selectedCell?.available ?? 0);
                                           const pickingDone = line.remaining <= 0;
+                                          const pickQtyParsed = Math.trunc(Number(draft.qty) || 0);
+                                          const pickQtyOk =
+                                            draft.qty.trim() !== "" && pickQtyParsed > 0 && pickQtyParsed <= maxQty;
                                           return (
                                             <div key={line.shipmentId} className="grid gap-2 rounded-md border border-slate-200 p-2 md:grid-cols-12 md:items-end">
                                               <div className="md:col-span-4">
@@ -1569,11 +1582,15 @@ const ShippingPage = () => {
                                               <div className="md:col-span-3">
                                                 <div className="mb-1 text-[11px] text-slate-600">Ячейка</div>
                                                 <Select
-                                                  value={draft.locationId}
+                                                  value={draft.locationId || undefined}
                                                   onValueChange={(value) =>
                                                     setPickDraftByShipment((prev) => ({
                                                       ...prev,
-                                                      [line.shipmentId]: { ...prev[line.shipmentId], locationId: value, qty: prev[line.shipmentId]?.qty ?? "" },
+                                                      [line.shipmentId]: {
+                                                        ...prev[line.shipmentId],
+                                                        locationId: value,
+                                                        qty: prev[line.shipmentId]?.qty ?? "",
+                                                      },
                                                     }))
                                                   }
                                                   disabled={line.storageOptions.length === 0 || pickingDone}
@@ -1617,7 +1634,7 @@ const ShippingPage = () => {
                                                     line.storageOptions.length === 0 ||
                                                     pickingDone ||
                                                     !draft.locationId ||
-                                                    !draft.qty.trim() ||
+                                                    !pickQtyOk ||
                                                     isUpdatingOutboundDraft ||
                                                     isAppendingMovements
                                                   }
