@@ -156,8 +156,10 @@ function shipmentLineAvailableByLocations(params: {
   receivingLocationIds: Set<string>;
   balanceKey: string;
   warehouseName: string;
+  /** Оставлено в сигнатуре для совместимости вызовов; числа по ячейкам = сырой остаток, как в «Остатках». */
   reserveQty: number;
 }): ShippingLocationAvailability {
+  void params.reserveQty;
   const movementsSafe = Array.isArray(params.movements) ? params.movements : [];
   const wh = (params.warehouseName || "").trim() || "—";
   const byLoc = new Map<string, number>();
@@ -186,15 +188,16 @@ function shipmentLineAvailableByLocations(params: {
   const storageEntries = allEntries.filter((e) => params.storageLocationIds.has(e.k));
   const otherEntries = allEntries.filter((e) => !params.storageLocationIds.has(e.k));
 
-  // Резерв распределяем только по storage, так как отгрузка разрешена только из ячеек хранения.
-  let rem = Math.max(0, Number(params.reserveQty) || 0);
-  const storage: ShippingLocationAvailabilityLine[] = [];
-  for (const e of storageEntries) {
-    const take = Math.min(Math.max(0, e.balance), rem);
-    const available = Math.max(0, e.balance - take);
-    rem -= take;
-    if (available > 0) storage.push({ locationId: e.k, label: e.label, available });
-  }
+  // Как на странице «Остатки»: сумма qty по ключу строки и locationId (буквальный физический остаток в ячейке).
+  // Резерв здесь не вычитаем по ячейкам — иначе визуал не совпадает с таблицей остатков.
+  const storage: ShippingLocationAvailabilityLine[] = storageEntries
+    .slice()
+    .sort((a, b) => b.balance - a.balance)
+    .map((e) => ({
+      locationId: e.k,
+      label: e.label,
+      available: e.balance,
+    }));
   const other = otherEntries.map((e) => ({ label: e.label, available: e.balance }));
   const storageAvailableTotal = storage.reduce((sum, x) => sum + x.available, 0);
   return { storage, other, storageAvailableTotal };
@@ -338,10 +341,11 @@ const ShippingPage = () => {
     () => new Set(locationsSafe.filter((l) => l?.type === "storage").map((l) => l.id)),
     [locationsSafe],
   );
-  const receivingLocationIds = React.useMemo(
-    () => new Set(locationsSafe.filter((l) => l?.type === "receiving").map((l) => l.id)),
-    [locationsSafe],
-  );
+  const receivingLocationIds = React.useMemo(() => {
+    const ids = new Set(locationsSafe.filter((l) => l?.type === "receiving").map((l) => l.id));
+    ids.add("loc-receiving");
+    return ids;
+  }, [locationsSafe]);
 
   const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
   const reasonFromUrl = React.useMemo(() => {
@@ -754,7 +758,7 @@ const ShippingPage = () => {
         fact,
         remaining,
         legalEntityId: sh.legalEntityId,
-        legalEntityName: entities?.find((e) => e.id === sh.legalEntityId)?.shortName ?? sh.legalEntityId,
+        legalEntityName: (entities ?? []).find((e) => e.id === sh.legalEntityId)?.shortName ?? sh.legalEntityId,
         warehouseName: sh.sourceWarehouse || "—",
         marketplace: sh.marketplace,
         article: (sh.importArticle || product?.supplierArticle || "").trim() || "—",
