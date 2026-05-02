@@ -61,7 +61,8 @@ type InventoryRowWithLocation = InventoryBalanceRow & {
   lastMovementIso: string | null;
 };
 
-type StockLocationKind = "none" | "receiving" | "storage";
+/** «Зона приёмки» в UI: RECEIVING_AREA, пусто или __no_location__; иначе — ячейка хранения */
+type StockLocationKind = "receiving_zone" | "storage";
 
 /** Строка таблицы «остатки по ячейкам»: только визуализация getInventoryBalance + movementLocationTotalsForWarehouseBalanceKey */
 type StockByLocationRow = {
@@ -74,11 +75,13 @@ type StockByLocationRow = {
   article: string;
   barcode: string;
   locationKind: StockLocationKind;
-  /** Пусто = нет ячейки; иначе id (в т.ч. RECEIVING_AREA) */
+  /** id ячейки хранения; для receiving_zone не показываем в UI */
   locationId: string;
-  /** Имя ячейки из справочника; для receiving/none не используется в колонке */
+  /** Имя ячейки из справочника (только storage) */
   locationStorageName: string;
   qty: number;
+  /** Из движений: max createdAt по этой строке; для сортировки */
+  lastMovementIso: string | null;
 };
 
 function mpDisplay(mp: string): string {
@@ -99,6 +102,43 @@ function formatLastMovementCell(iso: string | null | undefined): string {
   } catch {
     return "—";
   }
+}
+
+/**
+ * Последнее движение по паре «ключ остатка + место» из уже загруженных движений (для сортировки UI, без новых полей в API).
+ * Логика привязки к ячейке согласована с фильтром истории в таблице складских остатков.
+ */
+function lastMovementIsoForStockLocationRow(
+  movements: InventoryMovement[],
+  warehouseName: string,
+  balanceKey: string,
+  rawLocId: string,
+): string | null {
+  const wh = (warehouseName ?? "—").trim() || "—";
+  const rowLoc = rawLocId === "__no_location__" ? "" : (rawLocId || "").trim();
+  let best: string | null = null;
+  const consider = (iso: string) => {
+    const s = (iso ?? "").trim();
+    const t = Date.parse(s);
+    if (!Number.isFinite(t)) return;
+    const prev = best ? Date.parse(best) : NaN;
+    if (!Number.isFinite(prev) || t > prev) best = s;
+  };
+  for (const m of movements) {
+    const mWh = (m.warehouseName ?? "—").trim() || "—";
+    if (mWh !== wh) continue;
+    if (makeInventoryBalanceKeyFromMovement(m) !== balanceKey) continue;
+    const mIso = m.createdAt ?? "";
+    if (m.type === "TRANSFER") {
+      const from = (m.fromLocationId || "").trim();
+      const to = (m.locationId || "").trim();
+      if (rowLoc === from || rowLoc === to) consider(mIso);
+      continue;
+    }
+    const movementLoc = (m.locationId || "").trim();
+    if (movementLoc === rowLoc) consider(mIso);
+  }
+  return best && Number.isFinite(Date.parse(best)) ? best : null;
 }
 
 const InventoryPage = () => {
@@ -179,11 +219,9 @@ const InventoryPage = () => {
       const byLoc = movementLocationTotalsForWarehouseBalanceKey(movements, wh, br.key);
       for (const [rawLocId, qty] of byLoc) {
         const lid = rawLocId === "__no_location__" ? "" : (rawLocId || "").trim();
-        let locationKind: StockLocationKind = "storage";
-        if (!lid) locationKind = "none";
-        else if (lid === WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID) locationKind = "receiving";
-        const locationStorageName =
-          locationKind === "storage" ? (locationById.get(lid)?.name ?? "—") : "";
+        const receivingZoneUi = !lid || lid === WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID;
+        const locationKind: StockLocationKind = receivingZoneUi ? "receiving_zone" : "storage";
+        const locationStorageName = locationKind === "storage" ? (locationById.get(lid)?.name ?? "—") : "";
         out.push({
           rowKey: `${br.key}::${rawLocId}`,
           balanceKey: br.key,
@@ -196,18 +234,27 @@ const InventoryPage = () => {
           locationId: lid,
           locationStorageName,
           qty: Math.trunc(Number(qty) || 0),
+          lastMovementIso: lastMovementIsoForStockLocationRow(movements, wh, br.key, rawLocId),
         });
       }
     }
-    out.sort(
-      (a, b) =>
+    out.sort((a, b) => {
+      const aTs = Date.parse(a.lastMovementIso || "");
+      const bTs = Date.parse(b.lastMovementIso || "");
+      const aOk = Number.isFinite(aTs);
+      const bOk = Number.isFinite(bTs);
+      if (aOk && bOk) return bTs - aTs;
+      if (aOk && !bOk) return -1;
+      if (!aOk && bOk) return 1;
+      return (
         a.legalEntityName.localeCompare(b.legalEntityName, "ru") ||
         a.productName.localeCompare(b.productName, "ru") ||
         `${a.locationKind} ${a.locationId} ${a.locationStorageName}`.localeCompare(
           `${b.locationKind} ${b.locationId} ${b.locationStorageName}`,
           "ru",
-        ),
-    );
+        )
+      );
+    });
     return out;
   }, [balanceRows, movementDataSafe, locationById]);
 
@@ -591,7 +638,8 @@ const InventoryPage = () => {
                 <TableHeader>
                   <TableRow className="h-9 bg-slate-50/90 hover:bg-slate-50/90">
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Товар</TableHead>
-                    <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Артикул / штрихкод</TableHead>
+                    <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Артикул</TableHead>
+                    <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Штрихкод</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Партнёр</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Ячейка</TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Всего</TableHead>
@@ -602,16 +650,14 @@ const InventoryPage = () => {
                 <TableBody>
                   {stockByLocationFiltered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-8 text-center text-sm text-slate-600">
+                      <TableCell colSpan={9} className="py-8 text-center text-sm text-slate-600">
                         Нет остатков
                       </TableCell>
                     </TableRow>
                   ) : (
                     stockByLocationFiltered.map((r) => {
-                      const art = r.article;
-                      const bc = r.barcode;
-                      const artBc =
-                        art && bc ? `${art} / ${bc}` : art ? art : bc ? bc : "—";
+                      const artCell = r.article.trim() ? r.article : "—";
+                      const bcCell = r.barcode.trim() ? r.barcode : "—";
                       const reserveQty =
                         stockReservePrimaryRowKey.get(r.balanceKey) === r.rowKey
                           ? (reservedByKey.get(r.balanceKey) ?? 0)
@@ -619,14 +665,9 @@ const InventoryPage = () => {
                       const available = r.qty - reserveQty;
                       const rowMuted = available === 0;
                       const locationCell =
-                        r.locationKind === "none" ? (
-                          <span className="text-slate-600">Без размещения</span>
-                        ) : r.locationKind === "receiving" ? (
-                          <span className="inline-flex flex-wrap items-center gap-1.5">
-                            <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
-                              Зона приёмки
-                            </span>
-                            <span className="font-mono text-[11px] text-slate-500">{WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID}</span>
+                        r.locationKind === "receiving_zone" ? (
+                          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
+                            Зона приёмки
                           </span>
                         ) : (
                           <>
@@ -641,9 +682,10 @@ const InventoryPage = () => {
                           className={cn("text-sm", rowMuted && "opacity-[0.68]")}
                         >
                           <TableCell className="max-w-[240px] px-3 py-2 font-medium text-slate-900">{r.productName}</TableCell>
-                          <TableCell className="max-w-[200px] whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs text-slate-700">
-                            {artBc}
+                          <TableCell className="max-w-[140px] whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs text-slate-700">
+                            {artCell}
                           </TableCell>
+                          <TableCell className="max-w-[140px] truncate px-3 py-2 font-mono text-xs text-slate-700">{bcCell}</TableCell>
                           <TableCell className="max-w-[160px] truncate px-3 py-2 text-slate-700">{r.legalEntityName}</TableCell>
                           <TableCell className="max-w-[280px] px-3 py-2 text-xs text-slate-700">{locationCell}</TableCell>
                           <TableCell className={cn("px-3 py-2 text-right tabular-nums", balanceClass(r.qty))}>
