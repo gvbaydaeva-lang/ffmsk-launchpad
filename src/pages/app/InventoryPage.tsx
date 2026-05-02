@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
@@ -742,9 +742,16 @@ const InventoryPage = () => {
                             : "Причина: проверьте резервы по другим ячейкам этого товара";
                       const locationCell =
                         r.locationKind === "receiving_zone" ? (
-                          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
-                            Зона приёмки
-                          </span>
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
+                                Зона приёмки
+                              </span>
+                              <span className="inline-flex items-center rounded-md border border-amber-400 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950 ring-1 ring-amber-300/70">
+                                Требует размещения
+                              </span>
+                            </div>
+                          </div>
                         ) : (
                           <>
                             <span className="font-mono text-[11px] text-slate-600">{r.locationId}</span>
@@ -779,8 +786,16 @@ const InventoryPage = () => {
                             <div className="flex max-w-[min(100%,14rem)] flex-col items-end gap-0.5">
                               <span>{available.toLocaleString("ru-RU")}</span>
                               {isReceivingZone ? (
-                                <span className="max-w-[12rem] text-right text-[10px] leading-snug text-slate-500">
-                                  Недоступно для отгрузки до размещения
+                                <span className="flex max-w-[12rem] flex-col items-end gap-1 text-right">
+                                  <span className="text-[10px] leading-snug text-slate-500">
+                                    Недоступно для отгрузки до размещения
+                                  </span>
+                                  <Link
+                                    to="/receiving"
+                                    className="text-[11px] font-medium text-sky-800 underline decoration-sky-300 underline-offset-2 hover:text-sky-950"
+                                  >
+                                    Перейти к приёмке
+                                  </Link>
                                 </span>
                               ) : shortage ? (
                                 <div className="text-right text-[10px] leading-snug text-red-700">

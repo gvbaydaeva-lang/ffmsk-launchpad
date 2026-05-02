@@ -963,21 +963,28 @@ const InboundWarehouseRequestsPanel = () => {
                         <TableCell className="text-sm">{entityName(row.partnerId)}</TableCell>
                         <TableCell className="text-sm tabular-nums">{formatPlannedDate(row.plannedDate)}</TableCell>
                         <TableCell>
-                          <span
-                            className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
-                              row.status === "placed"
-                                ? "border-sky-200 bg-sky-50 text-sky-900"
-                                : row.status === "received"
-                                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                                  : row.status === "receiving"
-                                    ? "border-violet-200 bg-violet-50 text-violet-900"
-                                    : row.status === "cancelled"
-                                      ? "border-rose-200 bg-rose-50 text-rose-900"
-                                      : "border-slate-200 bg-slate-50 text-slate-700"
-                            }`}
-                          >
-                            {statusLabel(row)}
-                          </span>
+                          <div className="flex min-w-[140px] flex-col items-start gap-1">
+                            <span
+                              className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                                row.status === "placed"
+                                  ? "border-sky-200 bg-sky-50 text-sky-900"
+                                  : row.status === "received"
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                    : row.status === "receiving"
+                                      ? "border-violet-200 bg-violet-50 text-violet-900"
+                                      : row.status === "cancelled"
+                                        ? "border-rose-200 bg-rose-50 text-rose-900"
+                                        : "border-slate-200 bg-slate-50 text-slate-700"
+                              }`}
+                            >
+                              {statusLabel(row)}
+                            </span>
+                            {row.status === "received" ? (
+                              <span className="inline-flex rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-950 ring-1 ring-amber-200/80">
+                                Требует размещения
+                              </span>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell className="text-sm text-slate-700">
                           {isExpanded &&
@@ -1041,18 +1048,26 @@ const InboundWarehouseRequestsPanel = () => {
                                 </div>
                               ) : null}
                               {row.status === "received" ? (
-                                <div className="space-y-1">
-                                  <p className="text-xs text-slate-600">
-                                    Приёмка завершена. Если был недовоз — создана заявка на остаток.
-                                  </p>
-                                  {continuationInboundIdByOrigin.has(row.id) ? (
-                                    <p className="text-xs text-sky-800">
-                                      Есть продолжение заявки:{" "}
-                                      <span className="font-mono tabular-nums">
-                                        {continuationInboundIdByOrigin.get(row.id)}
-                                      </span>
+                                <div className="space-y-2">
+                                  <div
+                                    role="status"
+                                    className="rounded-md border border-amber-200 bg-amber-50/95 px-3 py-2 text-sm leading-snug text-amber-950"
+                                  >
+                                    Товар принят, но ещё не размещён. До размещения он недоступен для отгрузки.
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="text-xs text-slate-600">
+                                      Приёмка завершена. Если был недовоз — создана заявка на остаток.
                                     </p>
-                                  ) : null}
+                                    {continuationInboundIdByOrigin.has(row.id) ? (
+                                      <p className="text-xs text-sky-800">
+                                        Есть продолжение заявки:{" "}
+                                        <span className="font-mono tabular-nums">
+                                          {continuationInboundIdByOrigin.get(row.id)}
+                                        </span>
+                                      </p>
+                                    ) : null}
+                                  </div>
                                 </div>
                               ) : row.status === "placed" ? (
                                 <div className="space-y-1">
@@ -1155,6 +1170,11 @@ const InboundWarehouseRequestsPanel = () => {
                               )}
                               {row.status === "received" || row.status === "placed" ? (
                                 <div className="space-y-3 pt-2">
+                                  {row.status === "received" ? (
+                                    <p className="text-xs font-medium leading-snug text-slate-700">
+                                      Разместите товар по ячейкам хранения, чтобы он стал доступен для отгрузки.
+                                    </p>
+                                  ) : null}
                                   <div>
                                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                                       Размещение по ячейкам
