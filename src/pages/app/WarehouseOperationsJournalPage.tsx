@@ -1,8 +1,7 @@
 import * as React from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +13,7 @@ import { useInventoryMovements, useLocations, useOperationLogs } from "@/hooks/u
 import type { InventoryMovement, Location, OperationLog } from "@/types/domain";
 import { signedStockDeltaForMovement } from "@/services/mockInventoryMovements";
 import { cn } from "@/lib/utils";
+import { WmsTableRowActions, type WmsRowActionItem } from "@/components/app/WmsTableRowActions";
 
 type OperationCategory = "receiving" | "placement" | "shipping" | "inventory" | "packing" | "other";
 
@@ -196,6 +196,7 @@ function logToRow(log: OperationLog): UnifiedRow {
 }
 
 const WarehouseOperationsJournalPage = () => {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { data: movementsRaw, isLoading: movLoading, error: movError } = useInventoryMovements();
   const { data: logsRaw, isLoading: logLoading, error: logError } = useOperationLogs();
@@ -260,7 +261,7 @@ const WarehouseOperationsJournalPage = () => {
     <div className="space-y-4">
       <div>
         <h2 className="font-display text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">Журнал операций</h2>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="mt-1 text-xs text-slate-600">
           Движения остатков и записи операционного журнала в одной ленте (без пересчёта данных).
         </p>
       </div>
@@ -365,7 +366,7 @@ const WarehouseOperationsJournalPage = () => {
                 <TableBody>
                   {filteredRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="py-10 text-center text-sm text-slate-600">
+                      <TableCell colSpan={12} className="py-10 text-center text-xs text-slate-600">
                         Нет операций
                       </TableCell>
                     </TableRow>
@@ -377,45 +378,58 @@ const WarehouseOperationsJournalPage = () => {
                           ? format(parseISO(iso), "dd.MM.yyyy HH:mm", { locale: ru })
                           : "—";
                       return (
-                        <TableRow key={r.id} className="text-sm">
-                          <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">{dateLabel}</TableCell>
-                          <TableCell className="whitespace-nowrap px-3 py-2 font-medium text-slate-900">{r.typeLabel}</TableCell>
-                          <TableCell className="max-w-[320px] px-3 py-2 text-xs text-slate-700">{r.description}</TableCell>
-                          <TableCell className="max-w-[180px] px-3 py-2 font-medium text-slate-900">{r.productName}</TableCell>
-                          <TableCell className="max-w-[120px] px-3 py-2 font-mono text-xs text-slate-700">{r.article}</TableCell>
-                          <TableCell className="max-w-[120px] px-3 py-2 font-mono text-xs text-slate-700">{r.barcode}</TableCell>
+                        <TableRow key={r.id} className="h-10 text-xs">
+                          <TableCell className="whitespace-nowrap px-3 py-2 align-middle tabular-nums text-slate-800">
+                            {dateLabel}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 align-middle font-medium text-slate-900">
+                            {r.typeLabel}
+                          </TableCell>
+                          <TableCell className="max-w-[320px] px-3 py-2 align-middle text-xs text-slate-700">{r.description}</TableCell>
+                          <TableCell className="max-w-[180px] px-3 py-2 align-middle font-medium text-slate-900">{r.productName}</TableCell>
+                          <TableCell className="max-w-[120px] px-3 py-2 align-middle font-mono text-xs text-slate-700">{r.article}</TableCell>
+                          <TableCell className="max-w-[120px] px-3 py-2 align-middle font-mono text-xs text-slate-700">{r.barcode}</TableCell>
                           <TableCell
                             className={cn(
-                              "px-3 py-2 text-right tabular-nums font-medium",
+                              "px-3 py-2 text-right align-middle tabular-nums font-medium",
                               r.qtyDisplay.startsWith("-") ? "text-red-700" : r.qtyDisplay.startsWith("+") ? "text-emerald-800" : "text-slate-700",
                             )}
                           >
                             {r.qtyDisplay}
                           </TableCell>
-                          <TableCell className="max-w-[200px] px-3 py-2 text-xs text-slate-700">{r.cell}</TableCell>
-                          <TableCell className="max-w-[120px] truncate px-3 py-2 text-slate-700">{r.warehouse}</TableCell>
-                          <TableCell className="max-w-[140px] truncate px-3 py-2 text-slate-700">{r.legalEntity}</TableCell>
-                          <TableCell className="max-w-[160px] truncate px-3 py-2 font-mono text-[11px] text-slate-700">
+                          <TableCell className="max-w-[200px] px-3 py-2 align-middle text-xs text-slate-700">{r.cell}</TableCell>
+                          <TableCell className="max-w-[120px] truncate px-3 py-2 align-middle text-slate-700">{r.warehouse}</TableCell>
+                          <TableCell className="max-w-[140px] truncate px-3 py-2 align-middle text-slate-700">{r.legalEntity}</TableCell>
+                          <TableCell className="max-w-[160px] truncate px-3 py-2 align-middle font-mono text-[11px] text-slate-700">
                             {r.documentTask}
                           </TableCell>
                           <TableCell className="px-2 py-2 text-right align-middle">
-                            <div className="flex flex-col items-end gap-1">
-                              {r.navLink === "receiving" ? (
-                                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" asChild>
-                                  <Link to="/receiving">К приёмке</Link>
-                                </Button>
-                              ) : null}
-                              {r.navLink === "shipping" && r.shippingSearch ? (
-                                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" asChild>
-                                  <Link to={`/shipping?search=${encodeURIComponent(r.shippingSearch)}`}>К отгрузке</Link>
-                                </Button>
-                              ) : null}
-                              {r.navLink === "inventory" ? (
-                                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" asChild>
-                                  <Link to="/inventory">К остаткам</Link>
-                                </Button>
-                              ) : null}
-                            </div>
+                            {(() => {
+                              const items: WmsRowActionItem[] = [];
+                              if (r.navLink === "receiving") {
+                                items.push({
+                                  id: "nav-rec",
+                                  label: "Перейти",
+                                  onSelect: () => navigate("/receiving"),
+                                });
+                              }
+                              if (r.navLink === "shipping" && r.shippingSearch) {
+                                items.push({
+                                  id: "nav-ship",
+                                  label: "Найти",
+                                  onSelect: () =>
+                                    navigate(`/shipping?search=${encodeURIComponent(r.shippingSearch ?? "")}`),
+                                });
+                              }
+                              if (r.navLink === "inventory") {
+                                items.push({
+                                  id: "nav-inv",
+                                  label: "Перейти",
+                                  onSelect: () => navigate("/inventory"),
+                                });
+                              }
+                              return <WmsTableRowActions items={items} />;
+                            })()}
                           </TableCell>
                         </TableRow>
                       );

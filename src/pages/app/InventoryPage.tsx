@@ -40,6 +40,7 @@ import {
 } from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { WmsTableRowActions, type WmsRowActionItem } from "@/components/app/WmsTableRowActions";
 
 const INVENTORY_DISCREPANCY_REASONS = [
   "Ошибка приёмки",
@@ -850,14 +851,14 @@ const InventoryPage = () => {
         <CardHeader className="border-b border-slate-100 px-4 py-3">
           <CardTitle className="text-base">Остатки по местам</CardTitle>
           <p className="mt-1 text-xs text-slate-500">
-            Зона приёмки показывает принятый, но ещё не размещённый товар. Для отгрузки доступен только товар в ячейках хранения.
+            Зона приёмки: принятый, но не размещённый товар. Доступно для отгрузки — только из ячеек хранения.
           </p>
         </CardHeader>
         <CardContent className="space-y-3 p-3 sm:p-4">
           {!tableLoading && !error && stockNegativeAvailablePresent ? (
             <div
               role="status"
-              className="rounded-md border border-rose-200 bg-rose-50/90 px-3 py-2 text-sm text-rose-900"
+              className="rounded-md border border-rose-200 bg-rose-50/90 px-3 py-2 text-xs text-rose-900"
             >
               Есть позиции с отрицательным доступным остатком. Проверьте резервы и движения.
             </div>
@@ -904,7 +905,7 @@ const InventoryPage = () => {
             <div className="overflow-x-auto rounded-md border border-slate-200">
               <Table>
                 <TableHeader>
-                  <TableRow className="h-9 bg-slate-50/90 hover:bg-slate-50/90">
+                  <TableRow className="h-10 bg-slate-50/90 hover:bg-slate-50/90">
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Товар</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Артикул</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Штрихкод</TableHead>
@@ -990,12 +991,12 @@ const InventoryPage = () => {
                         <React.Fragment key={r.rowKey}>
                         <TableRow
                           className={cn(
-                            "cursor-pointer text-sm transition-colors hover:bg-slate-50/80",
+                            "h-10 cursor-pointer text-xs transition-colors hover:bg-slate-50/80",
                             rowMuted && "opacity-[0.68]",
                           )}
                           onClick={toggleStockLocationRow}
                         >
-                          <TableCell className="max-w-[260px] px-3 py-2">
+                          <TableCell className="max-w-[260px] px-3 py-2 align-middle">
                             <div className="flex items-start gap-2">
                               <span
                                 className="mt-0.5 inline-flex w-4 shrink-0 select-none text-center text-xs text-slate-500"
@@ -1030,25 +1031,11 @@ const InventoryPage = () => {
                             <div className="flex max-w-[min(100%,14rem)] flex-col items-end gap-0.5">
                               <span>{available.toLocaleString("ru-RU")}</span>
                               {isReceivingZone ? (
-                                <span className="flex max-w-[12rem] flex-col items-end gap-1 text-right">
-                                  <span className="text-[10px] leading-snug text-slate-500">
-                                    Недоступно для отгрузки до размещения
-                                  </span>
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-7 shrink-0 px-2 text-[11px] font-medium"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      navigate("/receiving");
-                                    }}
-                                  >
-                                    Перейти к приёмке
-                                  </Button>
+                                <span className="max-w-[12rem] text-right text-xs leading-snug text-slate-500">
+                                  Недоступно для отгрузки до размещения.
                                 </span>
                               ) : shortage ? (
-                                <div className="text-right text-[10px] leading-snug text-red-700">
+                                <div className="text-right text-xs leading-snug text-red-700">
                                   <div className="font-semibold text-red-600">Недостаточно остатка</div>
                                   <div className="text-slate-600">
                                     Резерв: {fullReserveKey.toLocaleString("ru-RU")}
@@ -1068,58 +1055,55 @@ const InventoryPage = () => {
                             </div>
                           </TableCell>
                           <TableCell className="px-3 py-2 text-right align-middle" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex flex-col items-end gap-1">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 whitespace-nowrap px-2 text-[11px]"
-                                disabled={tableLoading || Boolean(error) || !stockRowShippingSearchTerm(r)}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const t = stockRowShippingSearchTerm(r);
-                                  if (!t) return;
-                                  navigate(`/shipping?search=${encodeURIComponent(t)}`);
-                                }}
-                              >
-                                Найти в отгрузках
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 whitespace-nowrap px-2 text-[11px]"
-                                disabled={tableLoading || Boolean(error)}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const q = new URLSearchParams();
-                                  q.set("createOutbound", "1");
-                                  const pid = findProductIdForStockRow(productsSafe, r);
-                                  if (pid) q.set("productId", pid);
-                                  else if (r.barcode.trim()) q.set("barcode", r.barcode.trim());
-                                  else if (r.article.trim()) q.set("article", r.article.trim());
-                                  else if (r.productName.trim()) q.set("productName", r.productName.trim());
-                                  navigate({ pathname: `/legal-entities/${r.legalEntityId}`, search: `?${q.toString()}` });
-                                }}
-                              >
-                                Создать отгрузку
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 whitespace-nowrap px-2 text-[11px]"
-                                disabled={tableLoading || Boolean(error)}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setInventoryRow(r);
-                                  setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
-                                  setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
-                                }}
-                              >
-                                Инвентаризация
-                              </Button>
-                            </div>
+                            {(() => {
+                              const busy = tableLoading || Boolean(error);
+                              const items: WmsRowActionItem[] = [
+                                {
+                                  id: "go-receiving",
+                                  label: "Перейти",
+                                  disabled: busy,
+                                  onSelect: () => {
+                                    navigate("/receiving");
+                                  },
+                                },
+                                {
+                                  id: "find-ship",
+                                  label: "Найти",
+                                  disabled: busy || !stockRowShippingSearchTerm(r),
+                                  onSelect: () => {
+                                    const t = stockRowShippingSearchTerm(r);
+                                    if (!t) return;
+                                    navigate(`/shipping?search=${encodeURIComponent(t)}`);
+                                  },
+                                },
+                                {
+                                  id: "create-out",
+                                  label: "Создать",
+                                  disabled: busy,
+                                  onSelect: () => {
+                                    const q = new URLSearchParams();
+                                    q.set("createOutbound", "1");
+                                    const pid = findProductIdForStockRow(productsSafe, r);
+                                    if (pid) q.set("productId", pid);
+                                    else if (r.barcode.trim()) q.set("barcode", r.barcode.trim());
+                                    else if (r.article.trim()) q.set("article", r.article.trim());
+                                    else if (r.productName.trim()) q.set("productName", r.productName.trim());
+                                    navigate({ pathname: `/legal-entities/${r.legalEntityId}`, search: `?${q.toString()}` });
+                                  },
+                                },
+                                {
+                                  id: "inv",
+                                  label: "Инвентаризация",
+                                  disabled: busy,
+                                  onSelect: () => {
+                                    setInventoryRow(r);
+                                    setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
+                                    setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
+                                  },
+                                },
+                              ];
+                              return <WmsTableRowActions items={items} />;
+                            })()}
                           </TableCell>
                         </TableRow>
                         {expanded ? (
@@ -1127,7 +1111,7 @@ const InventoryPage = () => {
                             <TableCell colSpan={10} className="p-0 align-top" onClick={(e) => e.stopPropagation()}>
                               <div className="border-t border-slate-200 px-3 py-2">
                                 {stockRowMovements.length === 0 ? (
-                                  <p className="py-2 text-center text-xs text-slate-600">Нет движений по этой строке</p>
+                                  <p className="py-2 text-center text-xs text-slate-600">Нет данных</p>
                                 ) : (
                                   <div className="overflow-x-auto">
                                     <table className="w-full min-w-[760px] text-left text-[11px] text-slate-800">
@@ -1332,53 +1316,53 @@ const InventoryPage = () => {
             <div className="overflow-x-auto rounded-md border border-slate-200">
               <Table>
                 <TableHeader>
-                  <TableRow className="h-8 bg-slate-50/90 hover:bg-slate-50/90">
+                  <TableRow className="h-10 bg-slate-50/90 hover:bg-slate-50/90">
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Название товара</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Баркод</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Место</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Количество</TableHead>
-                    <TableHead className="w-[110px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Действие</TableHead>
+                    <TableHead className="w-[110px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {unplacedRows.map((row) => {
                     const receivingName = locationById.get(row.receivingLocationId)?.name ?? "ПРИЕМКА";
                     return (
-                      <TableRow key={row.key} className="h-8 text-xs">
+                      <TableRow key={row.key} className="h-10 text-xs">
                         <TableCell className="max-w-[220px] truncate px-2 py-1 font-medium">{row.name}</TableCell>
                         <TableCell className="max-w-[140px] truncate px-2 py-1 font-mono">{row.barcode || "—"}</TableCell>
                         <TableCell className="px-2 py-1">{receivingName}</TableCell>
                         <TableCell className="px-2 py-1 text-right tabular-nums font-medium text-slate-900">
                           {row.qty.toLocaleString("ru-RU")}
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-right">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 px-2 text-[11px]"
-                            onClick={() => {
-                              setPlacingRow({
-                                key: row.key,
-                                legalEntityId: row.legalEntityId,
-                                legalEntityName: row.legalEntityName,
-                                warehouseName: row.warehouseName,
-                                name: row.name,
-                                article: row.article,
-                                barcode: row.barcode,
-                                marketplace: row.marketplace,
-                                color: row.color,
-                                size: row.size,
-                                availableQty: row.qty,
-                                receivingLocationId: row.receivingLocationId,
-                                receivingLocationName: receivingName,
-                              });
-                              setPlacementQty(String(row.qty));
-                              setPlacementLocationId("");
-                            }}
-                          >
-                            Разместить
-                          </Button>
+                        <TableCell className="px-2 py-1 text-right align-middle">
+                          <WmsTableRowActions
+                            items={[
+                              {
+                                id: "place-open",
+                                label: "Разместить",
+                                onSelect: () => {
+                                  setPlacingRow({
+                                    key: row.key,
+                                    legalEntityId: row.legalEntityId,
+                                    legalEntityName: row.legalEntityName,
+                                    warehouseName: row.warehouseName,
+                                    name: row.name,
+                                    article: row.article,
+                                    barcode: row.barcode,
+                                    marketplace: row.marketplace,
+                                    color: row.color,
+                                    size: row.size,
+                                    availableQty: row.qty,
+                                    receivingLocationId: row.receivingLocationId,
+                                    receivingLocationName: receivingName,
+                                  });
+                                  setPlacementQty(String(row.qty));
+                                  setPlacementLocationId("");
+                                },
+                              },
+                            ]}
+                          />
                         </TableCell>
                       </TableRow>
                     );
@@ -1452,7 +1436,7 @@ const InventoryPage = () => {
             <div className="overflow-x-auto rounded-md border border-slate-200">
               <Table>
                 <TableHeader>
-                  <TableRow className="h-8 bg-slate-50/90 hover:bg-slate-50/90">
+                  <TableRow className="h-10 bg-slate-50/90 hover:bg-slate-50/90">
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Склад</TableHead>
                     <TableHead className="px-2 py-1.5 text-xs font-semibold text-slate-600">Название</TableHead>
@@ -1467,15 +1451,15 @@ const InventoryPage = () => {
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Резерв</TableHead>
                     <TableHead className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
                     <TableHead className="w-[88px] px-2 py-1.5 text-right text-xs font-semibold text-slate-600">
-                      Действие
+                      Действия
                     </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={14} className="py-6 text-center text-xs text-slate-500">
-                        Нет строк по фильтру. Завершите приёмку — товар появится здесь с положительным остатком.
+                      <TableCell colSpan={14} className="py-8 text-center text-xs text-slate-500">
+                        Нет данных
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -1483,7 +1467,7 @@ const InventoryPage = () => {
                       const reserveQty = reserveShownByBaseKey.get(row.baseKey) === row.key ? (reservedByKey.get(row.baseKey) ?? 0) : 0;
                       const available = row.balanceQty - reserveQty;
                       return (
-                      <TableRow key={row.key} className="h-8 text-xs">
+                      <TableRow key={row.key} className="h-10 text-xs">
                         <TableCell className="max-w-[120px] truncate px-2 py-1">{row.legalEntityName}</TableCell>
                         <TableCell className="max-w-[100px] truncate px-2 py-1">{row.warehouseName}</TableCell>
                         <TableCell className="max-w-[180px] truncate px-2 py-1 font-medium">{row.name}</TableCell>
@@ -1496,30 +1480,24 @@ const InventoryPage = () => {
                         <TableCell className="whitespace-nowrap px-2 py-1 tabular-nums">
                           {formatLastMovementCell(row.lastMovementIso)}
                         </TableCell>
-                        <TableCell className={`px-2 py-1 ${balanceClass(row.balanceQty)}`}>
+                        <TableCell className={`px-2 py-1 text-right tabular-nums ${balanceClass(row.balanceQty)}`}>
                           {row.balanceQty.toLocaleString("ru-RU")}
                         </TableCell>
-                        <TableCell className={`px-2 py-1 ${reserveClass(reserveQty)}`}>
+                        <TableCell className={`px-2 py-1 text-right tabular-nums ${reserveClass(reserveQty)}`}>
                           {reserveQty.toLocaleString("ru-RU")}
                         </TableCell>
-                        <TableCell className={`px-2 py-1 align-top ${availableClass(available)}`}>
+                        <TableCell className={`px-2 py-1 text-right tabular-nums align-top ${availableClass(available)}`}>
                           <div className="flex flex-col items-end gap-0.5">
                             <span>{available.toLocaleString("ru-RU")}</span>
                             {available < 0 ? (
-                              <span className="text-[10px] font-semibold text-red-600">Недостаточно</span>
+                              <span className="text-xs font-semibold text-red-600">Недостаточно остатка</span>
                             ) : null}
                           </div>
                         </TableCell>
-                        <TableCell className="px-2 py-1 text-right">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 px-2 text-[11px]"
-                            onClick={() => setHistoryKey(row.key)}
-                          >
-                            История
-                          </Button>
+                        <TableCell className="px-2 py-1 text-right align-middle">
+                          <WmsTableRowActions
+                            items={[{ id: "history", label: "История", onSelect: () => setHistoryKey(row.key) }]}
+                          />
                         </TableCell>
                       </TableRow>
                     );
@@ -1561,7 +1539,7 @@ const InventoryPage = () => {
                 {historyMoves.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="py-6 text-center text-xs text-slate-500">
-                      Нет движений
+                      Нет данных
                     </TableCell>
                   </TableRow>
                 ) : (

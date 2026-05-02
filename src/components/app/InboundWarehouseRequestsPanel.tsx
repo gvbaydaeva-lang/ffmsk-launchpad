@@ -37,6 +37,7 @@ import {
 import type { WarehouseImportInspectionResult } from "@/lib/warehouseImportPaste";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { WmsTableRowActions } from "@/components/app/WmsTableRowActions";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
 
@@ -969,20 +970,20 @@ const InboundWarehouseRequestsPanel = () => {
           ) : listError ? (
             <p className="text-sm text-destructive">Не удалось загрузить список заявок.</p>
           ) : !inboundList?.length ? (
-            <p className="text-sm text-slate-600">Заявок пока нет.</p>
+            <p className="text-xs text-slate-600">Нет данных</p>
           ) : (
             <div className="overflow-x-auto rounded-md border border-slate-200">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-slate-50/90">
+                  <TableRow className="h-10 bg-slate-50/90 hover:bg-slate-50/90">
                     <TableHead className="w-8 px-1 text-center text-xs font-semibold text-slate-500" aria-label="Развернуть" />
-                    <TableHead className="text-xs font-semibold">ID</TableHead>
-                    <TableHead className="text-xs font-semibold">Партнёр</TableHead>
-                    <TableHead className="text-xs font-semibold">Дата план</TableHead>
-                    <TableHead className="text-xs font-semibold">Статус</TableHead>
-                    <TableHead className="text-xs font-semibold">Режим</TableHead>
-                    <TableHead className="text-right text-xs font-semibold">Позиций</TableHead>
-                    <TableHead className="text-xs font-semibold">Действия</TableHead>
+                    <TableHead className="px-2 py-2 text-xs font-semibold text-slate-600">ID</TableHead>
+                    <TableHead className="px-2 py-2 text-xs font-semibold text-slate-600">Партнёр</TableHead>
+                    <TableHead className="px-2 py-2 text-xs font-semibold text-slate-600">Дата план</TableHead>
+                    <TableHead className="px-2 py-2 text-xs font-semibold text-slate-600">Статус</TableHead>
+                    <TableHead className="px-2 py-2 text-xs font-semibold text-slate-600">Режим</TableHead>
+                    <TableHead className="px-2 py-2 text-right text-xs font-semibold text-slate-600">Позиций</TableHead>
+                    <TableHead className="px-2 py-2 text-xs font-semibold text-slate-600">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -998,7 +999,7 @@ const InboundWarehouseRequestsPanel = () => {
                     <React.Fragment key={row.id}>
                       <TableRow
                         className={cn(
-                          "cursor-pointer border-slate-100 text-sm transition-colors",
+                          "h-10 cursor-pointer border-slate-100 text-xs transition-colors",
                           isExpanded ? "bg-slate-50/90" : "hover:bg-slate-50/60",
                         )}
                         onClick={() => toggleInboundRowExpansion(row.id)}
@@ -1006,18 +1007,20 @@ const InboundWarehouseRequestsPanel = () => {
                         <TableCell className="w-8 px-1 text-center align-middle text-xs text-slate-600" aria-hidden>
                           {isExpanded ? "▼" : "▶"}
                         </TableCell>
-                        <TableCell className="max-w-[180px]">
+                        <TableCell className="max-w-[180px] px-2 py-2 align-middle">
                           <div className="truncate font-mono text-xs tabular-nums">{row.id}</div>
                           {row.originInboundId ? (
-                            <div className="mt-0.5 text-[11px] leading-tight text-slate-500">
+                            <div className="mt-0.5 text-xs leading-tight text-slate-500">
                               Создано из заявки{" "}
-                              <span className="break-all font-mono text-[10px]">{row.originInboundId}</span>
+                              <span className="break-all font-mono text-[11px]">{row.originInboundId}</span>
                             </div>
                           ) : null}
                         </TableCell>
-                        <TableCell className="text-sm">{entityName(row.partnerId)}</TableCell>
-                        <TableCell className="text-sm tabular-nums">{formatPlannedDate(row.plannedDate)}</TableCell>
-                        <TableCell>
+                        <TableCell className="px-2 py-2 align-middle text-xs text-slate-800">{entityName(row.partnerId)}</TableCell>
+                        <TableCell className="px-2 py-2 align-middle text-xs tabular-nums text-slate-800">
+                          {formatPlannedDate(row.plannedDate)}
+                        </TableCell>
+                        <TableCell className="px-2 py-2 align-middle">
                           <div className="flex min-w-[140px] flex-col items-start gap-1">
                             <span
                               className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
@@ -1041,76 +1044,74 @@ const InboundWarehouseRequestsPanel = () => {
                             ) : null}
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm text-slate-700">
+                        <TableCell className="px-2 py-2 align-middle text-xs text-slate-700">
                           {isExpanded &&
                           (row.status === "receiving" || row.status === "received" || row.status === "placed") &&
                           row.receivingMode
                             ? receivingModeLabel(row.receivingMode)
                             : "—"}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">{row.items.length}</TableCell>
-                        <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-2 py-2 text-right align-middle text-xs tabular-nums text-slate-800">
+                          {row.items.length}
+                        </TableCell>
+                        <TableCell className="align-top px-2 py-2" onClick={(e) => e.stopPropagation()}>
                           {!isExpanded && row.status === "received" ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="h-8 whitespace-nowrap"
-                              disabled={inboundPanelBusy}
-                              onClick={() => expandInboundRowAndScrollToPlacement(row.id)}
-                            >
-                              Разместить товар
-                            </Button>
+                            <WmsTableRowActions
+                              items={[
+                                {
+                                  id: "to-placement",
+                                  label: "Перейти",
+                                  disabled: inboundPanelBusy,
+                                  onSelect: () => expandInboundRowAndScrollToPlacement(row.id),
+                                },
+                              ]}
+                            />
                           ) : null}
                           {isExpanded && row.status === "new" ? (
-                            <div className="flex flex-wrap gap-1">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                className="h-8"
-                                disabled={rowReceivingBusy(row.id) || inboundPanelBusy}
-                                onClick={() => setModeDialogInboundId(row.id)}
-                              >
-                                {rowReceivingBusy(row.id) ? "Запрос…" : "Начать приёмку"}
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-8"
-                                disabled={inboundRowMutationPending(row.id)}
-                                onClick={() => void cancelInboundFor(row.id)}
-                              >
-                                {isCancellingWarehouseInbound && cancellingWarehouseInboundId === row.id
-                                  ? "Отмена…"
-                                  : "Отменить приёмку"}
-                              </Button>
-                            </div>
+                            <WmsTableRowActions
+                              items={[
+                                {
+                                  id: "start-recv",
+                                  label: rowReceivingBusy(row.id) ? "Запрос…" : "Начать приёмку",
+                                  disabled: rowReceivingBusy(row.id) || inboundPanelBusy,
+                                  onSelect: () => setModeDialogInboundId(row.id),
+                                },
+                                {
+                                  id: "cancel-new",
+                                  label:
+                                    isCancellingWarehouseInbound && cancellingWarehouseInboundId === row.id
+                                      ? "Отмена…"
+                                      : "Отменить приёмку",
+                                  disabled: inboundRowMutationPending(row.id),
+                                  onSelect: () => void cancelInboundFor(row.id),
+                                },
+                              ]}
+                            />
                           ) : isExpanded && row.status === "receiving" ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="h-8"
-                              disabled={inboundRowMutationPending(row.id)}
-                              onClick={() => void cancelInboundFor(row.id)}
-                            >
-                              {isCancellingWarehouseInbound && cancellingWarehouseInboundId === row.id
-                                ? "Отмена…"
-                                : "Отменить приёмку"}
-                            </Button>
+                            <WmsTableRowActions
+                              items={[
+                                {
+                                  id: "cancel-recv",
+                                  label:
+                                    isCancellingWarehouseInbound && cancellingWarehouseInboundId === row.id
+                                      ? "Отмена…"
+                                      : "Отменить приёмку",
+                                  disabled: inboundRowMutationPending(row.id),
+                                  onSelect: () => void cancelInboundFor(row.id),
+                                },
+                              ]}
+                            />
                           ) : isExpanded && row.status === "received" ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="h-8 whitespace-nowrap"
-                              disabled={inboundPanelBusy}
-                              onClick={() => scrollInboundPlacementIntoView(row.id)}
-                            >
-                              К размещению
-                            </Button>
+                            <WmsTableRowActions
+                              items={[
+                                {
+                                  id: "scroll-place",
+                                  label: "Перейти",
+                                  disabled: inboundPanelBusy,
+                                  onSelect: () => scrollInboundPlacementIntoView(row.id),
+                                },
+                              ]}
+                            />
                           ) : isExpanded ? (
                             <span className="text-xs text-slate-400">—</span>
                           ) : null}
@@ -1121,32 +1122,17 @@ const InboundWarehouseRequestsPanel = () => {
                           <TableCell colSpan={8} className="p-0 align-top">
                             <div className="space-y-2 p-3">
                               {row.status === "cancelled" ? (
-                                <div className="rounded-md border border-rose-100 bg-rose-50/80 px-3 py-2 text-sm text-rose-900">
-                                  Приёмка отменена. Действия недоступны.
+                                <div className="rounded-md border border-rose-100 bg-rose-50/80 px-3 py-2 text-xs text-rose-900">
+                                  Приёмка отменена. Действие недоступно.
                                 </div>
                               ) : null}
                               {row.status === "received" ? (
                                 <div className="space-y-2">
                                   <div
                                     role="status"
-                                    className="rounded-md border border-amber-200 bg-amber-50/95 px-3 py-2 text-sm leading-snug text-amber-950"
+                                    className="rounded-md border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs leading-snug text-amber-950"
                                   >
-                                    Товар принят, но ещё не размещён. До размещения он недоступен для отгрузки.
-                                  </div>
-                                  <div className="flex flex-wrap gap-2">
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="default"
-                                      className="h-8"
-                                      disabled={inboundPanelBusy}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        scrollInboundPlacementIntoView(row.id);
-                                      }}
-                                    >
-                                      Перейти к размещению
-                                    </Button>
+                                    Товар принят, но не размещён. Недоступно для отгрузки до размещения.
                                   </div>
                                   <div className="space-y-1">
                                     <p className="text-xs text-slate-600">
@@ -1265,7 +1251,7 @@ const InboundWarehouseRequestsPanel = () => {
                                 <div id={`inbound-placement-${row.id}`} className="space-y-3 scroll-mt-4 pt-2">
                                   {row.status === "received" ? (
                                     <p className="text-xs font-medium leading-snug text-slate-700">
-                                      Разместите товар по ячейкам хранения, чтобы он стал доступен для отгрузки.
+                                      Разместите товар в ячейки хранения — станет доступно для отгрузки.
                                     </p>
                                   ) : null}
                                   <div>
