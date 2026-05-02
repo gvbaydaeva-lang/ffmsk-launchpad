@@ -234,14 +234,90 @@ function stockDetailMovementQtyLabel(m: InventoryMovement, r: StockByLocationRow
   return neg.toLocaleString("ru-RU");
 }
 
-function formatMovementEndpointLabel(
+/** Знаковое количество в строке детализации (для цвета: + зелёный, − красный, 0 серый). */
+function stockDetailMovementQtySigned(m: InventoryMovement, r: StockByLocationRow): number {
+  const rowLoc =
+    r.movementRawLocId === "__no_location__" ? "" : (r.movementRawLocId || r.locationId || "").trim();
+  const q = Math.trunc(Number(m.qty) || 0);
+  if (m.type === "TRANSFER") {
+    const from = (m.fromLocationId || "").trim();
+    const to = (m.locationId || "").trim();
+    const abs = Math.abs(q);
+    if (rowLoc === from) return -abs;
+    if (rowLoc === to) return abs;
+    return q;
+  }
+  if (m.type === "INBOUND") return Math.abs(q);
+  return -Math.abs(q);
+}
+
+function normalizeStockDetailLocationId(rawId: string | undefined): string {
+  const s = (rawId ?? "").trim();
+  if (s === "__no_location__") return "";
+  return s;
+}
+
+function isReceivingZoneLocationId(id: string, locationById: Map<string, Location>): boolean {
+  if (!id) return true;
+  if (
+    id === WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID ||
+    id === LEGACY_WAREHOUSE_INBOUND_RECEIVING_ZONE_ID ||
+    id === "loc-receiving"
+  ) {
+    return true;
+  }
+  const loc = locationById.get(id);
+  return loc?.type === "receiving";
+}
+
+/** Человекочитаемое «Откуда» / «Куда» в раскрытии «Остатки по местам» (без сырых id при наличии имени). */
+function formatStockDetailLocationEndpoint(
   rawId: string | undefined,
   locationById: Map<string, Location>,
 ): string {
-  const lid = (rawId ?? "").trim();
-  if (!lid) return "—";
-  const nm = (locationById.get(lid)?.name ?? "").trim();
-  return nm ? `${lid} / ${nm}` : lid;
+  const id = normalizeStockDetailLocationId(rawId);
+  if (isReceivingZoneLocationId(id, locationById)) return "Зона приёмки";
+  if (!id) return "—";
+  const loc = locationById.get(id);
+  const name = (loc?.name ?? "").trim();
+  if (name) return `Ячейка: ${name}`;
+  return `Ячейка: ${id}`;
+}
+
+function stockDetailOperationLabel(m: InventoryMovement): string {
+  if (m.type === "INBOUND") return "Приход";
+  if (m.type === "OUTBOUND") return "Списание";
+  if (m.type === "TRANSFER" && m.source === "placement") return "Размещение";
+  return "Перемещение";
+}
+
+function stockDetailSourceLabel(source: InventoryMovement["source"]): string {
+  switch (source) {
+    case "receiving":
+      return "Приёмка";
+    case "placement":
+      return "Размещение";
+    case "shipping":
+      return "Отгрузка";
+    case "inventory_adjustment":
+      return "Инвентаризация";
+    case "packing":
+      return "Упаковка";
+    default:
+      return "Прочее";
+  }
+}
+
+/** Подпись колонки «Документ» без длинных внутренних id. */
+function stockDetailDocumentLabel(m: InventoryMovement): string {
+  const tn = (m.taskNumber || "").trim();
+  if (tn) return tn;
+  const tid = (m.taskId || "").trim();
+  if (!tid) return "—";
+  const lower = tid.toLowerCase();
+  if (lower.startsWith("inb-")) return "Приёмка";
+  if (lower.startsWith("out-")) return "Отгрузка";
+  return "Документ";
 }
 
 function findSampleMovementForStockRow(
@@ -1127,16 +1203,19 @@ const InventoryPage = () => {
                                   <p className="py-2 text-center text-xs text-slate-600">Нет данных</p>
                                 ) : (
                                   <div className="overflow-x-auto">
+                                    <p className="mb-2 text-xs text-slate-600">
+                                      История операций по этой строке остатка
+                                    </p>
                                     <table className="w-full min-w-[760px] text-left text-[11px] text-slate-800">
                                       <thead>
                                         <tr className="border-b border-slate-200 text-slate-600">
                                           <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Дата</th>
-                                          <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Тип операции</th>
+                                          <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Операция</th>
                                           <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Источник</th>
                                           <th className="whitespace-nowrap py-1.5 pr-2 text-right font-medium">Количество</th>
                                           <th className="min-w-[100px] py-1.5 pr-2 font-medium">Откуда</th>
                                           <th className="min-w-[100px] py-1.5 pr-2 font-medium">Куда</th>
-                                          <th className="min-w-[120px] py-1.5 font-medium">Задание / документ</th>
+                                          <th className="min-w-[120px] py-1.5 font-medium">Документ</th>
                                           <th className="w-[120px] py-1.5 text-right font-medium">Журнал</th>
                                         </tr>
                                       </thead>
@@ -1148,37 +1227,38 @@ const InventoryPage = () => {
                                               ? format(parseISO(iso), "dd.MM.yyyy HH:mm", { locale: ru })
                                               : "—";
                                           const qtyStr = stockDetailMovementQtyLabel(m, r);
+                                          const qtySigned = stockDetailMovementQtySigned(m, r);
                                           const qtyClass =
-                                            qtyStr.startsWith("-") && !qtyStr.startsWith("--")
-                                              ? "text-red-700"
-                                              : qtyStr.startsWith("+")
-                                                ? "text-emerald-800"
-                                                : "text-slate-800";
+                                            qtySigned > 0
+                                              ? "text-emerald-700"
+                                              : qtySigned < 0
+                                                ? "text-red-700"
+                                                : "text-slate-400";
                                           let fromCell = "—";
                                           let toCell = "—";
                                           if (m.type === "TRANSFER") {
-                                            fromCell = formatMovementEndpointLabel(m.fromLocationId, locationById);
-                                            toCell = formatMovementEndpointLabel(m.locationId, locationById);
+                                            fromCell = formatStockDetailLocationEndpoint(m.fromLocationId, locationById);
+                                            toCell = formatStockDetailLocationEndpoint(m.locationId, locationById);
                                           } else if (m.type === "INBOUND") {
                                             fromCell = "—";
-                                            toCell = formatMovementEndpointLabel(m.locationId, locationById);
+                                            toCell = formatStockDetailLocationEndpoint(m.locationId, locationById);
                                           } else {
-                                            fromCell = formatMovementEndpointLabel(m.locationId, locationById);
+                                            fromCell = formatStockDetailLocationEndpoint(m.locationId, locationById);
                                             toCell = "—";
                                           }
-                                          const taskLabel = ((m.taskNumber || "").trim() || (m.taskId || "").trim() || "—").trim();
+                                          const documentLabel = stockDetailDocumentLabel(m);
                                           const journalSearch = ((m.taskNumber || "").trim() || (m.taskId || "").trim()) || "";
                                           return (
                                             <tr key={m.id} className="border-b border-slate-100 last:border-0">
                                               <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-700">{dateCell}</td>
-                                              <td className="py-1.5 pr-2">{movementTypeLabel[m.type]}</td>
-                                              <td className="py-1.5 pr-2">{sourceLabel[m.source]}</td>
+                                              <td className="py-1.5 pr-2">{stockDetailOperationLabel(m)}</td>
+                                              <td className="py-1.5 pr-2">{stockDetailSourceLabel(m.source)}</td>
                                               <td className={cn("py-1.5 pr-2 text-right tabular-nums font-medium", qtyClass)}>
                                                 {qtyStr}
                                               </td>
                                               <td className="py-1.5 pr-2 text-slate-700">{fromCell}</td>
                                               <td className="py-1.5 pr-2 text-slate-700">{toCell}</td>
-                                              <td className="py-1.5 font-mono text-[10px] text-slate-600">{taskLabel}</td>
+                                              <td className="py-1.5 text-xs text-slate-700">{documentLabel}</td>
                                               <td className="py-1.5 text-right align-middle">
                                                 {journalSearch ? (
                                                   <Button variant="link" className="h-auto p-0 text-[11px] font-medium" asChild>
