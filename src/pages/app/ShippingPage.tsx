@@ -94,6 +94,59 @@ type ShipmentDoc = {
   priority: OutboundTaskPriority;
 };
 
+function trimLowerSearchToken(v: string | null | undefined): string | null {
+  const t = String(v ?? "").trim().toLowerCase();
+  return t.length ? t : null;
+}
+
+/** Токены для поиска по строке outbound: номер/штрихкоды строки, import-поля, артикул/штрихкод/название из каталога. */
+function outboundShipmentLineSearchTokens(
+  s: OutboundShipment,
+  catalogById: Map<string, ProductCatalogItem>,
+): string[] {
+  const out: string[] = [];
+  const push = (v: string | null | undefined) => {
+    const t = trimLowerSearchToken(v);
+    if (t) out.push(t);
+  };
+  push(s.assignmentNo);
+  push(s.assignmentId);
+  push(s.boxBarcode);
+  push(s.gateBarcode);
+  push(s.importArticle);
+  push(s.importBarcode);
+  push(s.importName);
+  const p = catalogById.get(s.productId);
+  if (p) {
+    push(p.supplierArticle);
+    push(p.barcode);
+    push(p.name);
+  }
+  return out;
+}
+
+/** Быстрый поиск задания: юрлицо, № задания, штрихкоды/идентификаторы строк; по товарам — import и каталог. */
+function shipmentDocMatchesQuickSearch(
+  d: ShipmentDoc,
+  q: string,
+  entityLabel: string,
+  catalogById: Map<string, ProductCatalogItem>,
+): boolean {
+  const parts: string[] = [];
+  const push = (v: string | null | undefined) => {
+    const t = trimLowerSearchToken(v);
+    if (t) parts.push(t);
+  };
+  push(entityLabel);
+  push(d.legalEntityId);
+  push(d.assignmentNo);
+  push(d.id);
+  for (const s of d.shipments) {
+    parts.push(...outboundShipmentLineSearchTokens(s, catalogById));
+  }
+  return parts.join(" ").includes(q);
+}
+
 function addShipmentOperationLogKey(set: Set<string>, value: string | undefined | null) {
   const t = String(value ?? "").trim();
   if (t) set.add(t);
@@ -661,15 +714,12 @@ const ShippingPage = () => {
       });
     }
     const q = search.trim().toLowerCase();
+    const catalogById = new Map((catalog ?? []).map((p) => [p.id, p]));
     const searched = !q
       ? docs
       : docs.filter((d) => {
           const entity = entities?.find((e) => e.id === d.legalEntityId)?.shortName ?? d.legalEntityId;
-          const lines = d.shipments
-            .map((s) => `${s.importArticle ?? ""} ${s.importBarcode ?? ""} ${s.importName ?? ""}`)
-            .join(" ")
-            .toLowerCase();
-          return `${entity} ${d.assignmentNo} ${lines}`.toLowerCase().includes(q);
+          return shipmentDocMatchesQuickSearch(d, q, entity, catalogById);
         });
     const withFilters = searched.filter((d) => {
       if (viewMode === "active" && isShipmentDocArchivedClosed(d)) return false;
@@ -2132,7 +2182,12 @@ const ShippingPage = () => {
               Архив
             </Button>
           </div>
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск: №, юрлицо, артикул, баркод" className="w-[280px]" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Поиск: № задания, штрихкод, юрлицо, товар (артикул, штрихкод, название)"
+            className="w-[280px]"
+          />
           <Select value={mp} onValueChange={(v) => setMp(v as Marketplace | "all")}>
             <SelectTrigger className="w-[190px]">
               <SelectValue />
