@@ -58,6 +58,22 @@ function statusLabel(row: InboundWarehouseRequest): string {
   return "Новая";
 }
 
+type InboundProductLine = { name: string; article: string; barcode: string };
+
+function InboundProductLineCell({ name, article, barcode }: InboundProductLine) {
+  const title = (name || "").trim() || "—";
+  const art = (article || "").trim() || "—";
+  const bc = (barcode || "").trim() || "—";
+  return (
+    <div className="min-w-0 max-w-[320px]">
+      <div className="font-medium leading-snug text-slate-900">{title}</div>
+      <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+        Артикул: <span className="font-mono">{art}</span> · Штрихкод: <span className="font-mono">{bc}</span>
+      </p>
+    </div>
+  );
+}
+
 function sumPlacementsQty(item: InboundWarehouseItem): number {
   return item.placements.reduce((s, p) => s + Math.max(0, Math.trunc(Number(p.qty) || 0)), 0);
 }
@@ -71,7 +87,7 @@ function isInboundPlacementFullyDistributed(row: InboundWarehouseRequest): boole
 
 function InboundLinePlacementsBlock({
   item,
-  productName,
+  productLine,
   readOnly,
   storageLocations,
   locationName,
@@ -80,7 +96,7 @@ function InboundLinePlacementsBlock({
   flowLocked,
 }: {
   item: InboundWarehouseItem;
-  productName: string;
+  productLine: InboundProductLine;
   readOnly: boolean;
   storageLocations: { id: string; name: string }[];
   locationName: (id: string) => string;
@@ -141,7 +157,7 @@ function InboundLinePlacementsBlock({
     return (
       <div className="rounded-md border border-slate-200 bg-white p-3">
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-          <span className="text-sm font-medium text-slate-900">{productName}</span>
+          <InboundProductLineCell {...productLine} />
           <span className="text-xs tabular-nums text-slate-600">
             Принято: {receivedQty} · Распределено: {distributed}
           </span>
@@ -166,7 +182,7 @@ function InboundLinePlacementsBlock({
   if (receivedQty <= 0) {
     return (
       <div className="rounded-md border border-slate-200 bg-white p-3">
-        <div className="text-sm font-medium text-slate-900">{productName}</div>
+        <InboundProductLineCell {...productLine} />
         <p className="mt-1 text-xs text-slate-500">Нет принятого количества — размещение не требуется.</p>
       </div>
     );
@@ -175,7 +191,7 @@ function InboundLinePlacementsBlock({
   return (
     <div className="rounded-md border border-slate-200 bg-white p-3">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-sm font-medium text-slate-900">{productName}</span>
+        <InboundProductLineCell {...productLine} />
         <span className="text-xs tabular-nums text-slate-600">
           Принято: {receivedQty} · Распределено: {distributed} / {receivedQty}
         </span>
@@ -258,13 +274,13 @@ function InboundLinePlacementsBlock({
 
 function InboundReceivingQtyRow({
   item,
-  productName,
+  productLine,
   onSave,
   disabled,
   editable = true,
 }: {
   item: InboundWarehouseItem;
-  productName: string;
+  productLine: InboundProductLine;
   onSave: (qty: number) => Promise<void>;
   disabled?: boolean;
   editable?: boolean;
@@ -290,7 +306,9 @@ function InboundReceivingQtyRow({
 
   return (
     <TableRow>
-      <TableCell className="text-sm font-medium text-slate-900">{productName}</TableCell>
+      <TableCell className="align-top text-sm">
+        <InboundProductLineCell {...productLine} />
+      </TableCell>
       <TableCell className="text-right tabular-nums text-sm">{item.plannedQty}</TableCell>
       <TableCell className="text-right tabular-nums text-sm">{item.receivedQty}</TableCell>
       <TableCell className="w-[140px]">
@@ -417,7 +435,27 @@ const InboundWarehouseRequestsPanel = () => {
     return m;
   }, [catalog]);
 
-  const productDisplayName = React.useCallback((productId: string) => productNameById.get(productId) ?? productId, [productNameById]);
+  const productLinesById = React.useMemo(() => {
+    const m = new Map<string, InboundProductLine>();
+    for (const p of catalog ?? []) {
+      m.set(p.id, {
+        name: (p.name ?? "").trim() || (p.supplierArticle ?? "").trim() || p.id,
+        article: (p.supplierArticle ?? "").trim(),
+        barcode: (p.barcode ?? "").trim(),
+      });
+    }
+    return m;
+  }, [catalog]);
+
+  const receivingUiLineForProductId = React.useCallback(
+    (productId: string): InboundProductLine =>
+      productLinesById.get(productId) ?? {
+        name: productNameById.get(productId) ?? productId,
+        article: "",
+        barcode: "",
+      },
+    [productLinesById, productNameById],
+  );
 
   /** Один связанный id продолжения на исходную заявку (идемпотентное создание в API). */
   const continuationInboundIdByOrigin = React.useMemo(() => {
@@ -1181,7 +1219,7 @@ const InboundWarehouseRequestsPanel = () => {
                                         <InboundReceivingQtyRow
                                           key={item.id}
                                           item={item}
-                                          productName={productDisplayName(item.productId)}
+                                          productLine={receivingUiLineForProductId(item.productId)}
                                           editable={false}
                                           disabled
                                           onSave={async () => {}}
@@ -1209,7 +1247,7 @@ const InboundWarehouseRequestsPanel = () => {
                                         <InboundReceivingQtyRow
                                           key={item.id}
                                           item={item}
-                                          productName={productDisplayName(item.productId)}
+                                          productLine={receivingUiLineForProductId(item.productId)}
                                           editable={row.status === "receiving"}
                                           disabled={
                                             inboundPanelBusy ||
@@ -1245,7 +1283,7 @@ const InboundWarehouseRequestsPanel = () => {
                                     <InboundLinePlacementsBlock
                                       key={item.id}
                                       item={item}
-                                      productName={productDisplayName(item.productId)}
+                                      productLine={receivingUiLineForProductId(item.productId)}
                                       readOnly={row.status === "placed"}
                                       storageLocations={storageLocations}
                                       locationName={locationNameById}

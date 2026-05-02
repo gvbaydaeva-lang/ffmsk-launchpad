@@ -346,9 +346,7 @@ export default function ReceivingTaskWorkScreen({
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100">
               <tr>
-                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
-                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Артикул</th>
-                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
+                <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Товар</th>
                 <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">МП</th>
                 <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Цвет</th>
                 <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Размер</th>
@@ -381,9 +379,15 @@ export default function ReceivingTaskWorkScreen({
                     key={rowKey}
                     className={cn("odd:bg-white even:bg-slate-50/50 transition-colors duration-150", rowBg, flashRow)}
                   >
-                    <td className="border-b border-r px-2 py-1.5 text-xs">{item.name || "—"}</td>
-                    <td className="border-b border-r px-2 py-1.5 text-xs">{item.supplierArticle || "—"}</td>
-                    <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{item.barcode || "—"}</td>
+                    <td className="border-b border-r px-2 py-1.5 align-top text-xs">
+                      <div className="min-w-0 max-w-[280px] font-medium leading-snug text-slate-900">
+                        {(item.name || "").trim() || "—"}
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+                        Артикул: {(item.supplierArticle || "").trim() || "—"} · Штрихкод:{" "}
+                        <span className="font-mono">{(item.barcode || "").trim() || "—"}</span>
+                      </p>
+                    </td>
                     <td className="border-b border-r px-2 py-1.5 text-xs">{supply.marketplace.toUpperCase()}</td>
                     <td className="border-b border-r px-2 py-1.5 text-xs">{item.color || "—"}</td>
                     <td className="border-b border-r px-2 py-1.5 text-xs">{item.size || "—"}</td>

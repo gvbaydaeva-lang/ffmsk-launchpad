@@ -462,8 +462,7 @@ const ReceivingPage = () => {
                                     <table className="min-w-full text-sm">
                                       <thead className="bg-slate-100">
                                         <tr>
-                                          <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Название</th>
-                                          <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Баркод</th>
+                                          <th className="border-b border-r px-2 py-1.5 text-left text-xs font-medium">Товар</th>
                                           <th className="border-b border-r px-2 py-1.5 text-right text-xs font-medium">План</th>
                                           <th className="border-b px-2 py-1.5 text-right text-xs font-medium">Факт</th>
                                         </tr>
@@ -471,8 +470,15 @@ const ReceivingPage = () => {
                                       <tbody>
                                         {supply.items.map((item, index) => (
                                           <tr key={`${supply.id}-${item.barcode}-${index}`} className="odd:bg-white even:bg-slate-50/50">
-                                            <td className="border-b border-r px-2 py-1.5 text-xs">{item.name || "—"}</td>
-                                            <td className="border-b border-r px-2 py-1.5 font-mono text-[11px]">{item.barcode || "—"}</td>
+                                            <td className="border-b border-r px-2 py-1.5 align-top text-xs">
+                                              <div className="min-w-0 max-w-[280px] font-medium leading-snug text-slate-900">
+                                                {(item.name || "").trim() || "—"}
+                                              </div>
+                                              <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+                                                Артикул: {(item.supplierArticle || "").trim() || "—"} · Штрихкод:{" "}
+                                                <span className="font-mono">{(item.barcode || "").trim() || "—"}</span>
+                                              </p>
+                                            </td>
                                             <td className="border-b border-r px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.plannedQuantity) || 0}</td>
                                             <td className="border-b px-2 py-1.5 text-right tabular-nums text-xs">{Number(item.factualQuantity) || 0}</td>
                                           </tr>

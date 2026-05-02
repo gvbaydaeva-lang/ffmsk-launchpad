@@ -363,7 +363,20 @@ const InventoryPage = () => {
         });
       }
     }
-    out.sort((a, b) => {
+    return out;
+  }, [balanceRows, movementDataSafe, locationById]);
+
+  const stockByLocationFiltered = React.useMemo(() => {
+    let rows = stockByLocationRows;
+    if (stockPartnerId !== "all") rows = rows.filter((r) => r.legalEntityId === stockPartnerId);
+    const q = stockProductSearch.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((r) =>
+        `${r.productName} ${r.article} ${r.barcode}`.toLowerCase().includes(q),
+      );
+    }
+    if (stockHideZero) rows = rows.filter((r) => r.qty !== 0);
+    return [...rows].sort((a, b) => {
       const aTs = Date.parse(a.lastMovementIso || "");
       const bTs = Date.parse(b.lastMovementIso || "");
       const aOk = Number.isFinite(aTs);
@@ -380,20 +393,6 @@ const InventoryPage = () => {
         )
       );
     });
-    return out;
-  }, [balanceRows, movementDataSafe, locationById]);
-
-  const stockByLocationFiltered = React.useMemo(() => {
-    let rows = stockByLocationRows;
-    if (stockPartnerId !== "all") rows = rows.filter((r) => r.legalEntityId === stockPartnerId);
-    const q = stockProductSearch.trim().toLowerCase();
-    if (q) {
-      rows = rows.filter((r) =>
-        `${r.productName} ${r.article} ${r.barcode}`.toLowerCase().includes(q),
-      );
-    }
-    if (stockHideZero) rows = rows.filter((r) => r.qty !== 0);
-    return rows;
   }, [stockByLocationRows, stockPartnerId, stockProductSearch, stockHideZero]);
 
   /** Полный резерв по ключу — только у первой строки хранения (зона приёмки не участвует в «доступно для отгрузки»). */
@@ -867,6 +866,9 @@ const InventoryPage = () => {
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Штрихкод</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Партнёр</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Ячейка</TableHead>
+                    <TableHead className="whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">
+                      Последнее движение
+                    </TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Всего</TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Зарезервировано</TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
@@ -878,7 +880,7 @@ const InventoryPage = () => {
                 <TableBody>
                   {stockByLocationFiltered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="py-8 text-center text-sm text-slate-600">
+                      <TableCell colSpan={10} className="py-8 text-center text-sm text-slate-600">
                         Нет остатков
                       </TableCell>
                     </TableRow>
@@ -942,6 +944,9 @@ const InventoryPage = () => {
                           <TableCell className="max-w-[140px] truncate px-3 py-2 font-mono text-xs text-slate-700">{bcCell}</TableCell>
                           <TableCell className="max-w-[160px] truncate px-3 py-2 text-slate-700">{r.legalEntityName}</TableCell>
                           <TableCell className="max-w-[280px] px-3 py-2 text-xs text-slate-700">{locationCell}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-xs tabular-nums text-slate-700">
+                            {formatLastMovementCell(r.lastMovementIso)}
+                          </TableCell>
                           <TableCell className={cn("px-3 py-2 text-right tabular-nums", balanceClass(r.qty))}>
                             {r.qty.toLocaleString("ru-RU")}
                           </TableCell>
