@@ -32,6 +32,7 @@ import { movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInv
 import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace } from "@/types/domain";
 import { WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID } from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 const sourceLabel: Record<InventoryMovement["source"], string> = {
   receiving: "Приёмка",
@@ -60,17 +61,23 @@ type InventoryRowWithLocation = InventoryBalanceRow & {
   lastMovementIso: string | null;
 };
 
+type StockLocationKind = "none" | "receiving" | "storage";
+
 /** Строка таблицы «остатки по ячейкам»: только визуализация getInventoryBalance + movementLocationTotalsForWarehouseBalanceKey */
 type StockByLocationRow = {
   rowKey: string;
+  /** Ключ строки баланса (как в getInventoryBalance) — для reservedQtyByBalanceKey */
+  balanceKey: string;
   legalEntityId: string;
   legalEntityName: string;
   productName: string;
   article: string;
   barcode: string;
-  /** id ячейки или «—», если места нет в движении */
-  locationIdForDisplay: string;
-  locationNameForDisplay: string;
+  locationKind: StockLocationKind;
+  /** Пусто = нет ячейки; иначе id (в т.ч. RECEIVING_AREA) */
+  locationId: string;
+  /** Имя ячейки из справочника; для receiving/none не используется в колонке */
+  locationStorageName: string;
   qty: number;
 };
 
@@ -172,16 +179,22 @@ const InventoryPage = () => {
       const byLoc = movementLocationTotalsForWarehouseBalanceKey(movements, wh, br.key);
       for (const [rawLocId, qty] of byLoc) {
         const lid = rawLocId === "__no_location__" ? "" : (rawLocId || "").trim();
-        const locName = lid ? (locationById.get(lid)?.name ?? "—") : "Без места";
+        let locationKind: StockLocationKind = "storage";
+        if (!lid) locationKind = "none";
+        else if (lid === WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID) locationKind = "receiving";
+        const locationStorageName =
+          locationKind === "storage" ? (locationById.get(lid)?.name ?? "—") : "";
         out.push({
           rowKey: `${br.key}::${rawLocId}`,
+          balanceKey: br.key,
           legalEntityId: br.legalEntityId,
           legalEntityName: br.legalEntityName,
           productName: br.name,
           article: (br.article ?? br.sku ?? "").trim(),
           barcode: (br.barcode ?? "").trim(),
-          locationIdForDisplay: lid || "—",
-          locationNameForDisplay: locName,
+          locationKind,
+          locationId: lid,
+          locationStorageName,
           qty: Math.trunc(Number(qty) || 0),
         });
       }
@@ -190,8 +203,8 @@ const InventoryPage = () => {
       (a, b) =>
         a.legalEntityName.localeCompare(b.legalEntityName, "ru") ||
         a.productName.localeCompare(b.productName, "ru") ||
-        `${a.locationIdForDisplay} ${a.locationNameForDisplay}`.localeCompare(
-          `${b.locationIdForDisplay} ${b.locationNameForDisplay}`,
+        `${a.locationKind} ${a.locationId} ${a.locationStorageName}`.localeCompare(
+          `${b.locationKind} ${b.locationId} ${b.locationStorageName}`,
           "ru",
         ),
     );
@@ -210,6 +223,15 @@ const InventoryPage = () => {
     if (stockHideZero) rows = rows.filter((r) => r.qty !== 0);
     return rows;
   }, [stockByLocationRows, stockPartnerId, stockProductSearch, stockHideZero]);
+
+  /** Как в таблице «Складские остатки»: полный резерв по ключу показываем только у первой строки этого ключа в текущем фильтре */
+  const stockReservePrimaryRowKey = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of stockByLocationFiltered) {
+      if (!m.has(r.balanceKey)) m.set(r.balanceKey, r.rowKey);
+    }
+    return m;
+  }, [stockByLocationFiltered]);
 
   const rowsWithLocation = React.useMemo<InventoryRowWithLocation[]>(() => {
     const rows = movementDataSafe;
@@ -520,7 +542,8 @@ const InventoryPage = () => {
         <CardHeader className="border-b border-slate-100 px-4 py-3">
           <CardTitle className="text-base">Остатки по местам</CardTitle>
           <p className="mt-1 text-xs text-slate-500">
-            Разрез по ячейкам: суммы из движений через готовые функции баланса и остатков по месту (без отдельного пересчёта).
+            Разрез по ячейкам: «Всего» из движений по месту; резерв — из активных отгрузок (как на складе ниже); доступно =
+            всего − резерв (резерв показывается у одной строки ключа, как в таблице складских остатков).
           </p>
         </CardHeader>
         <CardContent className="space-y-3 p-3 sm:p-4">
@@ -571,13 +594,15 @@ const InventoryPage = () => {
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Артикул / штрихкод</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Партнёр</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Ячейка</TableHead>
-                    <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Количество</TableHead>
+                    <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Всего</TableHead>
+                    <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Зарезервировано</TableHead>
+                    <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {stockByLocationFiltered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="py-8 text-center text-sm text-slate-600">
+                      <TableCell colSpan={8} className="py-8 text-center text-sm text-slate-600">
                         Нет остатков
                       </TableCell>
                     </TableRow>
@@ -587,20 +612,48 @@ const InventoryPage = () => {
                       const bc = r.barcode;
                       const artBc =
                         art && bc ? `${art} / ${bc}` : art ? art : bc ? bc : "—";
+                      const reserveQty =
+                        stockReservePrimaryRowKey.get(r.balanceKey) === r.rowKey
+                          ? (reservedByKey.get(r.balanceKey) ?? 0)
+                          : 0;
+                      const available = r.qty - reserveQty;
+                      const rowMuted = available === 0;
+                      const locationCell =
+                        r.locationKind === "none" ? (
+                          <span className="text-slate-600">Без размещения</span>
+                        ) : r.locationKind === "receiving" ? (
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
+                              Зона приёмки
+                            </span>
+                            <span className="font-mono text-[11px] text-slate-500">{WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID}</span>
+                          </span>
+                        ) : (
+                          <>
+                            <span className="font-mono text-[11px] text-slate-600">{r.locationId}</span>
+                            <span className="mx-1 text-slate-400">/</span>
+                            <span>{r.locationStorageName}</span>
+                          </>
+                        );
                       return (
-                        <TableRow key={r.rowKey} className="text-sm">
+                        <TableRow
+                          key={r.rowKey}
+                          className={cn("text-sm", rowMuted && "opacity-[0.68]")}
+                        >
                           <TableCell className="max-w-[240px] px-3 py-2 font-medium text-slate-900">{r.productName}</TableCell>
                           <TableCell className="max-w-[200px] whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs text-slate-700">
                             {artBc}
                           </TableCell>
                           <TableCell className="max-w-[160px] truncate px-3 py-2 text-slate-700">{r.legalEntityName}</TableCell>
-                          <TableCell className="max-w-[280px] px-3 py-2 text-xs text-slate-700">
-                            <span className="font-mono text-[11px] text-slate-600">{r.locationIdForDisplay}</span>
-                            <span className="mx-1 text-slate-400">/</span>
-                            <span>{r.locationNameForDisplay}</span>
-                          </TableCell>
-                          <TableCell className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">
+                          <TableCell className="max-w-[280px] px-3 py-2 text-xs text-slate-700">{locationCell}</TableCell>
+                          <TableCell className={cn("px-3 py-2 text-right tabular-nums", balanceClass(r.qty))}>
                             {r.qty.toLocaleString("ru-RU")}
+                          </TableCell>
+                          <TableCell className={cn("px-3 py-2 text-right tabular-nums", reserveClass(reserveQty))}>
+                            {reserveQty.toLocaleString("ru-RU")}
+                          </TableCell>
+                          <TableCell className={cn("px-3 py-2 text-right tabular-nums", availableClass(available))}>
+                            {available.toLocaleString("ru-RU")}
                           </TableCell>
                         </TableRow>
                       );
