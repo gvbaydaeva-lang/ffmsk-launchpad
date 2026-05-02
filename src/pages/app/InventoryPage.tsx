@@ -34,7 +34,10 @@ import {
   signedStockDeltaForMovement,
 } from "@/services/mockInventoryMovements";
 import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace, ProductCatalogItem } from "@/types/domain";
-import { WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID } from "@/services/warehouseInboundApi";
+import {
+  LEGACY_WAREHOUSE_INBOUND_RECEIVING_ZONE_ID,
+  WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID,
+} from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -74,7 +77,7 @@ type InventoryRowWithLocation = InventoryBalanceRow & {
   lastMovementIso: string | null;
 };
 
-/** «Зона приёмки» в UI: RECEIVING_AREA, пусто или __no_location__; иначе — ячейка хранения */
+/** «Зона приёмки» в UI: единый id приёмки, устаревший RECEIVING_AREA, пусто или __no_location__; иначе — ячейка хранения */
 type StockLocationKind = "receiving_zone" | "storage";
 
 /** Строка таблицы «остатки по ячейкам»: только визуализация getInventoryBalance + movementLocationTotalsForWarehouseBalanceKey */
@@ -97,7 +100,7 @@ type StockByLocationRow = {
   lastMovementIso: string | null;
   /** Склад для привязки движений (как в movementLocationTotalsForWarehouseBalanceKey) */
   warehouseName: string;
-  /** Ключ ячейки из карты по месту (__no_location__, RECEIVING_AREA, …) */
+  /** Ключ ячейки из карты по месту (__no_location__, loc-receiving, устаревший RECEIVING_AREA, …) */
   movementRawLocId: string;
 };
 
@@ -321,6 +324,7 @@ const InventoryPage = () => {
     // Fallback для старых/неполных данных справочника: дефолтная зона приёмки.
     ids.add("loc-receiving");
     ids.add(WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID);
+    ids.add(LEGACY_WAREHOUSE_INBOUND_RECEIVING_ZONE_ID);
     return ids;
   }, [locationsSafe]);
 
@@ -335,7 +339,10 @@ const InventoryPage = () => {
       const byLoc = movementLocationTotalsForWarehouseBalanceKey(movements, wh, br.key);
       for (const [rawLocId, qty] of byLoc) {
         const lid = rawLocId === "__no_location__" ? "" : (rawLocId || "").trim();
-        const receivingZoneUi = !lid || lid === WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID;
+        const receivingZoneUi =
+          !lid ||
+          lid === WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID ||
+          lid === LEGACY_WAREHOUSE_INBOUND_RECEIVING_ZONE_ID;
         const locationKind: StockLocationKind = receivingZoneUi ? "receiving_zone" : "storage";
         const locationStorageName = locationKind === "storage" ? (locationById.get(lid)?.name ?? "—") : "";
         out.push({

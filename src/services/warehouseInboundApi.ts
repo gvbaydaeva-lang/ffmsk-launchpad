@@ -48,7 +48,14 @@ function normalizeInboundItem(it: InboundWarehouseItem): InboundWarehouseItem {
 }
 
 /** Id зоны приёмки для движений (без размещения по ячейкам хранения) */
-export const WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID = "RECEIVING_AREA";
+/**
+ * Единый id зоны приёмки для новых движений (совпадает с приёмкой из справочника `mockLocations`, по умолчанию `loc-receiving`).
+ * При завершении приёмки и размещения по заявке /inbounds INBOUND и TRANSFER.fromLocationId используют только это значение.
+ */
+export const WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID = "loc-receiving";
+
+/** Старый технический id в локальных данных; движения не мигрируем — только для подсказок UI там, где нужно. */
+export const LEGACY_WAREHOUSE_INBOUND_RECEIVING_ZONE_ID = "RECEIVING_AREA";
 
 function normalizeInboundWarehouseRequest(raw: InboundWarehouseRequest): InboundWarehouseRequest {
   const status: InboundWarehouseRequestStatus =

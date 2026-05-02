@@ -339,7 +339,7 @@ export type InventoryMovement = {
   warehouseName?: string;
   /** Для TRANSFER — ячейка назначения; для INBOUND/OUTBOUND — место операции */
   locationId?: string;
-  /** Для TRANSFER — зона/ячейка списания (напр. RECEIVING_AREA) */
+  /** Для TRANSFER — зона/ячейка списания (напр. loc-receiving; в старых данных встречался RECEIVING_AREA) */
   fromLocationId?: string;
   /** Ид строки источника (строка заявки inbound, строка outbound и т.д.) — не подменять sku/productId */
   itemId?: string;
