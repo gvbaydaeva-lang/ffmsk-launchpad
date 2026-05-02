@@ -383,6 +383,23 @@ const InboundWarehouseRequestsPanel = () => {
     });
   }, []);
 
+  const scrollInboundPlacementIntoView = React.useCallback((inboundId: string) => {
+    const el = document.getElementById(`inbound-placement-${inboundId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+
+  /** Раскрыть заявку и прокрутить к блоку размещения (для статуса «Принято»). */
+  const expandInboundRowAndScrollToPlacement = React.useCallback((inboundId: string) => {
+    setExpandedInboundIds((prev) => {
+      const next = new Set(prev);
+      next.add(inboundId);
+      return next;
+    });
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => scrollInboundPlacementIntoView(inboundId), 120);
+    });
+  }, [scrollInboundPlacementIntoView]);
+
   React.useEffect(() => {
     setInboundImportPreview(null);
   }, [partnerId]);
@@ -995,6 +1012,18 @@ const InboundWarehouseRequestsPanel = () => {
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-sm">{row.items.length}</TableCell>
                         <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
+                          {!isExpanded && row.status === "received" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-8 whitespace-nowrap"
+                              disabled={inboundPanelBusy}
+                              onClick={() => expandInboundRowAndScrollToPlacement(row.id)}
+                            >
+                              Разместить товар
+                            </Button>
+                          ) : null}
                           {isExpanded && row.status === "new" ? (
                             <div className="flex flex-wrap gap-1">
                               <Button
@@ -1033,6 +1062,17 @@ const InboundWarehouseRequestsPanel = () => {
                                 ? "Отмена…"
                                 : "Отменить приёмку"}
                             </Button>
+                          ) : isExpanded && row.status === "received" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 whitespace-nowrap"
+                              disabled={inboundPanelBusy}
+                              onClick={() => scrollInboundPlacementIntoView(row.id)}
+                            >
+                              К размещению
+                            </Button>
                           ) : isExpanded ? (
                             <span className="text-xs text-slate-400">—</span>
                           ) : null}
@@ -1054,6 +1094,21 @@ const InboundWarehouseRequestsPanel = () => {
                                     className="rounded-md border border-amber-200 bg-amber-50/95 px-3 py-2 text-sm leading-snug text-amber-950"
                                   >
                                     Товар принят, но ещё не размещён. До размещения он недоступен для отгрузки.
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="default"
+                                      className="h-8"
+                                      disabled={inboundPanelBusy}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        scrollInboundPlacementIntoView(row.id);
+                                      }}
+                                    >
+                                      Перейти к размещению
+                                    </Button>
                                   </div>
                                   <div className="space-y-1">
                                     <p className="text-xs text-slate-600">
@@ -1169,7 +1224,7 @@ const InboundWarehouseRequestsPanel = () => {
                                 </div>
                               )}
                               {row.status === "received" || row.status === "placed" ? (
-                                <div className="space-y-3 pt-2">
+                                <div id={`inbound-placement-${row.id}`} className="space-y-3 scroll-mt-4 pt-2">
                                   {row.status === "received" ? (
                                     <p className="text-xs font-medium leading-snug text-slate-700">
                                       Разместите товар по ячейкам хранения, чтобы он стал доступен для отгрузки.

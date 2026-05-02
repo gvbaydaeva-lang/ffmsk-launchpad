@@ -701,8 +701,8 @@ const LegalEntityDetailsPage = () => {
     }
     const entityIdTrim = entityIdNorm;
     const { merged } = mergeOutboundImportPreviewRowsByBarcodeOrArticle(outboundExcelRows);
-    const balanceByKey = getBalanceByKeyMap(inventoryMovements);
     const reserveByKey = reservedQtyByBalanceKey(outbound ?? [], rows);
+    const movementsSafe = Array.isArray(inventoryMovements) ? inventoryMovements : [];
     const lines: OutboundExcelImportStockLine[] = [];
     let hasShortage = false;
     for (const row of merged) {
@@ -730,9 +730,9 @@ const LegalEntityDetailsPage = () => {
         color: (product.color || "").trim() || "—",
         size: (product.size || "").trim() || "—",
       });
-      const balanceQty = balanceByKey.get(balKey) ?? 0;
+      const balanceQtyStorage = sumStorageBalanceForBalanceKey(movementsSafe, wh, balKey, storageLocationIds);
       const reserveQty = reserveByKey.get(balKey) ?? 0;
-      const available = balanceQty - reserveQty;
+      const available = balanceQtyStorage - reserveQty;
       const shortage = plan > available ? plan - available : 0;
       if (shortage > 0) hasShortage = true;
       lines.push({
@@ -745,7 +745,7 @@ const LegalEntityDetailsPage = () => {
       });
     }
     return { lines, hasShortage };
-  }, [entityIdNorm, outboundExcelRows, inventoryMovements, outbound, rows]);
+  }, [entityIdNorm, outboundExcelRows, inventoryMovements, outbound, rows, storageLocationIds]);
 
   const inboundDocuments = React.useMemo(
     () =>

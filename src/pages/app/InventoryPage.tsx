@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
@@ -171,6 +171,7 @@ function countMovementsForStockCell(
 }
 
 const InventoryPage = () => {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const availableZeroFromUrl = searchParams.get("available") === "zero";
   const { data: entities } = useLegalEntities();
@@ -790,12 +791,15 @@ const InventoryPage = () => {
                                   <span className="text-[10px] leading-snug text-slate-500">
                                     Недоступно для отгрузки до размещения
                                   </span>
-                                  <Link
-                                    to="/receiving"
-                                    className="text-[11px] font-medium text-sky-800 underline decoration-sky-300 underline-offset-2 hover:text-sky-950"
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 shrink-0 px-2 text-[11px] font-medium"
+                                    onClick={() => navigate("/receiving")}
                                   >
                                     Перейти к приёмке
-                                  </Link>
+                                  </Button>
                                 </span>
                               ) : shortage ? (
                                 <div className="text-right text-[10px] leading-snug text-red-700">

@@ -2067,10 +2067,18 @@ const ShippingPage = () => {
       const catalogSafe = Array.isArray(catalog) ? catalog : [];
       const product = catalogSafe.find((p) => p.id === latestSh.productId) ?? null;
       const balanceKey = balanceKeyFromOutboundShipment(latestSh, product);
-      const totalInv = getBalanceByKeyMap(movementDataSafe).get(balanceKey) ?? 0;
       const reserveInv = reservedQtyByBalanceKey(data ?? [], catalogSafe).get(balanceKey) ?? 0;
       const currentLineReserve = outboundLineRemainingReserveUnitsForPick(latestSh);
-      const availableForThisLine = totalInv - reserveInv + currentLineReserve;
+      const storagePhysTotal = shipmentLineAvailableByLocations({
+        movements: movementDataSafe,
+        locationById,
+        storageLocationIds,
+        receivingLocationIds,
+        balanceKey,
+        warehouseName: line.warehouseName || "",
+        reserveQty: reserveInv,
+      }).storageAvailableTotal;
+      const availableForThisLine = storagePhysTotal - reserveInv + currentLineReserve;
       if (availableForThisLine <= 0 || qty > availableForThisLine) {
         toast.error("Недостаточно товара на складе для подбора");
         return;
@@ -2158,6 +2166,8 @@ const ShippingPage = () => {
       addInventoryMovements,
       updateOutboundDraft,
       locationById,
+      storageLocationIds,
+      receivingLocationIds,
       selectedDoc,
       appendOperationLog,
       data,
