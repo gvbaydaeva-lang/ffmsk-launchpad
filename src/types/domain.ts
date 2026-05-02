@@ -355,7 +355,7 @@ export type InventoryMovement = {
   /** INBOUND: положительный; OUTBOUND: отрицательный */
   qty: number;
   createdAt: string;
-  source: "receiving" | "packing" | "shipping" | "placement";
+  source: "receiving" | "packing" | "shipping" | "placement" | "inventory_adjustment";
   /** Например, возврат в ячейку при отмене отгрузки — для отличия от «отменить подбор». */
   movementCause?: InventoryMovementCause;
 };

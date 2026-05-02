@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { format, parseISO } from "date-fns";
@@ -29,7 +30,7 @@ import {
 import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { activeReserveOutboundSampleIdsByBalanceKey, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
-import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace } from "@/types/domain";
+import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace, ProductCatalogItem } from "@/types/domain";
 import { WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID } from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,7 @@ const sourceLabel: Record<InventoryMovement["source"], string> = {
   packing: "Упаковщик",
   shipping: "Отгрузка",
   placement: "Размещение",
+  inventory_adjustment: "Инвентаризация",
 };
 
 const movementTypeLabel: Record<InventoryMovement["type"], string> = {
@@ -170,8 +172,71 @@ function countMovementsForStockCell(
   return n;
 }
 
+/** Ячейка для корректирующего движения (совпадает с учётом в movementLocationTotals). */
+function movementLocationIdForStockRow(r: StockByLocationRow): string {
+  if (r.movementRawLocId === "__no_location__") return "";
+  return (r.movementRawLocId || r.locationId || "").trim();
+}
+
+function movementMatchesStockRow(m: InventoryMovement, r: StockByLocationRow): boolean {
+  const wh = (r.warehouseName ?? "—").trim() || "—";
+  if ((m.warehouseName ?? "—").trim() !== wh) return false;
+  if (makeInventoryBalanceKeyFromMovement(m) !== r.balanceKey) return false;
+  const rowLoc =
+    r.movementRawLocId === "__no_location__" ? "" : (r.movementRawLocId || r.locationId || "").trim();
+  if (m.type === "TRANSFER") {
+    const from = (m.fromLocationId || "").trim();
+    const to = (m.locationId || "").trim();
+    const norm = (x: string) => (x === "__no_location__" ? "" : x);
+    return norm(from) === rowLoc || norm(to) === rowLoc || from === rowLoc || to === rowLoc;
+  }
+  const loc = (m.locationId || "").trim();
+  if (rowLoc === "") return loc === "" || !loc;
+  return loc === rowLoc;
+}
+
+function findSampleMovementForStockRow(
+  movements: InventoryMovement[],
+  r: StockByLocationRow,
+): InventoryMovement | undefined {
+  for (const m of movements) {
+    if (movementMatchesStockRow(m, r)) return m;
+  }
+  for (const m of movements) {
+    if (
+      (m.warehouseName ?? "—").trim() === (r.warehouseName ?? "—").trim() &&
+      makeInventoryBalanceKeyFromMovement(m) === r.balanceKey
+    ) {
+      return m;
+    }
+  }
+  return undefined;
+}
+
+function findProductIdForStockRow(catalog: ProductCatalogItem[], r: StockByLocationRow): string | undefined {
+  const bc = r.barcode.trim();
+  const art = r.article.trim();
+  for (const p of catalog) {
+    if (p.legalEntityId !== r.legalEntityId) continue;
+    if (bc && (p.barcode || "").trim() === bc) return p.id;
+    if (art && (p.supplierArticle || "").trim() === art) return p.id;
+  }
+  return undefined;
+}
+
+function formatStockRowLocationLabel(r: StockByLocationRow, locationById: Map<string, Location>): string {
+  if (r.locationKind === "receiving_zone") {
+    return r.locationId
+      ? (locationById.get(r.locationId)?.name ?? "Зона приёмки")
+      : "Зона приёмки";
+  }
+  const name = r.locationStorageName.trim() || locationById.get(r.locationId)?.name || "—";
+  return r.locationId ? `${r.locationId} / ${name}` : name;
+}
+
 const InventoryPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const availableZeroFromUrl = searchParams.get("available") === "zero";
   const { data: entities } = useLegalEntities();
@@ -202,6 +267,8 @@ const InventoryPage = () => {
   } | null>(null);
   const [placementQty, setPlacementQty] = React.useState<string>("");
   const [placementLocationId, setPlacementLocationId] = React.useState<string>("");
+  const [inventoryRow, setInventoryRow] = React.useState<StockByLocationRow | null>(null);
+  const [inventoryFactQty, setInventoryFactQty] = React.useState("");
   const [stockPartnerId, setStockPartnerId] = React.useState<"all" | string>("all");
   const [stockProductSearch, setStockProductSearch] = React.useState("");
   const [stockHideZero, setStockHideZero] = React.useState(false);
@@ -543,6 +610,59 @@ const InventoryPage = () => {
     setPlacementLocationId("");
   };
 
+  const resetInventoryModal = () => {
+    setInventoryRow(null);
+    setInventoryFactQty("");
+  };
+
+  const applyInventoryAdjustment = async () => {
+    if (!inventoryRow) return;
+    const systemQty = Math.trunc(Number(inventoryRow.qty) || 0);
+    const fact = Math.trunc(Number(inventoryFactQty) || 0);
+    if (!Number.isFinite(fact)) {
+      toast.error("Укажите целое число");
+      return;
+    }
+    const difference = fact - systemQty;
+    if (difference === 0) return;
+    const sample = findSampleMovementForStockRow(movementDataSafe, inventoryRow);
+    const productId = (sample?.productId ?? "").trim() || findProductIdForStockRow(productsSafe, inventoryRow);
+    const locId = movementLocationIdForStockRow(inventoryRow);
+    const ts = new Date().toISOString();
+    const taskId = `inv-adj-${Date.now()}`;
+    const taskNumber = `INV-${Date.now().toString().slice(-8)}`;
+    const base: Omit<InventoryMovement, "id" | "type" | "qty"> = {
+      taskId,
+      taskNumber,
+      legalEntityId: inventoryRow.legalEntityId,
+      legalEntityName: inventoryRow.legalEntityName,
+      warehouseName: inventoryRow.warehouseName,
+      name: (sample?.name ?? inventoryRow.productName).trim() || "—",
+      sku: sample?.sku ?? sample?.article ?? inventoryRow.article,
+      article: (sample?.article ?? sample?.sku ?? inventoryRow.article).trim() || "—",
+      barcode: (sample?.barcode ?? inventoryRow.barcode).trim() || "—",
+      marketplace: sample?.marketplace ?? "",
+      color: sample?.color ?? "—",
+      size: sample?.size ?? "—",
+      createdAt: ts,
+      source: "inventory_adjustment",
+      locationId: locId,
+      ...(productId ? { productId } : {}),
+    };
+    try {
+      if (difference > 0) {
+        await addInventoryMovements([{ ...base, id: `${taskId}-in`, type: "INBOUND", qty: difference }]);
+      } else {
+        await addInventoryMovements([{ ...base, id: `${taskId}-out`, type: "OUTBOUND", qty: difference }]);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
+      toast.success("Корректировка по инвентаризации применена");
+      resetInventoryModal();
+    } catch {
+      toast.error("Не удалось применить корректировку");
+    }
+  };
+
   const confirmPlacement = async () => {
     if (!placingRow) return;
     const qty = Math.trunc(Number(placementQty) || 0);
@@ -703,6 +823,9 @@ const InventoryPage = () => {
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Всего</TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Зарезервировано</TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Доступно</TableHead>
+                    <TableHead className="w-[130px] px-3 py-2 text-right text-xs font-semibold text-slate-600">
+                      Действия
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -821,6 +944,21 @@ const InventoryPage = () => {
                               ) : null}
                             </div>
                           </TableCell>
+                          <TableCell className="px-3 py-2 text-right align-middle">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 whitespace-nowrap px-2 text-xs"
+                              disabled={tableLoading || Boolean(error)}
+                              onClick={() => {
+                                setInventoryRow(r);
+                                setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
+                              }}
+                            >
+                              Инвентаризация
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })
@@ -831,6 +969,88 @@ const InventoryPage = () => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={Boolean(inventoryRow)}
+        onOpenChange={(open) => {
+          if (!open) resetInventoryModal();
+        }}
+      >
+        <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>Инвентаризация по ячейке</DialogTitle>
+          </DialogHeader>
+          {inventoryRow ? (
+            <>
+              <div className="grid gap-3 py-1">
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                  <div className="font-medium text-slate-900">{inventoryRow.productName}</div>
+                  <div className="text-xs text-slate-600">
+                    {inventoryRow.article.trim() || "—"} · {inventoryRow.barcode.trim() || "—"}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-700">
+                    <span className="font-medium text-slate-800">Ячейка: </span>
+                    {formatStockRowLocationLabel(inventoryRow, locationById)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-700">
+                    <span className="font-medium text-slate-800">Текущий остаток (система): </span>
+                    <span className="tabular-nums">{Math.trunc(Number(inventoryRow.qty) || 0).toLocaleString("ru-RU")}</span>
+                  </div>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="inventory-fact-qty">Фактическое количество</Label>
+                  <Input
+                    id="inventory-fact-qty"
+                    type="number"
+                    step={1}
+                    className="tabular-nums"
+                    value={inventoryFactQty}
+                    onChange={(e) => setInventoryFactQty(e.target.value)}
+                    disabled={isAppending}
+                  />
+                </div>
+                {(() => {
+                  const t = inventoryFactQty.trim();
+                  const factParsed = t === "" ? NaN : Math.trunc(Number(inventoryFactQty));
+                  if (!Number.isFinite(factParsed)) {
+                    return <p className="text-xs text-slate-500">Введите целое число для расчёта расхождения.</p>;
+                  }
+                  const systemQty = Math.trunc(Number(inventoryRow.qty) || 0);
+                  const difference = factParsed - systemQty;
+                  if (difference === 0) {
+                    return <p className="text-sm font-medium text-emerald-800">Расхождений нет</p>;
+                  }
+                  const sign = difference > 0 ? "+" : "";
+                  return (
+                    <p className="text-sm font-medium text-amber-950">
+                      Расхождение: {sign}
+                      {difference.toLocaleString("ru-RU")}
+                    </p>
+                  );
+                })()}
+              </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button type="button" variant="outline" onClick={resetInventoryModal} disabled={isAppending}>
+                  Отмена
+                </Button>
+                <Button
+                  type="button"
+                  disabled={(() => {
+                    const t = inventoryFactQty.trim();
+                    const factParsed = t === "" ? NaN : Math.trunc(Number(inventoryFactQty));
+                    if (!Number.isFinite(factParsed) || isAppending) return true;
+                    const systemQty = Math.trunc(Number(inventoryRow.qty) || 0);
+                    return factParsed - systemQty === 0;
+                  })()}
+                  onClick={() => void applyInventoryAdjustment()}
+                >
+                  Применить
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader className="border-b border-slate-100 px-4 py-3">

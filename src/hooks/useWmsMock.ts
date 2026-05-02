@@ -76,13 +76,18 @@ export function useInventoryMovements() {
       qc.setQueryData(["wms", "inventory-movements"], data);
       const first = variables[0];
       if (first) {
+        const invAdj = first.source === "inventory_adjustment";
+        const q = Math.trunc(Number(first.qty) || 0);
+        const desc = invAdj
+          ? `Инвентаризация: ${first.type === "INBOUND" ? "приход" : "списание"} ${Math.abs(q)} шт. (${first.taskNumber || first.taskId})`
+          : `Остатки обновлены по заданию №${first.taskNumber || first.taskId}`;
         const row = persistOperationLog({
-          type: "INVENTORY_CHANGED",
+          type: invAdj ? "INVENTORY_ADJUSTMENT" : "INVENTORY_CHANGED",
           taskId: first.taskId,
           taskNumber: first.taskNumber,
           legalEntityId: first.legalEntityId,
           legalEntityName: first.legalEntityName,
-          description: `Остатки обновлены по заданию №${first.taskNumber || first.taskId}`,
+          description: desc,
         });
         qc.setQueryData<OperationLog[]>(["wms", "operation-logs"], (prev) => [row, ...(prev ?? [])]);
       }
