@@ -124,6 +124,16 @@ type StockProductGroup = {
   statusLabel: string;
   statusTone: "green" | "amber" | "red" | "slate";
   lastMovementIso: string | null;
+  /** Сводка по движениям (только UI; остатки не пересчитываются). */
+  inboundQty: number;
+  placementInQty: number;
+  placementOutQty: number;
+  /** Сумма «в хранение» + «из приёмки» (обычно 0). */
+  placementQty: number;
+  outboundQty: number;
+  adjustmentQty: number;
+  /** INBOUND + OUTBOUND + корректировки (без TRANSFER); для сверки с totalQty. */
+  movementTotalFromMovements: number;
 };
 
 function stockProductGroupKeyFromRow(r: StockByLocationRow): string {
@@ -137,6 +147,8 @@ function computeStockProductGroups(
   rows: StockByLocationRow[],
   stockReservePrimaryRowKey: Map<string, string>,
   reservedByKey: Map<string, number>,
+  movements: InventoryMovement[],
+  locationById: Map<string, Location>,
 ): StockProductGroup[] {
   const byKey = new Map<string, StockByLocationRow[]>();
   for (const r of rows) {
@@ -206,7 +218,7 @@ function computeStockProductGroups(
       if (!lastMovementIso || iso > lastMovementIso) lastMovementIso = iso;
     }
     const first = sortedRows[0];
-    out.push({
+    const baseGroup: StockProductGroup = {
       groupKey,
       productId: (first.productId || "").trim(),
       productName: first.productName,
@@ -222,6 +234,17 @@ function computeStockProductGroups(
       statusLabel,
       statusTone,
       lastMovementIso,
+      inboundQty: 0,
+      placementInQty: 0,
+      placementOutQty: 0,
+      placementQty: 0,
+      outboundQty: 0,
+      adjustmentQty: 0,
+      movementTotalFromMovements: 0,
+    };
+    out.push({
+      ...baseGroup,
+      ...computeStockProductMovementSummary(baseGroup, movements, locationById),
     });
   }
   return out.sort((a, b) => {
@@ -403,6 +426,105 @@ function isReceivingZoneLocationId(id: string, locationById: Map<string, Locatio
   }
   const loc = locationById.get(id);
   return loc?.type === "receiving";
+}
+
+function isStorageLocationId(id: string, locationById: Map<string, Location>): boolean {
+  const nid = normalizeStockDetailLocationId(id);
+  if (!nid) return false;
+  if (isReceivingZoneLocationId(nid, locationById)) return false;
+  return locationById.get(nid)?.type === "storage";
+}
+
+function movementBelongsToStockProductGroupSlice(
+  m: InventoryMovement,
+  legalEntityId: string,
+  warehouseName: string,
+  productId: string,
+  balanceKeys: Set<string>,
+): boolean {
+  const whM = (m.warehouseName ?? "—").trim() || "—";
+  const whG = (warehouseName ?? "—").trim() || "—";
+  if (whM !== whG) return false;
+  if ((m.legalEntityId || "").trim() !== (legalEntityId || "").trim()) return false;
+  const k = makeInventoryBalanceKeyFromMovement(m);
+  if (balanceKeys.has(k)) return true;
+  const gp = (productId || "").trim();
+  const mp = (m.productId || "").trim();
+  return Boolean(gp && mp && gp === mp);
+}
+
+/**
+ * Сводка движений по группе товара (склад + юрлицо + ключи остатка / productId).
+ * INBOUND/OUTBOUND/корректировки — signedStockDeltaForMovement; TRANSFER с source placement — ноги приёмка/хранение.
+ */
+function computeStockProductMovementSummary(
+  group: StockProductGroup,
+  movements: InventoryMovement[],
+  locationById: Map<string, Location>,
+): Pick<
+  StockProductGroup,
+  | "inboundQty"
+  | "placementInQty"
+  | "placementOutQty"
+  | "placementQty"
+  | "outboundQty"
+  | "adjustmentQty"
+  | "movementTotalFromMovements"
+> {
+  const list = Array.isArray(movements) ? movements : [];
+  const balanceKeys = new Set(group.rows.map((r) => r.balanceKey));
+  let inboundQty = 0;
+  let outboundQty = 0;
+  let adjustmentQty = 0;
+  let placementInQty = 0;
+  let placementOutQty = 0;
+
+  for (const m of list) {
+    if (
+      !movementBelongsToStockProductGroupSlice(
+        m,
+        group.legalEntityId,
+        group.warehouseName,
+        group.productId,
+        balanceKeys,
+      )
+    ) {
+      continue;
+    }
+    if (m.type === "INBOUND") {
+      const d = signedStockDeltaForMovement(m);
+      if (m.source === "inventory_adjustment") adjustmentQty += d;
+      else inboundQty += d;
+      continue;
+    }
+    if (m.type === "OUTBOUND") {
+      const d = signedStockDeltaForMovement(m);
+      if (m.source === "inventory_adjustment") adjustmentQty += d;
+      else outboundQty += d;
+      continue;
+    }
+    if (m.type === "TRANSFER" && m.source === "placement") {
+      const q = Math.trunc(Number(m.qty) || 0);
+      const abs = Math.abs(q);
+      if (!Number.isFinite(abs) || abs <= 0) continue;
+      const fromId = normalizeStockDetailLocationId(m.fromLocationId);
+      const toId = normalizeStockDetailLocationId(m.locationId);
+      if (isReceivingZoneLocationId(fromId, locationById)) placementOutQty -= abs;
+      if (toId && isStorageLocationId(toId, locationById)) placementInQty += abs;
+    }
+  }
+
+  const placementQty = placementInQty + placementOutQty;
+  const movementTotalFromMovements = inboundQty + outboundQty + adjustmentQty;
+  return {
+    inboundQty,
+    placementInQty,
+    placementOutQty,
+    placementQty,
+    outboundQty,
+    adjustmentQty,
+    movementTotalFromMovements,
+  };
 }
 
 /** Человекочитаемое «Откуда» / «Куда» в раскрытии «Остатки по местам» (без сырых id при наличии имени). */
@@ -767,8 +889,15 @@ const InventoryPage = () => {
   }, [stockByLocationFiltered]);
 
   const stockProductGroups = React.useMemo(
-    () => computeStockProductGroups(stockByLocationFiltered, stockReservePrimaryRowKey, reservedByKey),
-    [stockByLocationFiltered, stockReservePrimaryRowKey, reservedByKey],
+    () =>
+      computeStockProductGroups(
+        stockByLocationFiltered,
+        stockReservePrimaryRowKey,
+        reservedByKey,
+        movementDataSafe,
+        locationById,
+      ),
+    [stockByLocationFiltered, stockReservePrimaryRowKey, reservedByKey, movementDataSafe, locationById],
   );
 
   /** Диагностика: отрицательное «доступно для отгрузки» только по ячейкам хранения. */
@@ -1292,6 +1421,87 @@ const InventoryPage = () => {
                                   <div className="font-semibold leading-snug text-slate-900">{g.productName}</div>
                                   <div className="text-[10px] leading-snug text-slate-500">
                                     {artParent} · {bcParent}
+                                  </div>
+                                  <div className="mt-1 space-y-0.5 text-[10px] tabular-nums text-slate-600">
+                                    {g.inboundQty !== 0 ? (
+                                      <div>
+                                        Приход:{" "}
+                                        <span
+                                          className={
+                                            g.inboundQty > 0 ? "font-medium text-emerald-600" : "font-medium text-red-600"
+                                          }
+                                        >
+                                          {g.inboundQty > 0 ? "+" : ""}
+                                          {g.inboundQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {g.placementOutQty !== 0 ? (
+                                      <div>
+                                        Размещение:{" "}
+                                        <span
+                                          className={
+                                            g.placementOutQty > 0
+                                              ? "font-medium text-emerald-600"
+                                              : "font-medium text-red-600"
+                                          }
+                                        >
+                                          {g.placementOutQty > 0 ? "+" : ""}
+                                          {g.placementOutQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {g.placementInQty !== 0 ? (
+                                      <div>
+                                        Размещение:{" "}
+                                        <span className="font-medium text-emerald-600">
+                                          +{g.placementInQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {g.outboundQty !== 0 ? (
+                                      <div>
+                                        Отгрузка:{" "}
+                                        <span
+                                          className={
+                                            g.outboundQty > 0 ? "font-medium text-emerald-600" : "font-medium text-red-600"
+                                          }
+                                        >
+                                          {g.outboundQty > 0 ? "+" : ""}
+                                          {g.outboundQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {g.adjustmentQty !== 0 ? (
+                                      <div>
+                                        Корректировки:{" "}
+                                        <span
+                                          className={
+                                            g.adjustmentQty > 0
+                                              ? "font-medium text-emerald-600"
+                                              : "font-medium text-red-600"
+                                          }
+                                        >
+                                          {g.adjustmentQty > 0 ? "+" : ""}
+                                          {g.adjustmentQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    <div
+                                      className={cn(
+                                        "pt-0.5 font-medium",
+                                        g.movementTotalFromMovements === g.totalQty
+                                          ? "text-slate-600"
+                                          : "text-red-600",
+                                      )}
+                                    >
+                                      Итого по движениям: {g.movementTotalFromMovements.toLocaleString("ru-RU")}
+                                    </div>
+                                    {g.statusLabel === "Есть расхождения" ? (
+                                      <div className="text-[10px] font-medium text-amber-800">
+                                        Проверьте движения: итог не сходится
+                                      </div>
+                                    ) : null}
                                   </div>
                                 </div>
                               </div>
