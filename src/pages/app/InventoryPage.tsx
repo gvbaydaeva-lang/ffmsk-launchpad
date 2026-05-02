@@ -527,56 +527,6 @@ function computeStockProductMovementSummary(
   };
 }
 
-/** Человекочитаемое «Откуда» / «Куда» в раскрытии «Остатки по местам» (без сырых id при наличии имени). */
-function formatStockDetailLocationEndpoint(
-  rawId: string | undefined,
-  locationById: Map<string, Location>,
-): string {
-  const id = normalizeStockDetailLocationId(rawId);
-  if (isReceivingZoneLocationId(id, locationById)) return "Зона приёмки";
-  if (!id) return "—";
-  const loc = locationById.get(id);
-  const name = (loc?.name ?? "").trim();
-  if (name) return `Ячейка: ${name}`;
-  return `Ячейка: ${id}`;
-}
-
-function stockDetailOperationLabel(m: InventoryMovement): string {
-  if (m.type === "INBOUND") return "Приход";
-  if (m.type === "OUTBOUND") return "Списание";
-  if (m.type === "TRANSFER" && m.source === "placement") return "Размещение";
-  return "Перемещение";
-}
-
-function stockDetailSourceLabel(source: InventoryMovement["source"]): string {
-  switch (source) {
-    case "receiving":
-      return "Приёмка";
-    case "placement":
-      return "Размещение";
-    case "shipping":
-      return "Отгрузка";
-    case "inventory_adjustment":
-      return "Инвентаризация";
-    case "packing":
-      return "Упаковка";
-    default:
-      return "Прочее";
-  }
-}
-
-/** Подпись колонки «Документ» без длинных внутренних id. */
-function stockDetailDocumentLabel(m: InventoryMovement): string {
-  const tn = (m.taskNumber || "").trim();
-  if (tn) return tn;
-  const tid = (m.taskId || "").trim();
-  if (!tid) return "—";
-  const lower = tid.toLowerCase();
-  if (lower.startsWith("inb-")) return "Приёмка";
-  if (lower.startsWith("out-")) return "Отгрузка";
-  return "Документ";
-}
-
 function findSampleMovementForStockRow(
   movements: InventoryMovement[],
   r: StockByLocationRow,
@@ -632,6 +582,50 @@ function stockGroupStatusToneClass(tone: StockProductGroup["statusTone"]): strin
   return "font-medium text-slate-500";
 }
 
+/** Подпись места в истории движений: без сырых id. */
+function formatStockMovementLocationLabel(rawId: string | undefined, locationById: Map<string, Location>): string {
+  const id = normalizeStockDetailLocationId(rawId);
+  if (isReceivingZoneLocationId(id, locationById)) return "Зона приёмки";
+  if (!id) return "—";
+  const loc = locationById.get(id);
+  const name = (loc?.name ?? "").trim();
+  if (name) return `Ячейка: ${name}`;
+  return "Ячейка";
+}
+
+function stockMovementHumanOperationLabel(m: InventoryMovement): string {
+  if (m.source === "inventory_adjustment") return "Инвентаризация";
+  if (m.type === "INBOUND") return "Приёмка";
+  if (m.type === "OUTBOUND") return "Отгрузка";
+  if (m.type === "TRANSFER" && m.source === "placement") return "Размещение";
+  if (m.type === "TRANSFER") return "Перемещение";
+  return "—";
+}
+
+/** Вторая часть «Операция → Куда» для строки остатка (контекст ячейки). */
+function stockMovementTargetLabelForRow(
+  m: InventoryMovement,
+  r: StockByLocationRow,
+  locationById: Map<string, Location>,
+): string {
+  if (m.type === "INBOUND") return formatStockMovementLocationLabel(m.locationId, locationById);
+  if (m.type === "OUTBOUND") return "—";
+  if (m.type === "TRANSFER") {
+    const rowLoc =
+      r.movementRawLocId === "__no_location__" ? "" : (r.movementRawLocId || r.locationId || "").trim();
+    const from = (m.fromLocationId ?? "").trim();
+    const to = (m.locationId ?? "").trim();
+    const norm = (x: string) => (x === "__no_location__" ? "" : x);
+    const rN = norm(rowLoc);
+    const fN = norm(from);
+    const tN = norm(to);
+    if (rN === fN || rowLoc === from || fN === rowLoc) return formatStockMovementLocationLabel(m.locationId, locationById);
+    if (rN === tN || rowLoc === to || tN === rowLoc) return formatStockMovementLocationLabel(m.fromLocationId, locationById);
+    return "—";
+  }
+  return "—";
+}
+
 /** Уровень 3: история движений по одной строке места (остатки по местам). */
 function StockLocationMovementDetailBlock({
   r,
@@ -650,17 +644,11 @@ function StockLocationMovementDetailBlock({
       ) : (
         <div className="overflow-x-auto">
           <p className="mb-2 text-xs text-slate-600">История операций по этой строке остатка</p>
-          <table className="w-full min-w-[760px] text-left text-[11px] text-slate-800">
+          <table className="w-full min-w-[320px] text-left text-[11px] text-slate-800">
             <thead>
               <tr className="border-b border-slate-200 text-slate-600">
-                <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Дата</th>
-                <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Операция</th>
-                <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Источник</th>
-                <th className="whitespace-nowrap py-1.5 pr-2 text-right font-medium">Количество</th>
-                <th className="min-w-[100px] py-1.5 pr-2 font-medium">Откуда</th>
-                <th className="min-w-[100px] py-1.5 pr-2 font-medium">Куда</th>
-                <th className="min-w-[120px] py-1.5 font-medium">Документ</th>
-                <th className="w-[120px] py-1.5 text-right font-medium">Журнал</th>
+                <th className="whitespace-nowrap py-1.5 pr-3 font-medium">Дата</th>
+                <th className="min-w-[200px] py-1.5 font-medium">Описание операции</th>
               </tr>
             </thead>
             <tbody>
@@ -674,42 +662,29 @@ function StockLocationMovementDetailBlock({
                 const qtySigned = stockDetailMovementQtySigned(m, r);
                 const qtyClass =
                   qtySigned > 0 ? "text-emerald-700" : qtySigned < 0 ? "text-red-700" : "text-slate-400";
-                let fromCell = "—";
-                let toCell = "—";
-                if (m.type === "TRANSFER") {
-                  fromCell = formatStockDetailLocationEndpoint(m.fromLocationId, locationById);
-                  toCell = formatStockDetailLocationEndpoint(m.locationId, locationById);
-                } else if (m.type === "INBOUND") {
-                  fromCell = "—";
-                  toCell = formatStockDetailLocationEndpoint(m.locationId, locationById);
-                } else {
-                  fromCell = formatStockDetailLocationEndpoint(m.locationId, locationById);
-                  toCell = "—";
-                }
-                const documentLabel = stockDetailDocumentLabel(m);
+                const op = stockMovementHumanOperationLabel(m);
+                const target = stockMovementTargetLabelForRow(m, r, locationById);
                 const journalSearch = ((m.taskNumber || "").trim() || (m.taskId || "").trim()) || "";
                 return (
                   <tr key={m.id} className="border-b border-slate-100 last:border-0">
-                    <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-700">{dateCell}</td>
-                    <td className="py-1.5 pr-2">{stockDetailOperationLabel(m)}</td>
-                    <td className="py-1.5 pr-2">{stockDetailSourceLabel(m.source)}</td>
-                    <td className={cn("py-1.5 pr-2 text-right tabular-nums font-medium", qtyClass)}>{qtyStr}</td>
-                    <td className="py-1.5 pr-2 text-slate-700">{fromCell}</td>
-                    <td className="py-1.5 pr-2 text-slate-700">{toCell}</td>
-                    <td className="py-1.5 text-xs text-slate-700">{documentLabel}</td>
-                    <td className="py-1.5 text-right align-middle">
-                      {journalSearch ? (
-                        <Button variant="link" className="h-auto p-0 text-[11px] font-medium" asChild>
-                          <Link
-                            to={`/operations?search=${encodeURIComponent(journalSearch)}`}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            Открыть в журнале
-                          </Link>
-                        </Button>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
+                    <td className="whitespace-nowrap py-1.5 pr-3 align-top tabular-nums text-slate-700">{dateCell}</td>
+                    <td className="py-1.5 align-top text-slate-800">
+                      <div className="flex flex-wrap items-baseline gap-x-1 gap-y-1">
+                        <span>
+                          {op} → {target}{" "}
+                          <span className={cn("font-medium tabular-nums", qtyClass)}>{qtyStr}</span>
+                        </span>
+                        {journalSearch ? (
+                          <Button variant="link" className="h-auto shrink-0 p-0 text-[11px] font-medium" asChild>
+                            <Link
+                              to={`/operations?search=${encodeURIComponent(journalSearch)}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Журнал
+                            </Link>
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 );
