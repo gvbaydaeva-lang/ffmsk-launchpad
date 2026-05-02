@@ -605,6 +605,51 @@ const LegalEntityDetailsPage = () => {
     () => (catalog ?? []).filter((x) => (x.legalEntityId ?? "").trim() === entityIdNorm),
     [catalog, entityIdNorm],
   );
+
+  const outboundCreateFromUrlHandledKey = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (searchParams.get("createOutbound") !== "1") {
+      outboundCreateFromUrlHandledKey.current = null;
+      return;
+    }
+    if (catalog === undefined) return;
+    const dedupeKey = searchParams.toString();
+    if (outboundCreateFromUrlHandledKey.current === dedupeKey) return;
+    outboundCreateFromUrlHandledKey.current = dedupeKey;
+
+    setCreateOutboundOpen(true);
+    setSelectedOutboundProductId("");
+    const productId = (searchParams.get("productId") ?? "").trim();
+    const barcode = (searchParams.get("barcode") ?? "").trim();
+    const article = (searchParams.get("article") ?? "").trim();
+    const productName = (searchParams.get("productName") ?? "").trim();
+
+    let selected = "";
+    if (productId && rows.some((p) => p.id === productId)) {
+      selected = productId;
+    } else if (barcode) {
+      const hits = rows.filter((p) => (p.barcode || "").trim() === barcode);
+      if (hits.length === 1) selected = hits[0].id;
+      else setProductSearch(barcode);
+    } else if (article) {
+      const hits = rows.filter((p) => (p.supplierArticle || "").trim() === article);
+      if (hits.length === 1) selected = hits[0].id;
+      else setProductSearch(article);
+    } else if (productName) {
+      setProductSearch(productName);
+    }
+    if (selected) {
+      setSelectedOutboundProductId(selected);
+      setProductSearch("");
+    }
+
+    const next = new URLSearchParams(searchParams);
+    for (const k of ["createOutbound", "productId", "barcode", "article", "productName"] as const) {
+      next.delete(k);
+    }
+    setSearchParams(next, { replace: true });
+  }, [searchParams, rows, catalog, setSearchParams]);
+
   const ops = React.useMemo(
     () => (operationLogRows ?? []).filter((x) => x.legalEntityId === id),
     [operationLogRows, id],
@@ -821,7 +866,12 @@ const LegalEntityDetailsPage = () => {
   const filteredProducts = React.useMemo(() => {
     const s = productSearch.trim().toLowerCase();
     if (!s) return rows;
-    return rows.filter((p) => p.name.toLowerCase().includes(s) || p.barcode.toLowerCase().includes(s));
+    return rows.filter(
+      (p) =>
+        p.name.toLowerCase().includes(s) ||
+        p.barcode.toLowerCase().includes(s) ||
+        (p.supplierArticle || "").toLowerCase().includes(s),
+    );
   }, [rows, productSearch]);
   const catalogRows = React.useMemo(() => {
     const s = catalogSearch.trim().toLowerCase();

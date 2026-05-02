@@ -238,6 +238,15 @@ function findProductIdForStockRow(catalog: ProductCatalogItem[], r: StockByLocat
   return undefined;
 }
 
+/** Строка поиска для диплинка в отгрузки: штрихкод → артикул → название. */
+function stockRowShippingSearchTerm(r: StockByLocationRow): string {
+  const bc = r.barcode.trim();
+  if (bc) return bc;
+  const art = r.article.trim();
+  if (art) return art;
+  return (r.productName || "").trim();
+}
+
 function formatStockRowLocationLabel(r: StockByLocationRow, locationById: Map<string, Location>): string {
   if (r.locationKind === "receiving_zone") {
     return r.locationId
@@ -997,20 +1006,55 @@ const InventoryPage = () => {
                             </div>
                           </TableCell>
                           <TableCell className="px-3 py-2 text-right align-middle">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8 whitespace-nowrap px-2 text-xs"
-                              disabled={tableLoading || Boolean(error)}
-                              onClick={() => {
-                                setInventoryRow(r);
-                                setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
-                                setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
-                              }}
-                            >
-                              Инвентаризация
-                            </Button>
+                            <div className="flex flex-col items-end gap-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 whitespace-nowrap px-2 text-[11px]"
+                                disabled={tableLoading || Boolean(error) || !stockRowShippingSearchTerm(r)}
+                                onClick={() => {
+                                  const t = stockRowShippingSearchTerm(r);
+                                  if (!t) return;
+                                  navigate(`/shipping?search=${encodeURIComponent(t)}`);
+                                }}
+                              >
+                                Найти в отгрузках
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 whitespace-nowrap px-2 text-[11px]"
+                                disabled={tableLoading || Boolean(error)}
+                                onClick={() => {
+                                  const q = new URLSearchParams();
+                                  q.set("createOutbound", "1");
+                                  const pid = findProductIdForStockRow(productsSafe, r);
+                                  if (pid) q.set("productId", pid);
+                                  else if (r.barcode.trim()) q.set("barcode", r.barcode.trim());
+                                  else if (r.article.trim()) q.set("article", r.article.trim());
+                                  else if (r.productName.trim()) q.set("productName", r.productName.trim());
+                                  navigate({ pathname: `/legal-entities/${r.legalEntityId}`, search: `?${q.toString()}` });
+                                }}
+                              >
+                                Создать отгрузку
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 whitespace-nowrap px-2 text-[11px]"
+                                disabled={tableLoading || Boolean(error)}
+                                onClick={() => {
+                                  setInventoryRow(r);
+                                  setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
+                                  setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
+                                }}
+                              >
+                                Инвентаризация
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

@@ -673,6 +673,12 @@ const ShippingPage = () => {
   useUserRole();
   const [mp, setMp] = React.useState<Marketplace | "all">("all");
   const [search, setSearch] = React.useState("");
+  /** Диплинк из остатков: /shipping?search=… — подставляем в поле поиска без изменения логики фильтрации. */
+  React.useEffect(() => {
+    const raw = searchParams.get("search");
+    if (raw == null || raw === "") return;
+    setSearch(raw);
+  }, [searchParams]);
   const [statusFilter, setStatusFilter] = React.useState<"all" | TaskWorkflowStatus | "shipped_with_diff">("all");
   const [viewMode, setViewMode] = React.useState<"active" | "archive">("active");
   const [warehouseFilter, setWarehouseFilter] = React.useState("all");
