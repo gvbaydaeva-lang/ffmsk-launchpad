@@ -280,6 +280,18 @@ const InventoryPage = () => {
     return m;
   }, [stockByLocationFiltered]);
 
+  /** Диагностика UI: есть ли в текущем фильтре строка с отрицательным «доступно» (те же Всего/Резерв, что в таблице). */
+  const stockNegativeAvailablePresent = React.useMemo(() => {
+    for (const r of stockByLocationFiltered) {
+      const reserveQty =
+        stockReservePrimaryRowKey.get(r.balanceKey) === r.rowKey
+          ? (reservedByKey.get(r.balanceKey) ?? 0)
+          : 0;
+      if (r.qty - reserveQty < 0) return true;
+    }
+    return false;
+  }, [stockByLocationFiltered, stockReservePrimaryRowKey, reservedByKey]);
+
   const rowsWithLocation = React.useMemo<InventoryRowWithLocation[]>(() => {
     const rows = movementDataSafe;
     const byKey = new Map<
@@ -594,6 +606,14 @@ const InventoryPage = () => {
           </p>
         </CardHeader>
         <CardContent className="space-y-3 p-3 sm:p-4">
+          {!tableLoading && !error && stockNegativeAvailablePresent ? (
+            <div
+              role="status"
+              className="rounded-md border border-rose-200 bg-rose-50/90 px-3 py-2 text-sm text-rose-900"
+            >
+              Есть позиции с отрицательным доступным остатком. Проверьте резервы и движения.
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-3">
             <Select value={stockPartnerId} onValueChange={(v) => setStockPartnerId(v as "all" | string)}>
               <SelectTrigger className="h-9 w-[200px] border-slate-200">
@@ -664,6 +684,7 @@ const InventoryPage = () => {
                           : 0;
                       const available = r.qty - reserveQty;
                       const rowMuted = available === 0;
+                      const shortage = available < 0;
                       const locationCell =
                         r.locationKind === "receiving_zone" ? (
                           <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
@@ -694,8 +715,20 @@ const InventoryPage = () => {
                           <TableCell className={cn("px-3 py-2 text-right tabular-nums", reserveClass(reserveQty))}>
                             {reserveQty.toLocaleString("ru-RU")}
                           </TableCell>
-                          <TableCell className={cn("px-3 py-2 text-right tabular-nums", availableClass(available))}>
-                            {available.toLocaleString("ru-RU")}
+                          <TableCell
+                            className={cn(
+                              "px-3 py-2 text-right align-top tabular-nums",
+                              availableClass(available),
+                            )}
+                          >
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span>{available.toLocaleString("ru-RU")}</span>
+                              {shortage ? (
+                                <span className="text-[10px] font-semibold leading-tight text-red-600">
+                                  Недостаточно остатка
+                                </span>
+                              ) : null}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
