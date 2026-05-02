@@ -1,6 +1,8 @@
 import * as React from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,7 +15,7 @@ import type { InventoryMovement, Location, OperationLog } from "@/types/domain";
 import { signedStockDeltaForMovement } from "@/services/mockInventoryMovements";
 import { cn } from "@/lib/utils";
 
-type OperationCategory = "receiving" | "placement" | "shipping" | "inventory" | "other";
+type OperationCategory = "receiving" | "placement" | "shipping" | "inventory" | "packing" | "other";
 
 const CATEGORY_FILTER: Array<{ value: "all" | OperationCategory; label: string }> = [
   { value: "all", label: "Все типы" },
@@ -21,6 +23,7 @@ const CATEGORY_FILTER: Array<{ value: "all" | OperationCategory; label: string }
   { value: "placement", label: "Размещение" },
   { value: "shipping", label: "Отгрузка" },
   { value: "inventory", label: "Инвентаризация" },
+  { value: "packing", label: "Упаковка" },
   { value: "other", label: "Прочее" },
 ];
 
@@ -29,6 +32,7 @@ const CATEGORY_LABEL: Record<OperationCategory, string> = {
   placement: "Размещение",
   shipping: "Отгрузка",
   inventory: "Инвентаризация",
+  packing: "Упаковка",
   other: "Прочее",
 };
 
@@ -51,12 +55,14 @@ function movementCategory(m: InventoryMovement): OperationCategory {
   if (m.source === "placement") return "placement";
   if (m.source === "shipping") return "shipping";
   if (m.source === "receiving") return "receiving";
+  if (m.source === "packing") return "packing";
   return "other";
 }
 
 function logCategory(log: OperationLog): OperationCategory {
   const t = (log.type || "").toUpperCase();
   if (t === "INVENTORY_ADJUSTMENT") return "inventory";
+  if (t.includes("PACK")) return "packing";
   if (t.includes("PLACEMENT") || t === "PLACEMENT_COMPLETED") return "placement";
   if (t.includes("SHIP") || t.includes("SHIPPING") || t === "SHIPPING_PICK" || t === "SHIPPING_PICK_CANCEL")
     return "shipping";
@@ -96,6 +102,8 @@ function formatCellForMovement(m: InventoryMovement, locationById: Map<string, L
   return `${lid} / ${locationById.get(lid)?.name ?? "—"}`;
 }
 
+type NavLinkKind = "receiving" | "shipping" | "inventory" | null;
+
 type UnifiedRow = {
   id: string;
   createdAt: string;
@@ -109,10 +117,36 @@ type UnifiedRow = {
   cell: string;
   warehouse: string;
   legalEntity: string;
+  /** Документ / задание: taskNumber или taskId */
+  documentTask: string;
+  /** Для кнопки «К отгрузке» — непустой поиск в URL */
+  shippingSearch: string;
+  navLink: NavLinkKind;
 };
+
+function documentTaskLabel(taskNumber: string | undefined, taskId: string | undefined): string {
+  const tn = (taskNumber ?? "").trim();
+  if (tn) return tn;
+  const tid = (taskId ?? "").trim();
+  if (tid) return tid;
+  return "—";
+}
+
+function shippingSearchFromTasks(taskNumber: string | undefined, taskId: string | undefined): string {
+  return (taskNumber ?? "").trim() || (taskId ?? "").trim();
+}
+
+function navLinkForCategory(cat: OperationCategory, shippingSearch: string): NavLinkKind {
+  if (cat === "receiving") return "receiving";
+  if (cat === "shipping") return shippingSearch.trim() ? "shipping" : null;
+  if (cat === "inventory") return "inventory";
+  return null;
+}
 
 function movementToRow(m: InventoryMovement, locationById: Map<string, Location>): UnifiedRow {
   const cat = movementCategory(m);
+  const doc = documentTaskLabel(m.taskNumber, m.taskId);
+  const shipQ = shippingSearchFromTasks(m.taskNumber, m.taskId);
   return {
     id: `m:${m.id}`,
     createdAt: m.createdAt,
@@ -132,11 +166,16 @@ function movementToRow(m: InventoryMovement, locationById: Map<string, Location>
     cell: formatCellForMovement(m, locationById),
     warehouse: (m.warehouseName || "").trim() || "—",
     legalEntity: (m.legalEntityName || "").trim() || "—",
+    documentTask: doc,
+    shippingSearch: shipQ,
+    navLink: navLinkForCategory(cat, shipQ),
   };
 }
 
 function logToRow(log: OperationLog): UnifiedRow {
   const cat = logCategory(log);
+  const doc = documentTaskLabel(log.taskNumber, log.taskId);
+  const shipQ = shippingSearchFromTasks(log.taskNumber, log.taskId);
   return {
     id: `l:${log.id}`,
     createdAt: log.createdAt,
@@ -150,10 +189,14 @@ function logToRow(log: OperationLog): UnifiedRow {
     cell: "—",
     warehouse: "—",
     legalEntity: (log.legalEntityName || "").trim() || "—",
+    documentTask: doc,
+    shippingSearch: shipQ,
+    navLink: navLinkForCategory(cat, shipQ),
   };
 }
 
 const WarehouseOperationsJournalPage = () => {
+  const [searchParams] = useSearchParams();
   const { data: movementsRaw, isLoading: movLoading, error: movError } = useInventoryMovements();
   const { data: logsRaw, isLoading: logLoading, error: logError } = useOperationLogs();
   const { data: locationsData } = useLocations();
@@ -162,6 +205,11 @@ const WarehouseOperationsJournalPage = () => {
   const [categoryFilter, setCategoryFilter] = React.useState<"all" | OperationCategory>("all");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
+
+  React.useEffect(() => {
+    const raw = searchParams.get("search");
+    if (raw != null && raw !== "") setSearch(raw);
+  }, [searchParams]);
 
   const movements = React.useMemo(() => (Array.isArray(movementsRaw) ? movementsRaw : []), [movementsRaw]);
   const logs = React.useMemo(() => (Array.isArray(logsRaw) ? logsRaw : []), [logsRaw]);
@@ -191,7 +239,7 @@ const WarehouseOperationsJournalPage = () => {
     const q = search.trim().toLowerCase();
     if (q) {
       rows = rows.filter((r) =>
-        `${r.productName} ${r.article} ${r.barcode} ${r.description}`.toLowerCase().includes(q),
+        `${r.productName} ${r.article} ${r.barcode} ${r.description} ${r.documentTask}`.toLowerCase().includes(q),
       );
     }
     const fromTs = dateFrom ? Date.parse(`${dateFrom}T00:00:00`) : NaN;
@@ -306,12 +354,18 @@ const WarehouseOperationsJournalPage = () => {
                     <TableHead className="min-w-[140px] px-3 py-2 text-xs font-semibold text-slate-600">Ячейка</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Склад</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Юрлицо</TableHead>
+                    <TableHead className="min-w-[100px] px-3 py-2 text-xs font-semibold text-slate-600">
+                      Документ / задание
+                    </TableHead>
+                    <TableHead className="w-[120px] px-3 py-2 text-right text-xs font-semibold text-slate-600">
+                      Действия
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="py-10 text-center text-sm text-slate-600">
+                      <TableCell colSpan={12} className="py-10 text-center text-sm text-slate-600">
                         Нет операций
                       </TableCell>
                     </TableRow>
@@ -341,6 +395,28 @@ const WarehouseOperationsJournalPage = () => {
                           <TableCell className="max-w-[200px] px-3 py-2 text-xs text-slate-700">{r.cell}</TableCell>
                           <TableCell className="max-w-[120px] truncate px-3 py-2 text-slate-700">{r.warehouse}</TableCell>
                           <TableCell className="max-w-[140px] truncate px-3 py-2 text-slate-700">{r.legalEntity}</TableCell>
+                          <TableCell className="max-w-[160px] truncate px-3 py-2 font-mono text-[11px] text-slate-700">
+                            {r.documentTask}
+                          </TableCell>
+                          <TableCell className="px-2 py-2 text-right align-middle">
+                            <div className="flex flex-col items-end gap-1">
+                              {r.navLink === "receiving" ? (
+                                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" asChild>
+                                  <Link to="/receiving">К приёмке</Link>
+                                </Button>
+                              ) : null}
+                              {r.navLink === "shipping" && r.shippingSearch ? (
+                                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" asChild>
+                                  <Link to={`/shipping?search=${encodeURIComponent(r.shippingSearch)}`}>К отгрузке</Link>
+                                </Button>
+                              ) : null}
+                              {r.navLink === "inventory" ? (
+                                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" asChild>
+                                  <Link to="/inventory">К остаткам</Link>
+                                </Button>
+                              ) : null}
+                            </div>
+                          </TableCell>
                         </TableRow>
                       );
                     })

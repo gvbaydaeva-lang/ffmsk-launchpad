@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Search } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale/ru";
@@ -1130,7 +1130,7 @@ const InventoryPage = () => {
                                   <p className="py-2 text-center text-xs text-slate-600">Нет движений по этой строке</p>
                                 ) : (
                                   <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[640px] text-left text-[11px] text-slate-800">
+                                    <table className="w-full min-w-[760px] text-left text-[11px] text-slate-800">
                                       <thead>
                                         <tr className="border-b border-slate-200 text-slate-600">
                                           <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Дата</th>
@@ -1140,6 +1140,7 @@ const InventoryPage = () => {
                                           <th className="min-w-[100px] py-1.5 pr-2 font-medium">Откуда</th>
                                           <th className="min-w-[100px] py-1.5 pr-2 font-medium">Куда</th>
                                           <th className="min-w-[120px] py-1.5 font-medium">Задание / документ</th>
+                                          <th className="w-[120px] py-1.5 text-right font-medium">Журнал</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -1169,6 +1170,7 @@ const InventoryPage = () => {
                                             toCell = "—";
                                           }
                                           const taskLabel = ((m.taskNumber || "").trim() || (m.taskId || "").trim() || "—").trim();
+                                          const journalSearch = ((m.taskNumber || "").trim() || (m.taskId || "").trim()) || "";
                                           return (
                                             <tr key={m.id} className="border-b border-slate-100 last:border-0">
                                               <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-700">{dateCell}</td>
@@ -1180,6 +1182,20 @@ const InventoryPage = () => {
                                               <td className="py-1.5 pr-2 text-slate-700">{fromCell}</td>
                                               <td className="py-1.5 pr-2 text-slate-700">{toCell}</td>
                                               <td className="py-1.5 font-mono text-[10px] text-slate-600">{taskLabel}</td>
+                                              <td className="py-1.5 text-right align-middle">
+                                                {journalSearch ? (
+                                                  <Button variant="link" className="h-auto p-0 text-[11px] font-medium" asChild>
+                                                    <Link
+                                                      to={`/operations?search=${encodeURIComponent(journalSearch)}`}
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      Открыть в журнале
+                                                    </Link>
+                                                  </Button>
+                                                ) : (
+                                                  <span className="text-slate-400">—</span>
+                                                )}
+                                              </td>
                                             </tr>
                                           );
                                         })}
