@@ -12,6 +12,7 @@ import ReceivingPage from "./pages/app/ReceivingPage.tsx";
 import ShippingPage from "./pages/app/ShippingPage.tsx";
 import PackingPage from "./pages/app/PackingPage.tsx";
 import HistoryOperationsPage from "./pages/app/HistoryOperationsPage.tsx";
+import WarehouseOperationsJournalPage from "./pages/app/WarehouseOperationsJournalPage.tsx";
 import WarehousePage from "./pages/app/WarehousePage.tsx";
 import InventoryPage from "./pages/app/InventoryPage.tsx";
 import FinancePage from "./pages/app/FinancePage.tsx";
@@ -44,6 +45,7 @@ const App = () => (
                   <Route path="packing" element={<PackingPage />} />
                   <Route path="packer" element={<Navigate to="/packing" replace />} />
                   <Route path="history" element={<HistoryOperationsPage />} />
+                  <Route path="operations" element={<WarehouseOperationsJournalPage />} />
                   <Route path="warehouse" element={<WarehousePage />} />
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="finance" element={<FinancePage />} />
