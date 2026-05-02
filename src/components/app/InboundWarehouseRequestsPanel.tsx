@@ -144,6 +144,8 @@ function InboundLinePlacementsBlock({
   partnerId: string;
   inventoryMovements: InventoryMovement[];
   catalogItems: ProductCatalogItem[];
+  /** Увеличивается родителем — применить рекомендацию в черновик (без сохранения). */
+  placementBulkToken: number;
 }) {
   type DraftPl = { rowKey: string; id: string; locationId: string; qty: string };
   const [lines, setLines] = React.useState<DraftPl[]>([]);
@@ -201,6 +203,30 @@ function InboundLinePlacementsBlock({
     () => recommendedStorageLocationForPlacement(inventoryMovements, storageLocations, productForKey, partnerId),
     [inventoryMovements, storageLocations, productForKey, partnerId],
   );
+
+  React.useEffect(() => {
+    if (placementBulkToken === 0) return;
+    if (readOnly) return;
+    if (receivedQty <= 0) return;
+    if (distributed > 0) return;
+    const rec = recommendedStorageLocationForPlacement(
+      inventoryMovements,
+      storageLocations,
+      productForKey,
+      partnerId,
+    );
+    if (!rec) return;
+    setLines([
+      {
+        rowKey: `bulk-${placementBulkToken}-${item.id}`,
+        id: "",
+        locationId: rec.id,
+        qty: String(receivedQty),
+      },
+    ]);
+    // Только по нажатию «Заполнить по рекомендации» (placementBulkToken), без перезаписи при смене движений.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placementBulkToken]);
 
   if (readOnly) {
     return (
@@ -473,6 +499,8 @@ const InboundWarehouseRequestsPanel = () => {
   const inboundApplyImportLockedRef = React.useRef(false);
   const [inboundImportPreview, setInboundImportPreview] = React.useState<WarehouseImportInspectionResult | null>(null);
   const [expandedInboundIds, setExpandedInboundIds] = React.useState<Set<string>>(() => new Set());
+  /** Счётчик по id заявки: увеличить, чтобы дочерние блоки размещения подставили рекомендацию в черновик. */
+  const [placementBulkSeqByInboundId, setPlacementBulkSeqByInboundId] = React.useState<Record<string, number>>({});
 
   const toggleInboundRowExpansion = React.useCallback((id: string) => {
     setExpandedInboundIds((prev) => {
@@ -1335,12 +1363,51 @@ const InboundWarehouseRequestsPanel = () => {
                                       Разместите товар в ячейки хранения — станет доступно для отгрузки.
                                     </p>
                                   ) : null}
-                                  <div>
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                      Размещение по ячейкам
-                                    </p>
-                                    {row.status === "placed" ? (
-                                      <p className="mt-0.5 text-xs text-slate-500">Только просмотр, изменение недоступно.</p>
+                                  <div className="flex flex-wrap items-end justify-between gap-2">
+                                    <div>
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                        Размещение по ячейкам
+                                      </p>
+                                      {row.status === "placed" ? (
+                                        <p className="mt-0.5 text-xs text-slate-500">Только просмотр, изменение недоступно.</p>
+                                      ) : null}
+                                    </div>
+                                    {row.status === "received" && storageLocations.length > 0 ? (
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        className="h-8 shrink-0 text-xs"
+                                        disabled={inboundPanelBusy}
+                                        onClick={() => {
+                                          const catSafe = Array.isArray(catalog) ? catalog : [];
+                                          let applicable = 0;
+                                          for (const it of row.items) {
+                                            const rq = Math.max(0, Math.trunc(Number(it.receivedQty) || 0));
+                                            if (rq <= 0) continue;
+                                            if (sumPlacementsQty(it) > 0) continue;
+                                            const prod = catSafe.find((p) => p.id === it.productId);
+                                            const rec = recommendedStorageLocationForPlacement(
+                                              inventoryMovementsSafe,
+                                              storageLocations,
+                                              prod,
+                                              row.partnerId,
+                                            );
+                                            if (rec) applicable += 1;
+                                          }
+                                          if (applicable === 0) {
+                                            toast.info("Нет доступных рекомендаций");
+                                            return;
+                                          }
+                                          setPlacementBulkSeqByInboundId((prev) => ({
+                                            ...prev,
+                                            [row.id]: (prev[row.id] ?? 0) + 1,
+                                          }));
+                                          toast.success("Рекомендации применены");
+                                        }}
+                                      >
+                                        Заполнить по рекомендации
+                                      </Button>
                                     ) : null}
                                   </div>
                                   {!storageLocations.length && row.status === "received" ? (
@@ -1360,6 +1427,7 @@ const InboundWarehouseRequestsPanel = () => {
                                       partnerId={row.partnerId}
                                       inventoryMovements={inventoryMovementsSafe}
                                       catalogItems={Array.isArray(catalog) ? catalog : []}
+                                      placementBulkToken={placementBulkSeqByInboundId[row.id] ?? 0}
                                     />
                                   ))}
                                   {row.status === "received" ? (

@@ -2271,6 +2271,36 @@ const ShippingPage = () => {
     ],
   );
 
+  const fillPickDraftsFromRecommendations = React.useCallback(() => {
+    const rows = Array.isArray(selectedShipmentPickRows) ? selectedShipmentPickRows : [];
+    const updates: Record<string, { locationId: string; qty: string }> = {};
+    for (const line of rows) {
+      const remLine = Math.max(0, Math.trunc(Number(line.remaining ?? 0) || 0));
+      if (remLine <= 0) continue;
+      const recId = line.recommendedPickLocationId;
+      if (!recId) continue;
+      const opt = (line.storageOptions ?? []).find((o) => o.locationId === recId);
+      if (!opt) continue;
+      const av = Math.max(0, Math.trunc(Number(opt.available ?? 0) || 0));
+      if (av <= 0) continue;
+      const qty = Math.min(remLine, av);
+      if (qty <= 0) continue;
+      updates[line.shipmentId] = { locationId: recId, qty: String(qty) };
+    }
+    if (Object.keys(updates).length === 0) {
+      toast.info("Нет доступных рекомендаций");
+      return;
+    }
+    setPickDraftByShipment((prev) => {
+      const next = { ...prev };
+      for (const [sid, u] of Object.entries(updates)) {
+        next[sid] = { ...(next[sid] ?? { locationId: "", qty: "" }), ...u };
+      }
+      return next;
+    });
+    toast.success("Рекомендации применены");
+  }, [selectedShipmentPickRows]);
+
   const undoPickFromCell = React.useCallback(
     async (shipmentId: string) => {
       if (!selectedDoc) return;
@@ -3232,7 +3262,19 @@ const ShippingPage = () => {
                                   </div>
                                   {!readOnlyShipment && selectedShipmentPickRows.length > 0 ? (
                                     <div className="space-y-2 rounded-md border border-slate-200 bg-white p-3">
-                                      <p className="text-xs font-medium text-slate-600">Подбор из ячейки хранения</p>
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="text-xs font-medium text-slate-600">Подбор из ячейки хранения</p>
+                                        <Button
+                                          type="button"
+                                          variant="secondary"
+                                          size="sm"
+                                          className="h-8 shrink-0 text-xs"
+                                          disabled={shippingDispatchActionsGloballyBusy}
+                                          onClick={() => fillPickDraftsFromRecommendations()}
+                                        >
+                                          Заполнить подбор
+                                        </Button>
+                                      </div>
                                       <div className="space-y-2">
                                         {selectedShipmentPickRows.map((line) => {
                                           const draft = pickDraftByShipment[line.shipmentId] ?? { locationId: "", qty: "" };
