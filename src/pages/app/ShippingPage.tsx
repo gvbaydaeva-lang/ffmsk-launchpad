@@ -709,6 +709,9 @@ const ShippingPage = () => {
   const [assemblyCompletingId, setAssemblyCompletingId] = React.useState<string | null>(null);
   const [pickDraftByShipment, setPickDraftByShipment] = React.useState<Record<string, { locationId: string; qty: string }>>({});
   const [undoingPickId, setUndoingPickId] = React.useState<string | null>(null);
+  /** Подбор в процессе — UI + защита от двойного клика до `isAppendingMovements`. */
+  const [pickingShipmentId, setPickingShipmentId] = React.useState<string | null>(null);
+  const pickSubmitLockedRef = React.useRef(false);
   const shippingImportPasteFileRef = React.useRef<HTMLInputElement>(null);
   const [shippingImportPasteOpen, setShippingImportPasteOpen] = React.useState(false);
   const [shippingImportPasteText, setShippingImportPasteText] = React.useState("");
@@ -732,7 +735,8 @@ const ShippingPage = () => {
       cancellingShipmentId !== null ||
       confirmingShipmentId !== null ||
       assemblyCompletingId !== null ||
-      undoingPickId !== null,
+      undoingPickId !== null ||
+      pickingShipmentId !== null,
   );
 
   const movementDataSafe = React.useMemo(() => {
@@ -1509,6 +1513,10 @@ const ShippingPage = () => {
 
   const goToPacker = React.useCallback(
     (doc: ShipmentDoc) => {
+      if (shippingDispatchActionsGloballyBusy) {
+        toast.info("Дождитесь завершения операции");
+        return;
+      }
       const grp = shippingWorkflowFromGroup(doc.shipments ?? []);
       if (grp === "cancelled") {
         toast.info("Отгрузка отменена");
@@ -1520,7 +1528,7 @@ const ShippingPage = () => {
       }
       navigate(`/packing?openAssignment=${encodeURIComponent(doc.id)}`);
     },
-    [navigate],
+    [navigate, shippingDispatchActionsGloballyBusy],
   );
 
   const completeShipmentAssembly = React.useCallback(
@@ -1534,9 +1542,18 @@ const ShippingPage = () => {
         return;
       }
       const rows = doc?.shipments ?? [];
-      if (!Array.isArray(rows) || !shippingGroupAllLinesPacked(rows)) return;
-      if (assemblyCompletingId === doc.id) return;
-      if (isUpdatingOutboundDraft) return;
+      if (!Array.isArray(rows) || !shippingGroupAllLinesPacked(rows)) {
+        toast.info("Действие недоступно для текущего статуса");
+        return;
+      }
+      if (assemblyCompletingId === doc.id) {
+        toast.info("Завершение сборки уже выполняется");
+        return;
+      }
+      if (isUpdatingOutboundDraft) {
+        toast.info("Дождитесь завершения операции");
+        return;
+      }
       setAssemblyCompletingId(doc.id);
       const ts = new Date().toISOString();
       try {
@@ -1572,8 +1589,14 @@ const ShippingPage = () => {
         toast.info("Нельзя отменить уже отгруженное задание");
         return;
       }
-      if (!canShowCancelShipmentButton(ui, rows)) return;
-      if (cancelShipmentInFlightRef.current.has(doc.id)) return;
+      if (!canShowCancelShipmentButton(ui, rows)) {
+        toast.info("Действие недоступно для текущего статуса");
+        return;
+      }
+      if (cancelShipmentInFlightRef.current.has(doc.id)) {
+        toast.info("Отмена отгрузки уже выполняется");
+        return;
+      }
       if (rows.length === 0) return;
 
       const okConfirm =
@@ -1704,6 +1727,10 @@ const ShippingPage = () => {
 
   const openShipmentDiffFinalizeDialog = React.useCallback((doc: ShipmentDoc | null | undefined) => {
     if (!doc) return;
+    if (shippingDispatchActionsGloballyBusy) {
+      toast.info("Дождитесь завершения операции");
+      return;
+    }
     if (shippingWorkflowFromGroup(doc.shipments ?? []) === "cancelled" || doc.workflowStatus === "cancelled") {
       toast.info("Отгрузка отменена");
       return;
@@ -1725,7 +1752,7 @@ const ShippingPage = () => {
     setPendingDiffDoc(doc);
     setSelectedDiffReason("");
     setDiffReasonDialogOpen(true);
-  }, []);
+  }, [shippingDispatchActionsGloballyBusy]);
 
   const finalizeShipmentExact = React.useCallback(
     async (doc: ShipmentDoc) => {
@@ -1737,12 +1764,24 @@ const ShippingPage = () => {
         toast.info("Отгрузка уже завершена");
         return;
       }
-      if (doc.workflowStatus !== "assembled") return;
-      if (!canShipmentExactFinalize(doc)) return;
+      if (doc.workflowStatus !== "assembled") {
+        toast.info("Действие недоступно для текущего статуса");
+        return;
+      }
+      if (!canShipmentExactFinalize(doc)) {
+        toast.info("Действие недоступно для текущего статуса");
+        return;
+      }
       const packRowsRaw = doc?.shipments ?? [];
       const packRows = Array.isArray(packRowsRaw) ? packRowsRaw : [];
-      if (packRows.length === 0) return;
-      if (finalizeInFlightIdsRef.current.has(doc.id)) return;
+      if (packRows.length === 0) {
+        toast.info("Действие недоступно для текущего статуса");
+        return;
+      }
+      if (finalizeInFlightIdsRef.current.has(doc.id)) {
+        toast.info("Подтверждение отгрузки уже выполняется");
+        return;
+      }
       finalizeInFlightIdsRef.current.add(doc.id);
       setConfirmingShipmentId(doc.id);
       const ts = new Date().toISOString();
@@ -1761,6 +1800,8 @@ const ShippingPage = () => {
         }
         toast.success("Отгрузка подтверждена");
         appendShipmentConfirmedLog(doc);
+      } catch {
+        toast.error("Не удалось подтвердить отгрузку");
       } finally {
         finalizeInFlightIdsRef.current.delete(doc.id);
         setConfirmingShipmentId(null);
@@ -1783,7 +1824,10 @@ const ShippingPage = () => {
     const bulkExact = Array.isArray(pendingBulkExactDocs) ? pendingBulkExactDocs : [];
 
     if (bulkDiff.length > 0) {
-      if (bulkTakingToWork || diffBulkSubmitInFlightRef.current || bulkConfirming) return;
+      if (bulkTakingToWork || diffBulkSubmitInFlightRef.current || bulkConfirming) {
+        toast.info("Дождитесь завершения операции");
+        return;
+      }
       diffBulkSubmitInFlightRef.current = true;
       setBulkConfirming(true);
       try {
@@ -1869,7 +1913,11 @@ const ShippingPage = () => {
       return;
     }
 
-    if (!pendingDiffDoc || !canShipmentDiffFinalize(pendingDiffDoc)) return;
+    if (!pendingDiffDoc) return;
+    if (!canShipmentDiffFinalize(pendingDiffDoc)) {
+      toast.info("Действие недоступно для текущего статуса");
+      return;
+    }
     if (shippingWorkflowFromGroup(pendingDiffDoc.shipments ?? []) === "cancelled") {
       toast.info("Отгрузка отменена");
       setDiffReasonDialogOpen(false);
@@ -1884,7 +1932,10 @@ const ShippingPage = () => {
       setSelectedDiffReason("");
       return;
     }
-    if (finalizeInFlightIdsRef.current.has(pendingDiffDoc.id)) return;
+    if (finalizeInFlightIdsRef.current.has(pendingDiffDoc.id)) {
+      toast.info("Подтверждение уже выполняется");
+      return;
+    }
     if (shipmentDocPackedTotal(pendingDiffDoc) <= 0) {
       toast.error("Нельзя отгрузить: ничего не упаковано");
       return;
@@ -1914,6 +1965,8 @@ const ShippingPage = () => {
       setPendingDiffDoc(null);
       setSelectedDiffReason("");
       toast.success("Отгрузка завершена с расхождением");
+    } catch {
+      toast.error("Не удалось завершить отгрузку с расхождением");
     } finally {
       finalizeInFlightIdsRef.current.delete(pendingDiffDoc.id);
       setConfirmingShipmentId(null);
@@ -1931,7 +1984,10 @@ const ShippingPage = () => {
   ]);
 
   const confirmBulkSelectedShipments = React.useCallback(async () => {
-    if (bulkConfirming || bulkTakingToWork || bulkExactBulkInFlightRef.current) return;
+    if (bulkConfirming || bulkTakingToWork || bulkExactBulkInFlightRef.current) {
+      toast.info("Дождитесь завершения операции");
+      return;
+    }
     const ids = new Set(Array.isArray(selectedShipmentIds) ? selectedShipmentIds : []);
     const list = Array.isArray(documents) ? documents : [];
     const selected = list.filter((d) => d && ids.has(d.id));
@@ -2040,130 +2096,141 @@ const ShippingPage = () => {
 
   const submitPickFromCell = React.useCallback(
     async (shipmentId: string) => {
-      if (!selectedDoc || isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
-        if (selectedDoc && isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
-          const wfPick = shippingWorkflowFromGroup(selectedDoc.shipments ?? []);
-          toast.info(wfPick === "cancelled" ? "Отгрузка отменена" : "Отгрузка уже завершена");
-        }
+      if (pickSubmitLockedRef.current) {
+        toast.info("Подбор уже выполняется");
         return;
       }
-      const line = selectedShipmentPickRows.find((x) => x.shipmentId === shipmentId);
-      if (!line) return;
-      const latestSh = (data ?? []).find((s) => s.id === shipmentId);
-      if (!latestSh) {
-        toast.error("Строка отгрузки не найдена");
-        return;
-      }
-      const draft = pickDraftByShipment[shipmentId];
-      const locationId = (draft?.locationId || "").trim();
-      if (!locationId) {
-        toast.error("Выберите ячейку хранения");
-        return;
-      }
-      const selectedCell = line.storageOptions.find((opt) => opt.locationId === locationId);
-      if (!selectedCell) {
-        toast.error("Выбранная ячейка недоступна для подбора");
-        return;
-      }
-      const qty = Math.trunc(Number(draft?.qty) || 0);
-      if (qty <= 0) {
-        toast.error("Укажите корректное количество");
-        return;
-      }
-      const catalogSafe = Array.isArray(catalog) ? catalog : [];
-      const product = catalogSafe.find((p) => p.id === latestSh.productId) ?? null;
-      const balanceKey = balanceKeyFromOutboundShipment(latestSh, product);
-      const reserveInv = reservedQtyByBalanceKey(data ?? [], catalogSafe).get(balanceKey) ?? 0;
-      const currentLineReserve = outboundLineRemainingReserveUnitsForPick(latestSh);
-      const storagePhysTotal = shipmentLineAvailableByLocations({
-        movements: movementDataSafe,
-        locationById,
-        storageLocationIds,
-        receivingLocationIds,
-        balanceKey,
-        warehouseName: line.warehouseName || "",
-        reserveQty: reserveInv,
-      }).storageAvailableTotal;
-      const availableForThisLine = storagePhysTotal - reserveInv + currentLineReserve;
-      if (availableForThisLine <= 0 || qty > availableForThisLine) {
-        toast.error("Недостаточно товара на складе для подбора");
-        return;
-      }
-      if (qty > (selectedCell.available ?? 0)) {
-        toast.error("Нельзя подобрать больше доступного в выбранной ячейке");
-        return;
-      }
-      const remPick = Math.max(0, Math.trunc(Number(line.remaining ?? 0) || 0));
-      if (qty > remPick) {
-        toast.error("Нельзя подобрать больше, чем осталось по заданию");
-        return;
-      }
-      const ts = new Date().toISOString();
-      const baseFact = Math.max(0, Math.trunc(Number(line.fact ?? 0) || 0));
-      const nextFact = baseFact + qty;
+      pickSubmitLockedRef.current = true;
+      setPickingShipmentId(shipmentId);
       try {
-        await addInventoryMovements([
-          {
-            id: `pick-${shipmentId}-${Date.now()}`,
-            type: "OUTBOUND",
-            source: "shipping",
-            taskId: line.taskId,
-            taskNumber: line.taskNumber,
+        if (!selectedDoc || isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
+          if (selectedDoc && isShipmentFinalizeBlockedAlreadyDone(selectedDoc)) {
+            const wfPick = shippingWorkflowFromGroup(selectedDoc.shipments ?? []);
+            toast.info(wfPick === "cancelled" ? "Отгрузка отменена" : "Отгрузка уже завершена");
+          }
+          return;
+        }
+        const line = selectedShipmentPickRows.find((x) => x.shipmentId === shipmentId);
+        if (!line) return;
+        const latestSh = (data ?? []).find((s) => s.id === shipmentId);
+        if (!latestSh) {
+          toast.error("Строка отгрузки не найдена");
+          return;
+        }
+        const draft = pickDraftByShipment[shipmentId];
+        const locationId = (draft?.locationId || "").trim();
+        if (!locationId) {
+          toast.error("Выберите ячейку хранения");
+          return;
+        }
+        const selectedCell = line.storageOptions.find((opt) => opt.locationId === locationId);
+        if (!selectedCell) {
+          toast.error("Выбранная ячейка недоступна для подбора");
+          return;
+        }
+        const qty = Math.trunc(Number(draft?.qty) || 0);
+        if (qty <= 0) {
+          toast.error("Укажите корректное количество");
+          return;
+        }
+        const catalogSafe = Array.isArray(catalog) ? catalog : [];
+        const product = catalogSafe.find((p) => p.id === latestSh.productId) ?? null;
+        const balanceKey = balanceKeyFromOutboundShipment(latestSh, product);
+        const reserveInv = reservedQtyByBalanceKey(data ?? [], catalogSafe).get(balanceKey) ?? 0;
+        const currentLineReserve = outboundLineRemainingReserveUnitsForPick(latestSh);
+        const storagePhysTotal = shipmentLineAvailableByLocations({
+          movements: movementDataSafe,
+          locationById,
+          storageLocationIds,
+          receivingLocationIds,
+          balanceKey,
+          warehouseName: line.warehouseName || "",
+          reserveQty: reserveInv,
+        }).storageAvailableTotal;
+        const availableForThisLine = storagePhysTotal - reserveInv + currentLineReserve;
+        if (availableForThisLine <= 0 || qty > availableForThisLine) {
+          toast.error("Недостаточно остатка для подбора");
+          return;
+        }
+        if (qty > (selectedCell.available ?? 0)) {
+          toast.error("Нельзя подобрать больше доступного в выбранной ячейке");
+          return;
+        }
+        const remPick = Math.max(0, Math.trunc(Number(line.remaining ?? 0) || 0));
+        if (qty > remPick) {
+          toast.error("Нельзя подобрать больше, чем осталось по заданию");
+          return;
+        }
+        const ts = new Date().toISOString();
+        const baseFact = Math.max(0, Math.trunc(Number(line.fact ?? 0) || 0));
+        const nextFact = baseFact + qty;
+        try {
+          await addInventoryMovements([
+            {
+              id: `pick-${shipmentId}-${Date.now()}`,
+              type: "OUTBOUND",
+              source: "shipping",
+              taskId: line.taskId,
+              taskNumber: line.taskNumber,
+              legalEntityId: line.legalEntityId,
+              legalEntityName: line.legalEntityName,
+              warehouseName: line.warehouseName,
+              locationId,
+              itemId: shipmentId,
+              name: line.name,
+              article: line.article,
+              sku: line.article,
+              barcode: line.barcode,
+              marketplace: line.marketplace,
+              color: line.color,
+              size: line.size,
+              qty: -qty,
+              createdAt: ts,
+            },
+          ]);
+          await updateOutboundDraft({
+            id: shipmentId,
+            patch: {
+              pickedUnits: nextFact,
+              shippedUnits: nextFact,
+              updatedAt: ts,
+            },
+          });
+          setPickDraftByShipment((prev) => ({
+            ...prev,
+            [shipmentId]: {
+              locationId: "",
+              qty: "",
+            },
+          }));
+          const fromCellLbl = (selectedCell?.label ?? "").trim();
+          const fromLocName = (locationById.get(locationId)?.name ?? "").trim();
+          const cellLabel = (fromCellLbl || fromLocName) || "Без места";
+          const shipNo =
+            ((selectedDoc?.assignmentNo ?? "").trim() ||
+              (line.taskNumber ?? "").trim() ||
+              "—");
+          appendOperationLog({
+            type: "SHIPPING_PICK",
             legalEntityId: line.legalEntityId,
             legalEntityName: line.legalEntityName,
-            warehouseName: line.warehouseName,
-            locationId,
-            itemId: shipmentId,
-            name: line.name,
-            article: line.article,
-            sku: line.article,
-            barcode: line.barcode,
-            marketplace: line.marketplace,
-            color: line.color,
-            size: line.size,
-            qty: -qty,
-            createdAt: ts,
-          },
-        ]);
-        await updateOutboundDraft({
-          id: shipmentId,
-          patch: {
-            pickedUnits: nextFact,
-            shippedUnits: nextFact,
-            updatedAt: ts,
-          },
-        });
-        setPickDraftByShipment((prev) => ({
-          ...prev,
-          [shipmentId]: {
-            locationId: "",
-            qty: "",
-          },
-        }));
-        const fromCellLbl = (selectedCell?.label ?? "").trim();
-        const fromLocName = (locationById.get(locationId)?.name ?? "").trim();
-        const cellLabel = (fromCellLbl || fromLocName) || "Без места";
-        const shipNo =
-          ((selectedDoc?.assignmentNo ?? "").trim() ||
-            (line.taskNumber ?? "").trim() ||
-            "—");
-        appendOperationLog({
-          type: "SHIPPING_PICK",
-          legalEntityId: line.legalEntityId,
-          legalEntityName: line.legalEntityName,
-          taskId: (selectedDoc?.id ?? line.taskId ?? "").trim() || line.taskId,
-          taskNumber: shipNo,
-          description: buildShippingCellPickLogDescription(
-            "Товар подобран из ячейки",
-            line.name,
-            qty,
-            cellLabel,
-            shipNo,
-          ),
-        });
-        toast.success("Подбор выполнен");
-      } catch {
-        toast.error("Не удалось выполнить подбор");
+            taskId: (selectedDoc?.id ?? line.taskId ?? "").trim() || line.taskId,
+            taskNumber: shipNo,
+            description: buildShippingCellPickLogDescription(
+              "Товар подобран из ячейки",
+              line.name,
+              qty,
+              cellLabel,
+              shipNo,
+            ),
+          });
+          toast.success("Подбор выполнен");
+        } catch {
+          toast.error("Не удалось выполнить подбор");
+        }
+      } finally {
+        pickSubmitLockedRef.current = false;
+        setPickingShipmentId(null);
       }
     },
     [
@@ -2195,7 +2262,18 @@ const ShippingPage = () => {
         toast.info("Отгрузка уже завершена");
         return;
       }
-      if (undoingPickId === shipmentId || isUpdatingOutboundDraft || isAppendingMovements) return;
+      if (pickingShipmentId !== null) {
+        toast.info("Дождитесь завершения подбора");
+        return;
+      }
+      if (undoingPickId === shipmentId) {
+        toast.info("Отмена подбора уже выполняется для этой строки");
+        return;
+      }
+      if (isUpdatingOutboundDraft || isAppendingMovements) {
+        toast.info("Дождитесь завершения операции");
+        return;
+      }
 
       const latestShipment = (data ?? []).find((s) => s.id === shipmentId);
       if (!latestShipment) return;
@@ -2328,6 +2406,7 @@ const ShippingPage = () => {
       data,
       inventoryMovements,
       undoingPickId,
+      pickingShipmentId,
       isUpdatingOutboundDraft,
       isAppendingMovements,
       addInventoryMovements,
