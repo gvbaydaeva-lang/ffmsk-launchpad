@@ -49,3 +49,32 @@ export function reservedQtyByBalanceKey(
   }
   return map;
 }
+
+/**
+ * До maxPerKey уникальных id строк outbound (резерв pending/processing), по ключу остатка — только для диагностики UI.
+ * Те же правила отбора строк, что и в reservedQtyByBalanceKey.
+ */
+export function activeReserveOutboundSampleIdsByBalanceKey(
+  outbound: OutboundShipment[] | undefined,
+  catalog: ProductCatalogItem[] | undefined,
+  maxPerKey = 3,
+): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  if (!outbound?.length) return map;
+  const byProduct = new Map((catalog ?? []).map((p) => [p.id, p]));
+  for (const sh of outbound) {
+    if (!isOutboundLineActiveReserve(sh)) continue;
+    const product = byProduct.get(sh.productId);
+    const key = balanceKeyFromOutboundShipment(sh, product ?? null);
+    const plan = Number(sh.plannedUnits) || 0;
+    if (plan <= 0) continue;
+    let cur = map.get(key);
+    if (!cur) {
+      cur = [];
+      map.set(key, cur);
+    }
+    const id = String(sh.id ?? "").trim();
+    if (id && cur.length < maxPerKey && !cur.includes(id)) cur.push(id);
+  }
+  return map;
+}

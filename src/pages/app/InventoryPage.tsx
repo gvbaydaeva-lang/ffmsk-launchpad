@@ -27,7 +27,7 @@ import {
   useProductCatalog,
 } from "@/hooks/useWmsMock";
 import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
-import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
+import { activeReserveOutboundSampleIdsByBalanceKey, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
 import { movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
 import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace } from "@/types/domain";
 import { WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID } from "@/services/warehouseInboundApi";
@@ -82,6 +82,10 @@ type StockByLocationRow = {
   qty: number;
   /** Из движений: max createdAt по этой строке; для сортировки */
   lastMovementIso: string | null;
+  /** Склад для привязки движений (как в movementLocationTotalsForWarehouseBalanceKey) */
+  warehouseName: string;
+  /** Ключ ячейки из карты по месту (__no_location__, RECEIVING_AREA, …) */
+  movementRawLocId: string;
 };
 
 function mpDisplay(mp: string): string {
@@ -141,6 +145,31 @@ function lastMovementIsoForStockLocationRow(
   return best && Number.isFinite(Date.parse(best)) ? best : null;
 }
 
+/** Число движений по паре склад + ключ остатка + сырая ячейка (только подсчёт для UI). */
+function countMovementsForStockCell(
+  movements: InventoryMovement[],
+  warehouseName: string,
+  balanceKey: string,
+  rawLocId: string,
+): number {
+  const wh = (warehouseName ?? "—").trim() || "—";
+  const rowLoc = rawLocId === "__no_location__" ? "" : (rawLocId || "").trim();
+  let n = 0;
+  for (const m of movements) {
+    const mWh = (m.warehouseName ?? "—").trim() || "—";
+    if (mWh !== wh) continue;
+    if (makeInventoryBalanceKeyFromMovement(m) !== balanceKey) continue;
+    if (m.type === "TRANSFER") {
+      const from = (m.fromLocationId || "").trim();
+      const to = (m.locationId || "").trim();
+      if (rowLoc === from || rowLoc === to) n++;
+      continue;
+    }
+    if ((m.locationId || "").trim() === rowLoc) n++;
+  }
+  return n;
+}
+
 const InventoryPage = () => {
   const [searchParams] = useSearchParams();
   const availableZeroFromUrl = searchParams.get("available") === "zero";
@@ -193,6 +222,11 @@ const InventoryPage = () => {
     [outboundRows, productsSafe],
   );
 
+  const reserveOutboundSampleIdsByKey = React.useMemo(
+    () => activeReserveOutboundSampleIdsByBalanceKey(outboundRows, productsSafe, 3),
+    [outboundRows, productsSafe],
+  );
+
   const locations = locationsSafe;
 
   const storageLocations = React.useMemo(
@@ -235,6 +269,8 @@ const InventoryPage = () => {
           locationStorageName,
           qty: Math.trunc(Number(qty) || 0),
           lastMovementIso: lastMovementIsoForStockLocationRow(movements, wh, br.key, rawLocId),
+          warehouseName: wh,
+          movementRawLocId: rawLocId,
         });
       }
     }
@@ -685,6 +721,22 @@ const InventoryPage = () => {
                       const available = r.qty - reserveQty;
                       const rowMuted = available === 0;
                       const shortage = available < 0;
+                      const fullReserveKey = reservedByKey.get(r.balanceKey) ?? 0;
+                      const movementCount = shortage
+                        ? countMovementsForStockCell(
+                            movementDataSafe,
+                            r.warehouseName,
+                            r.balanceKey,
+                            r.movementRawLocId,
+                          )
+                        : 0;
+                      const outboundReserveIds = reserveOutboundSampleIdsByKey.get(r.balanceKey) ?? [];
+                      const shortageCause =
+                        fullReserveKey > r.qty
+                          ? "Причина: резерв превышает остаток"
+                          : r.qty < 0
+                            ? "Причина: отрицательный остаток по движениям в ячейке"
+                            : "Причина: проверьте резервы по другим ячейкам этого товара";
                       const locationCell =
                         r.locationKind === "receiving_zone" ? (
                           <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
@@ -721,12 +773,25 @@ const InventoryPage = () => {
                               availableClass(available),
                             )}
                           >
-                            <div className="flex flex-col items-end gap-0.5">
+                            <div className="flex max-w-[min(100%,14rem)] flex-col items-end gap-0.5">
                               <span>{available.toLocaleString("ru-RU")}</span>
                               {shortage ? (
-                                <span className="text-[10px] font-semibold leading-tight text-red-600">
-                                  Недостаточно остатка
-                                </span>
+                                <div className="text-right text-[10px] leading-snug text-red-700">
+                                  <div className="font-semibold text-red-600">Недостаточно остатка</div>
+                                  <div className="text-slate-600">
+                                    Резерв: {fullReserveKey.toLocaleString("ru-RU")}
+                                  </div>
+                                  <div className="text-slate-600">Всего: {r.qty.toLocaleString("ru-RU")}</div>
+                                  <div className="text-slate-700">{shortageCause}</div>
+                                  <div className="text-slate-500">
+                                    Движений по ячейке: {movementCount}
+                                  </div>
+                                  {outboundReserveIds.length ? (
+                                    <div className="break-all text-slate-600" title={outboundReserveIds.join(", ")}>
+                                      Резерв отгрузок (id строк): {outboundReserveIds.join(", ")}
+                                    </div>
+                                  ) : null}
+                                </div>
                               ) : null}
                             </div>
                           </TableCell>
