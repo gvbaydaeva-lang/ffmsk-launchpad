@@ -686,6 +686,15 @@ const LegalEntityDetailsPage = () => {
     return { breakdown, plan, shortage, hasShortage: shortage > 0, shortageKind };
   }, [entity, selectedOutboundProductId, outboundDraft.quantity, createOutboundProductWmsBreakdowns]);
 
+  /** Строгая WMS: нельзя сохранить отгрузку, если план больше доступного по уже рассчитанному breakdown. */
+  const outboundCreateSaveBlockedByStock = React.useMemo(() => {
+    const bd = manualOutboundCreateStockPreview.breakdown;
+    if (!selectedOutboundProductId || !bd) return false;
+    const qty = Math.trunc(Number(outboundDraft.quantity) || 0);
+    if (!Number.isFinite(qty) || qty <= 0) return false;
+    return qty > bd.availableQty;
+  }, [selectedOutboundProductId, outboundDraft.quantity, manualOutboundCreateStockPreview.breakdown]);
+
   const outboundExcelImportStockPreview = React.useMemo(() => {
     if (!entityIdNorm || outboundExcelRows.length === 0) {
       return { lines: [] as OutboundExcelImportStockLine[], hasShortage: false };
@@ -1559,6 +1568,11 @@ const LegalEntityDetailsPage = () => {
     const product = rows.find((p) => p.id === selectedOutboundProductId);
     if (!qty || qty <= 0) return toast.error("Укажите корректное количество");
     if (!product) return toast.error("Товар не найден");
+    const bd = manualOutboundCreateStockPreview.breakdown;
+    if (bd && Math.trunc(qty) > bd.availableQty) {
+      toast.error("Недостаточно доступного остатка для создания отгрузки");
+      return;
+    }
     const warehouseName = outboundDraft.warehouse.trim() || "Склад Коледино";
     const assignmentId = `ass-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const assignmentNo = `ОТГ-${Date.now().toString().slice(-8)}`;
@@ -3343,7 +3357,12 @@ const LegalEntityDetailsPage = () => {
                     </div>
                     <DialogFooter className="shrink-0 gap-2 border-t bg-background px-6 py-4 sm:justify-end">
                       <Button variant="outline" onClick={() => setCreateOutboundOpen(false)}>Отмена</Button>
-                      <Button onClick={() => void onCreateOutbound()} disabled={isCreatingOutbound}>{isCreatingOutbound ? "Сохранение..." : "Сохранить"}</Button>
+                      <Button
+                        onClick={() => void onCreateOutbound()}
+                        disabled={isCreatingOutbound || outboundCreateSaveBlockedByStock}
+                      >
+                        {isCreatingOutbound ? "Сохранение..." : "Сохранить"}
+                      </Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
