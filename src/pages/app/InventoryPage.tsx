@@ -748,7 +748,6 @@ const InventoryPage = () => {
   const [stockPartnerId, setStockPartnerId] = React.useState<"all" | string>("all");
   const [stockProductSearch, setStockProductSearch] = React.useState("");
   const [stockHideZero, setStockHideZero] = React.useState(false);
-  const [expandedStockLocationKeys, setExpandedStockLocationKeys] = React.useState<Set<string>>(() => new Set());
   const [expandedStockProductKeys, setExpandedStockProductKeys] = React.useState<Set<string>>(() => new Set());
   const movementDataSafe = React.useMemo(() => (Array.isArray(movementData) ? movementData : []), [movementData]);
   const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
@@ -1372,20 +1371,12 @@ const InventoryPage = () => {
                       const rep = g.rows.find((row) => row.locationKind === "storage") ?? g.rows[0];
                       const placedDisplayQty = Math.max(g.placementInQty, Math.abs(g.placementOutQty));
                       const toggleProductGroup = () => {
-                        const willClose = expandedStockProductKeys.has(g.groupKey);
                         setExpandedStockProductKeys((prev) => {
                           const next = new Set(prev);
                           if (next.has(g.groupKey)) next.delete(g.groupKey);
                           else next.add(g.groupKey);
                           return next;
                         });
-                        if (willClose) {
-                          setExpandedStockLocationKeys((loc) => {
-                            const nn = new Set(loc);
-                            for (const rr of g.rows) nn.delete(rr.rowKey);
-                            return nn;
-                          });
-                        }
                       };
                       return (
                         <React.Fragment key={g.groupKey}>
@@ -1438,6 +1429,17 @@ const InventoryPage = () => {
                             <TableCell className="px-3 py-2 text-right align-middle" onClick={(e) => e.stopPropagation()}>
                               {(() => {
                                 const busy = tableLoading || Boolean(error);
+                                const opsSearch = g.article.trim() || g.barcode.trim();
+                                const historyItem: WmsRowActionItem = {
+                                  id: "history-ops",
+                                  label: "История",
+                                  disabled: busy || !opsSearch,
+                                  onSelect: () => {
+                                    const q = g.article.trim() || g.barcode.trim();
+                                    if (!q) return;
+                                    navigate(`/operations?search=${encodeURIComponent(q)}`);
+                                  },
+                                };
                                 const invItem: WmsRowActionItem = {
                                   id: "inv",
                                   label: "Инвентаризация",
@@ -1452,6 +1454,7 @@ const InventoryPage = () => {
                                 const items: WmsRowActionItem[] = isRepRz
                                   ? rep.qty > 0
                                     ? [
+                                        historyItem,
                                         {
                                           id: "go-receiving",
                                           label: "Перейти",
@@ -1462,8 +1465,9 @@ const InventoryPage = () => {
                                         },
                                         invItem,
                                       ]
-                                    : [invItem]
+                                    : [historyItem, invItem]
                                   : [
+                                      historyItem,
                                       {
                                         id: "find-ship",
                                         label: "Найти",
@@ -1564,15 +1568,6 @@ const InventoryPage = () => {
                                   stockByLocationChildRowVisible(r, stockReservePrimaryRowKey, reservedByKey),
                                 )
                                 .map((r) => {
-                                const expanded = expandedStockLocationKeys.has(r.rowKey);
-                                const toggleStockLocationRow = () => {
-                                  setExpandedStockLocationKeys((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(r.rowKey)) next.delete(r.rowKey);
-                                    else next.add(r.rowKey);
-                                    return next;
-                                  });
-                                };
                                 const artCell = r.article.trim() ? r.article : "—";
                                 const bcCell = r.barcode.trim() ? r.barcode : "—";
                                 const isReceivingZone = r.locationKind === "receiving_zone";
@@ -1629,19 +1624,12 @@ const InventoryPage = () => {
                                   <React.Fragment key={r.rowKey}>
                                     <TableRow
                                       className={cn(
-                                        "h-10 cursor-pointer text-xs transition-colors hover:bg-slate-50/80",
+                                        "h-10 text-xs transition-colors hover:bg-slate-50/80",
                                         rowMuted && "opacity-[0.68]",
                                       )}
-                                      onClick={toggleStockLocationRow}
                                     >
                                       <TableCell className="max-w-[260px] pl-6 pr-3 py-2 align-middle">
                                         <div className="flex items-start gap-2">
-                                          <span
-                                            className="mt-0.5 inline-flex w-4 shrink-0 select-none text-center text-xs text-slate-500"
-                                            aria-hidden
-                                          >
-                                            {expanded ? "▼" : "▶"}
-                                          </span>
                                           <span className="min-w-0 font-medium leading-snug text-slate-900">
                                             {r.productName}
                                           </span>
@@ -1770,17 +1758,6 @@ const InventoryPage = () => {
                                         })()}
                                       </TableCell>
                                     </TableRow>
-                                    {expanded ? (
-                                      <TableRow className="bg-slate-50/60 hover:bg-slate-50/60">
-                                        <TableCell colSpan={10} className="p-0 align-top" onClick={(e) => e.stopPropagation()}>
-                                          <StockLocationMovementDetailBlock
-                                            r={r}
-                                            movements={movementDataSafe}
-                                            locationById={locationById}
-                                          />
-                                        </TableCell>
-                                      </TableRow>
-                                    ) : null}
                                   </React.Fragment>
                                 );
                               })}
