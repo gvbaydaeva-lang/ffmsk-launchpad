@@ -63,6 +63,7 @@ import {
 import { toast } from "sonner";
 import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
 import {
+  type OutboundImportStockPreviewRow,
   type ResolvedWarehouseImportRow,
   inspectWarehouseImportPaste,
   type WarehouseImportInspectionResult,
@@ -462,6 +463,95 @@ function shipmentLineAvailableByLocations(params: {
   return { storage, other, storageAvailableTotal };
 }
 
+type OutboundImportStockCtx = {
+  movements: InventoryMovement[];
+  locationById: Map<string, Location>;
+  storageLocationIds: Set<string>;
+  receivingLocationIds: Set<string>;
+  outbound: OutboundShipment[];
+  catalog: ProductCatalogItem[];
+};
+
+function aggregateOutboundImportQtyByProductId(rows: ResolvedWarehouseImportRow[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) {
+    const q = Math.max(0, Math.trunc(Number(r.qty) || 0));
+    if (!r.productId || q <= 0) continue;
+    m.set(r.productId, (m.get(r.productId) ?? 0) + q);
+  }
+  return m;
+}
+
+/**
+ * Доступный остаток для нового резерва: остаток только в ячейках хранения − текущий резерв по ключу
+ * (как createOutbound в карточке клиента: balanceQtyStorage − reserveQty).
+ * Сумма из файла по товару — прирост резерва; допустимо, если не превышает этот «свободный» остаток.
+ */
+function buildOutboundImportStockPreview(
+  doc: ShipmentDoc,
+  resolved: ResolvedWarehouseImportRow[],
+  ctx: OutboundImportStockCtx,
+): { rows: OutboundImportStockPreviewRow[]; blockMessage: string | null } {
+  const leader = outboundImportLeaderShipment(Array.isArray(doc.shipments) ? doc.shipments : []);
+  if (!leader) return { rows: [], blockMessage: null };
+  const byProduct = new Map(ctx.catalog.map((p) => [p.id, p]));
+  const reserveByKey = reservedQtyByBalanceKey(ctx.outbound, ctx.catalog);
+  const agg = aggregateOutboundImportQtyByProductId(resolved);
+  const rows: OutboundImportStockPreviewRow[] = [];
+  const badParts: string[] = [];
+  for (const [productId, planFromFile] of agg) {
+    const product = byProduct.get(productId);
+    if (!product) continue;
+    const shForKey: OutboundShipment = {
+      ...leader,
+      productId,
+      importArticle: product.supplierArticle ?? leader.importArticle,
+      importBarcode: product.barcode ?? leader.importBarcode,
+      importName: product.name ?? leader.importName,
+      importColor: product.color ?? leader.importColor,
+      importSize: product.size ?? leader.importSize,
+    };
+    const key = balanceKeyFromOutboundShipment(shForKey, product);
+    const reserveQty = reserveByKey.get(key) ?? 0;
+    const storageTotal = shipmentLineAvailableByLocations({
+      movements: ctx.movements,
+      locationById: ctx.locationById,
+      storageLocationIds: ctx.storageLocationIds,
+      receivingLocationIds: ctx.receivingLocationIds,
+      balanceKey: key,
+      warehouseName: leader.sourceWarehouse || "",
+      reserveQty,
+    }).storageAvailableTotal;
+    const slack = storageTotal - reserveQty;
+    const shortage = Math.max(0, planFromFile - slack);
+    const label = `${(product.name || "").trim() || "—"} · ${(product.barcode || "").trim() || "—"}`;
+    rows.push({ productId, label, planFromFile, availableForShipment: slack, shortage });
+    if (shortage > 0) {
+      badParts.push(`${label}: не хватает ${shortage.toLocaleString("ru-RU")} шт.`);
+    }
+  }
+  rows.sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  const blockMessage =
+    badParts.length > 0
+      ? `Недостаточно доступного остатка для импорта отгрузки. ${badParts.join(" ")}`
+      : null;
+  return { rows, blockMessage };
+}
+
+function augmentShippingWarehouseImportPreview(
+  doc: ShipmentDoc,
+  base: WarehouseImportInspectionResult,
+  ctx: OutboundImportStockCtx,
+): WarehouseImportInspectionResult {
+  if (base.errors.length > 0 || base.resolvedRows.length === 0) {
+    return { ...base, outboundStockPreviewRows: undefined };
+  }
+  const { rows, blockMessage } = buildOutboundImportStockPreview(doc, base.resolvedRows, ctx);
+  const errors = [...base.errors];
+  if (blockMessage) errors.push({ lineNumber: 0, message: blockMessage });
+  return { ...base, errors, outboundStockPreviewRows: rows };
+}
+
 /** Та же логика, что для ⚠ нехватки: plan>0, fact<plan, plan>доступно, доступно=max(0, остаток−резерв). Без движений — пусто. */
 function shippingStockShortageLinesForDoc(
   doc: ShipmentDoc,
@@ -654,6 +744,18 @@ const ShippingPage = () => {
     ids.add("loc-receiving");
     return ids;
   }, [locationsSafe]);
+
+  const shippingImportStockCtx = React.useMemo<OutboundImportStockCtx>(
+    () => ({
+      movements: movementDataSafe,
+      locationById,
+      storageLocationIds,
+      receivingLocationIds,
+      outbound: data ?? [],
+      catalog: Array.isArray(catalog) ? catalog : [],
+    }),
+    [movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog],
+  );
 
   const openTaskParam = searchParams.get("openTaskId") ?? searchParams.get("openTask");
   const reasonFromUrl = React.useMemo(() => {
@@ -1209,6 +1311,20 @@ const ShippingPage = () => {
         );
         return false;
       }
+      const freshOutbound = queryClient.getQueryData<OutboundShipment[]>(["wms", "outbound"]) ?? data ?? [];
+      const stockCtx: OutboundImportStockCtx = {
+        movements: movementDataSafe,
+        locationById,
+        storageLocationIds,
+        receivingLocationIds,
+        outbound: freshOutbound,
+        catalog: Array.isArray(catalog) ? catalog : [],
+      };
+      const stock = buildOutboundImportStockPreview(doc, resolved, stockCtx);
+      if (stock.blockMessage) {
+        toast.error(stock.blockMessage);
+        return false;
+      }
       const leaderKey = assignmentGroupKeyOutbound(leader);
       const cat = Array.isArray(catalog) ? catalog : [];
       try {
@@ -1277,7 +1393,17 @@ const ShippingPage = () => {
       }
       return true;
     },
-    [catalog, queryClient, data, updateOutboundDraft, createOutbound],
+    [
+      catalog,
+      queryClient,
+      data,
+      updateOutboundDraft,
+      createOutbound,
+      movementDataSafe,
+      locationById,
+      storageLocationIds,
+      receivingLocationIds,
+    ],
   );
 
   const shippingImportProductScope = React.useCallback(
@@ -1302,9 +1428,10 @@ const ShippingPage = () => {
         toast.error("Нет товаров в каталоге для проверки");
         return;
       }
-      setShippingImportPreview(inspectWarehouseImportPaste(shippingImportPasteText, productScope));
+      const base = inspectWarehouseImportPaste(shippingImportPasteText, productScope);
+      setShippingImportPreview(augmentShippingWarehouseImportPreview(doc, base, shippingImportStockCtx));
     },
-    [shippingDispatchActionsGloballyBusy, shippingImportProductScope, shippingImportPasteText],
+    [shippingDispatchActionsGloballyBusy, shippingImportProductScope, shippingImportPasteText, shippingImportStockCtx],
   );
 
   const handleShippingInspectFromFile = React.useCallback(
@@ -1335,9 +1462,10 @@ const ShippingPage = () => {
       }
       setShippingImportPasteText(prep.text);
       setShippingImportPasteOpen(true);
-      setShippingImportPreview(inspectWarehouseImportPaste(prep.text, productScope));
+      const base = inspectWarehouseImportPaste(prep.text, productScope);
+      setShippingImportPreview(augmentShippingWarehouseImportPreview(doc, base, shippingImportStockCtx));
     },
-    [shippingDispatchActionsGloballyBusy, shippingImportProductScope],
+    [shippingDispatchActionsGloballyBusy, shippingImportProductScope, shippingImportStockCtx],
   );
 
   const handleShippingApplyImportPreview = React.useCallback(
@@ -1349,6 +1477,11 @@ const ShippingPage = () => {
       const blocked = getShipmentDocExcelImportBlockedReason(doc);
       if (blocked) {
         toast.error(blocked);
+        return;
+      }
+      const stock = buildOutboundImportStockPreview(doc, preview.resolvedRows, shippingImportStockCtx);
+      if (stock.blockMessage) {
+        toast.error(stock.blockMessage);
         return;
       }
       shippingApplyImportLockedRef.current = true;
@@ -1363,7 +1496,7 @@ const ShippingPage = () => {
         shippingApplyImportLockedRef.current = false;
       }
     },
-    [shippingDispatchActionsGloballyBusy, shippingImportPreview, applyOutboundImportResolved],
+    [shippingDispatchActionsGloballyBusy, shippingImportPreview, applyOutboundImportResolved, shippingImportStockCtx],
   );
 
   const warehouses = React.useMemo(() => Array.from(new Set(documents.map((d) => d.sourceWarehouse))).filter(Boolean), [documents]);

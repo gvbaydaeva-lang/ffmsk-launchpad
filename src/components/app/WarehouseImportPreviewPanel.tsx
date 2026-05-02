@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import type { WarehouseImportInspectionResult } from "@/lib/warehouseImportPaste";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Props = {
   preview: WarehouseImportInspectionResult | null;
@@ -42,6 +43,34 @@ export default function WarehouseImportPreviewPanel({ preview, disabled, onApply
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+      {preview.outboundStockPreviewRows && preview.outboundStockPreviewRows.length > 0 ? (
+        <div className="overflow-x-auto rounded border border-slate-200">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="h-8 min-w-[140px] text-[11px]">Товар</TableHead>
+                <TableHead className="h-8 w-[88px] text-right text-[11px]">План из файла</TableHead>
+                <TableHead className="h-8 w-[88px] text-right text-[11px]">Доступно</TableHead>
+                <TableHead className="h-8 w-[88px] text-right text-[11px]">Не хватает</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {preview.outboundStockPreviewRows.map((r) => (
+                <TableRow key={r.productId} className="text-[11px]">
+                  <TableCell className="max-w-[220px] break-words py-1.5">{r.label}</TableCell>
+                  <TableCell className="py-1.5 text-right tabular-nums">{r.planFromFile.toLocaleString("ru-RU")}</TableCell>
+                  <TableCell className="py-1.5 text-right tabular-nums">
+                    {r.availableForShipment.toLocaleString("ru-RU")}
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right tabular-nums text-red-800">
+                    {r.shortage > 0 ? r.shortage.toLocaleString("ru-RU") : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       ) : null}
       {canApply && onApply ? (

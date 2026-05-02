@@ -7,11 +7,22 @@ export type InboundImportDraftLine = { key: string; productId: string; plannedQt
 
 export type WarehouseImportLineIssue = { lineNumber: number; message: string };
 
+/** Строка предпросмотра остатков при импорте состава отгрузки (только UI отгрузки). */
+export type OutboundImportStockPreviewRow = {
+  productId: string;
+  label: string;
+  planFromFile: number;
+  availableForShipment: number;
+  shortage: number;
+};
+
 export type WarehouseImportInspectionResult = {
   recognizedStructuralLines: number;
   matchedProductsCount: number;
   errors: WarehouseImportLineIssue[];
   resolvedRows: ResolvedWarehouseImportRow[];
+  /** Заполняется только на странице отгрузки после проверки файла/вставки. */
+  outboundStockPreviewRows?: OutboundImportStockPreviewRow[];
 };
 
 /** Превью с одной ошибкой (напр. ошибка чтения файла) — только для UI, без применения строк. */
