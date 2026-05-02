@@ -209,6 +209,40 @@ function movementMatchesStockRow(m: InventoryMovement, r: StockByLocationRow): b
   return loc === rowLoc;
 }
 
+function movementsForStockLocationRow(movements: InventoryMovement[], r: StockByLocationRow): InventoryMovement[] {
+  return movements
+    .filter((m) => movementMatchesStockRow(m, r))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** Количество в детализации строки остатков: приход +, списание −, TRANSFER — знак относительно ячейки строки. */
+function stockDetailMovementQtyLabel(m: InventoryMovement, r: StockByLocationRow): string {
+  const rowLoc =
+    r.movementRawLocId === "__no_location__" ? "" : (r.movementRawLocId || r.locationId || "").trim();
+  const q = Math.trunc(Number(m.qty) || 0);
+  if (m.type === "TRANSFER") {
+    const from = (m.fromLocationId || "").trim();
+    const to = (m.locationId || "").trim();
+    const abs = Math.abs(q);
+    if (rowLoc === from) return `-${abs}`;
+    if (rowLoc === to) return `+${abs}`;
+    return `${q >= 0 ? "+" : ""}${q}`;
+  }
+  if (m.type === "INBOUND") return `+${Math.abs(q)}`;
+  const neg = -Math.abs(q);
+  return neg.toLocaleString("ru-RU");
+}
+
+function formatMovementEndpointLabel(
+  rawId: string | undefined,
+  locationById: Map<string, Location>,
+): string {
+  const lid = (rawId ?? "").trim();
+  if (!lid) return "—";
+  const nm = (locationById.get(lid)?.name ?? "").trim();
+  return nm ? `${lid} / ${nm}` : lid;
+}
+
 function findSampleMovementForStockRow(
   movements: InventoryMovement[],
   r: StockByLocationRow,
@@ -298,6 +332,7 @@ const InventoryPage = () => {
   const [stockPartnerId, setStockPartnerId] = React.useState<"all" | string>("all");
   const [stockProductSearch, setStockProductSearch] = React.useState("");
   const [stockHideZero, setStockHideZero] = React.useState(false);
+  const [expandedStockLocationKeys, setExpandedStockLocationKeys] = React.useState<Set<string>>(() => new Set());
   const movementDataSafe = React.useMemo(() => (Array.isArray(movementData) ? movementData : []), [movementData]);
   const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
   const productsSafe = React.useMemo(() => (Array.isArray(catalogRows) ? catalogRows : []), [catalogRows]);
@@ -895,6 +930,16 @@ const InventoryPage = () => {
                     </TableRow>
                   ) : (
                     stockByLocationFiltered.map((r) => {
+                      const expanded = expandedStockLocationKeys.has(r.rowKey);
+                      const stockRowMovements = movementsForStockLocationRow(movementDataSafe, r);
+                      const toggleStockLocationRow = () => {
+                        setExpandedStockLocationKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(r.rowKey)) next.delete(r.rowKey);
+                          else next.add(r.rowKey);
+                          return next;
+                        });
+                      };
                       const artCell = r.article.trim() ? r.article : "—";
                       const bcCell = r.barcode.trim() ? r.barcode : "—";
                       const isReceivingZone = r.locationKind === "receiving_zone";
@@ -942,11 +987,25 @@ const InventoryPage = () => {
                           </>
                         );
                       return (
+                        <React.Fragment key={r.rowKey}>
                         <TableRow
-                          key={r.rowKey}
-                          className={cn("text-sm", rowMuted && "opacity-[0.68]")}
+                          className={cn(
+                            "cursor-pointer text-sm transition-colors hover:bg-slate-50/80",
+                            rowMuted && "opacity-[0.68]",
+                          )}
+                          onClick={toggleStockLocationRow}
                         >
-                          <TableCell className="max-w-[240px] px-3 py-2 font-medium text-slate-900">{r.productName}</TableCell>
+                          <TableCell className="max-w-[260px] px-3 py-2">
+                            <div className="flex items-start gap-2">
+                              <span
+                                className="mt-0.5 inline-flex w-4 shrink-0 select-none text-center text-xs text-slate-500"
+                                aria-hidden
+                              >
+                                {expanded ? "▼" : "▶"}
+                              </span>
+                              <span className="min-w-0 font-medium leading-snug text-slate-900">{r.productName}</span>
+                            </div>
+                          </TableCell>
                           <TableCell className="max-w-[140px] whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs text-slate-700">
                             {artCell}
                           </TableCell>
@@ -980,7 +1039,10 @@ const InventoryPage = () => {
                                     variant="outline"
                                     size="sm"
                                     className="h-7 shrink-0 px-2 text-[11px] font-medium"
-                                    onClick={() => navigate("/receiving")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigate("/receiving");
+                                    }}
                                   >
                                     Перейти к приёмке
                                   </Button>
@@ -1005,7 +1067,7 @@ const InventoryPage = () => {
                               ) : null}
                             </div>
                           </TableCell>
-                          <TableCell className="px-3 py-2 text-right align-middle">
+                          <TableCell className="px-3 py-2 text-right align-middle" onClick={(e) => e.stopPropagation()}>
                             <div className="flex flex-col items-end gap-1">
                               <Button
                                 type="button"
@@ -1013,7 +1075,8 @@ const InventoryPage = () => {
                                 size="sm"
                                 className="h-7 whitespace-nowrap px-2 text-[11px]"
                                 disabled={tableLoading || Boolean(error) || !stockRowShippingSearchTerm(r)}
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   const t = stockRowShippingSearchTerm(r);
                                   if (!t) return;
                                   navigate(`/shipping?search=${encodeURIComponent(t)}`);
@@ -1027,7 +1090,8 @@ const InventoryPage = () => {
                                 size="sm"
                                 className="h-7 whitespace-nowrap px-2 text-[11px]"
                                 disabled={tableLoading || Boolean(error)}
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   const q = new URLSearchParams();
                                   q.set("createOutbound", "1");
                                   const pid = findProductIdForStockRow(productsSafe, r);
@@ -1046,7 +1110,8 @@ const InventoryPage = () => {
                                 size="sm"
                                 className="h-7 whitespace-nowrap px-2 text-[11px]"
                                 disabled={tableLoading || Boolean(error)}
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   setInventoryRow(r);
                                   setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
                                   setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
@@ -1057,6 +1122,76 @@ const InventoryPage = () => {
                             </div>
                           </TableCell>
                         </TableRow>
+                        {expanded ? (
+                          <TableRow className="bg-slate-50/60 hover:bg-slate-50/60">
+                            <TableCell colSpan={10} className="p-0 align-top" onClick={(e) => e.stopPropagation()}>
+                              <div className="border-t border-slate-200 px-3 py-2">
+                                {stockRowMovements.length === 0 ? (
+                                  <p className="py-2 text-center text-xs text-slate-600">Нет движений по этой строке</p>
+                                ) : (
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[640px] text-left text-[11px] text-slate-800">
+                                      <thead>
+                                        <tr className="border-b border-slate-200 text-slate-600">
+                                          <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Дата</th>
+                                          <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Тип операции</th>
+                                          <th className="whitespace-nowrap py-1.5 pr-2 font-medium">Источник</th>
+                                          <th className="whitespace-nowrap py-1.5 pr-2 text-right font-medium">Количество</th>
+                                          <th className="min-w-[100px] py-1.5 pr-2 font-medium">Откуда</th>
+                                          <th className="min-w-[100px] py-1.5 pr-2 font-medium">Куда</th>
+                                          <th className="min-w-[120px] py-1.5 font-medium">Задание / документ</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {stockRowMovements.map((m) => {
+                                          const iso = (m.createdAt || "").trim();
+                                          const dateCell =
+                                            iso && Number.isFinite(Date.parse(iso))
+                                              ? format(parseISO(iso), "dd.MM.yyyy HH:mm", { locale: ru })
+                                              : "—";
+                                          const qtyStr = stockDetailMovementQtyLabel(m, r);
+                                          const qtyClass =
+                                            qtyStr.startsWith("-") && !qtyStr.startsWith("--")
+                                              ? "text-red-700"
+                                              : qtyStr.startsWith("+")
+                                                ? "text-emerald-800"
+                                                : "text-slate-800";
+                                          let fromCell = "—";
+                                          let toCell = "—";
+                                          if (m.type === "TRANSFER") {
+                                            fromCell = formatMovementEndpointLabel(m.fromLocationId, locationById);
+                                            toCell = formatMovementEndpointLabel(m.locationId, locationById);
+                                          } else if (m.type === "INBOUND") {
+                                            fromCell = "—";
+                                            toCell = formatMovementEndpointLabel(m.locationId, locationById);
+                                          } else {
+                                            fromCell = formatMovementEndpointLabel(m.locationId, locationById);
+                                            toCell = "—";
+                                          }
+                                          const taskLabel = ((m.taskNumber || "").trim() || (m.taskId || "").trim() || "—").trim();
+                                          return (
+                                            <tr key={m.id} className="border-b border-slate-100 last:border-0">
+                                              <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-700">{dateCell}</td>
+                                              <td className="py-1.5 pr-2">{movementTypeLabel[m.type]}</td>
+                                              <td className="py-1.5 pr-2">{sourceLabel[m.source]}</td>
+                                              <td className={cn("py-1.5 pr-2 text-right tabular-nums font-medium", qtyClass)}>
+                                                {qtyStr}
+                                              </td>
+                                              <td className="py-1.5 pr-2 text-slate-700">{fromCell}</td>
+                                              <td className="py-1.5 pr-2 text-slate-700">{toCell}</td>
+                                              <td className="py-1.5 font-mono text-[10px] text-slate-600">{taskLabel}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                        </React.Fragment>
                       );
                     })
                   )}
