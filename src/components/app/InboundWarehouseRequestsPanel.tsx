@@ -36,6 +36,7 @@ import {
 } from "@/lib/warehouseImportPaste";
 import type { WarehouseImportInspectionResult } from "@/lib/warehouseImportPaste";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 type DraftLine = { key: string; productId: string; plannedQty: string };
 
@@ -371,6 +372,16 @@ const InboundWarehouseRequestsPanel = () => {
   const inboundFileInputRef = React.useRef<HTMLInputElement>(null);
   const inboundApplyImportLockedRef = React.useRef(false);
   const [inboundImportPreview, setInboundImportPreview] = React.useState<WarehouseImportInspectionResult | null>(null);
+  const [expandedInboundIds, setExpandedInboundIds] = React.useState<Set<string>>(() => new Set());
+
+  const toggleInboundRowExpansion = React.useCallback((id: string) => {
+    setExpandedInboundIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     setInboundImportPreview(null);
@@ -909,6 +920,7 @@ const InboundWarehouseRequestsPanel = () => {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50/90">
+                    <TableHead className="w-8 px-1 text-center text-xs font-semibold text-slate-500" aria-label="Развернуть" />
                     <TableHead className="text-xs font-semibold">ID</TableHead>
                     <TableHead className="text-xs font-semibold">Партнёр</TableHead>
                     <TableHead className="text-xs font-semibold">Дата план</TableHead>
@@ -919,9 +931,25 @@ const InboundWarehouseRequestsPanel = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {inboundList.map((row) => (
+                  {inboundList.map((row) => {
+                    const isExpanded = expandedInboundIds.has(row.id);
+                    const hasDetailRow =
+                      row.status === "receiving" ||
+                      row.status === "received" ||
+                      row.status === "placed" ||
+                      row.status === "cancelled";
+                    return (
                     <React.Fragment key={row.id}>
-                      <TableRow>
+                      <TableRow
+                        className={cn(
+                          "cursor-pointer border-slate-100 text-sm transition-colors",
+                          isExpanded ? "bg-slate-50/90" : "hover:bg-slate-50/60",
+                        )}
+                        onClick={() => toggleInboundRowExpansion(row.id)}
+                      >
+                        <TableCell className="w-8 px-1 text-center align-middle text-xs text-slate-600" aria-hidden>
+                          {isExpanded ? "▼" : "▶"}
+                        </TableCell>
                         <TableCell className="max-w-[180px]">
                           <div className="truncate font-mono text-xs tabular-nums">{row.id}</div>
                           {row.originInboundId ? (
@@ -951,14 +979,15 @@ const InboundWarehouseRequestsPanel = () => {
                           </span>
                         </TableCell>
                         <TableCell className="text-sm text-slate-700">
-                          {(row.status === "receiving" || row.status === "received" || row.status === "placed") &&
+                          {isExpanded &&
+                          (row.status === "receiving" || row.status === "received" || row.status === "placed") &&
                           row.receivingMode
                             ? receivingModeLabel(row.receivingMode)
                             : "—"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-sm">{row.items.length}</TableCell>
-                        <TableCell>
-                          {row.status === "new" ? (
+                        <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
+                          {isExpanded && row.status === "new" ? (
                             <div className="flex flex-wrap gap-1">
                               <Button
                                 type="button"
@@ -983,7 +1012,7 @@ const InboundWarehouseRequestsPanel = () => {
                                   : "Отменить приёмку"}
                               </Button>
                             </div>
-                          ) : row.status === "receiving" ? (
+                          ) : isExpanded && row.status === "receiving" ? (
                             <Button
                               type="button"
                               size="sm"
@@ -996,17 +1025,14 @@ const InboundWarehouseRequestsPanel = () => {
                                 ? "Отмена…"
                                 : "Отменить приёмку"}
                             </Button>
-                          ) : (
+                          ) : isExpanded ? (
                             <span className="text-xs text-slate-400">—</span>
-                          )}
+                          ) : null}
                         </TableCell>
                       </TableRow>
-                      {row.status === "receiving" ||
-                      row.status === "received" ||
-                      row.status === "placed" ||
-                      row.status === "cancelled" ? (
+                      {isExpanded && hasDetailRow ? (
                         <TableRow className="border-t-0 bg-slate-50/70 hover:bg-slate-50/70">
-                          <TableCell colSpan={7} className="p-0 align-top">
+                          <TableCell colSpan={8} className="p-0 align-top">
                             <div className="space-y-2 p-3">
                               {row.status === "cancelled" ? (
                                 <div className="rounded-md border border-rose-100 bg-rose-50/80 px-3 py-2 text-sm text-rose-900">
@@ -1173,7 +1199,8 @@ const InboundWarehouseRequestsPanel = () => {
                         </TableRow>
                       ) : null}
                     </React.Fragment>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
