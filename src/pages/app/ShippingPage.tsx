@@ -2164,70 +2164,68 @@ const ShippingPage = () => {
         const ts = new Date().toISOString();
         const baseFact = Math.max(0, Math.trunc(Number(line.fact ?? 0) || 0));
         const nextFact = baseFact + qty;
-        try {
-          await addInventoryMovements([
-            {
-              id: `pick-${shipmentId}-${Date.now()}`,
-              type: "OUTBOUND",
-              source: "shipping",
-              taskId: line.taskId,
-              taskNumber: line.taskNumber,
-              legalEntityId: line.legalEntityId,
-              legalEntityName: line.legalEntityName,
-              warehouseName: line.warehouseName,
-              locationId,
-              itemId: shipmentId,
-              name: line.name,
-              article: line.article,
-              sku: line.article,
-              barcode: line.barcode,
-              marketplace: line.marketplace,
-              color: line.color,
-              size: line.size,
-              qty: -qty,
-              createdAt: ts,
-            },
-          ]);
-          await updateOutboundDraft({
-            id: shipmentId,
-            patch: {
-              pickedUnits: nextFact,
-              shippedUnits: nextFact,
-              updatedAt: ts,
-            },
-          });
-          setPickDraftByShipment((prev) => ({
-            ...prev,
-            [shipmentId]: {
-              locationId: "",
-              qty: "",
-            },
-          }));
-          const fromCellLbl = (selectedCell?.label ?? "").trim();
-          const fromLocName = (locationById.get(locationId)?.name ?? "").trim();
-          const cellLabel = (fromCellLbl || fromLocName) || "Без места";
-          const shipNo =
-            ((selectedDoc?.assignmentNo ?? "").trim() ||
-              (line.taskNumber ?? "").trim() ||
-              "—");
-          appendOperationLog({
-            type: "SHIPPING_PICK",
+        await addInventoryMovements([
+          {
+            id: `pick-${shipmentId}-${Date.now()}`,
+            type: "OUTBOUND",
+            source: "shipping",
+            taskId: line.taskId,
+            taskNumber: line.taskNumber,
             legalEntityId: line.legalEntityId,
             legalEntityName: line.legalEntityName,
-            taskId: (selectedDoc?.id ?? line.taskId ?? "").trim() || line.taskId,
-            taskNumber: shipNo,
-            description: buildShippingCellPickLogDescription(
-              "Товар подобран из ячейки",
-              line.name,
-              qty,
-              cellLabel,
-              shipNo,
-            ),
-          });
-          toast.success("Подбор выполнен");
-        } catch {
-          toast.error("Не удалось выполнить подбор");
-        }
+            warehouseName: line.warehouseName,
+            locationId,
+            itemId: shipmentId,
+            name: line.name,
+            article: line.article,
+            sku: line.article,
+            barcode: line.barcode,
+            marketplace: line.marketplace,
+            color: line.color,
+            size: line.size,
+            qty: -qty,
+            createdAt: ts,
+          },
+        ]);
+        await updateOutboundDraft({
+          id: shipmentId,
+          patch: {
+            pickedUnits: nextFact,
+            shippedUnits: nextFact,
+            updatedAt: ts,
+          },
+        });
+        setPickDraftByShipment((prev) => ({
+          ...prev,
+          [shipmentId]: {
+            locationId: "",
+            qty: "",
+          },
+        }));
+        const fromCellLbl = (selectedCell?.label ?? "").trim();
+        const fromLocName = (locationById.get(locationId)?.name ?? "").trim();
+        const cellLabel = (fromCellLbl || fromLocName) || "Без места";
+        const shipNo =
+          ((selectedDoc?.assignmentNo ?? "").trim() ||
+            (line.taskNumber ?? "").trim() ||
+            "—");
+        appendOperationLog({
+          type: "SHIPPING_PICK",
+          legalEntityId: line.legalEntityId,
+          legalEntityName: line.legalEntityName,
+          taskId: (selectedDoc?.id ?? line.taskId ?? "").trim() || line.taskId,
+          taskNumber: shipNo,
+          description: buildShippingCellPickLogDescription(
+            "Товар подобран из ячейки",
+            line.name,
+            qty,
+            cellLabel,
+            shipNo,
+          ),
+        });
+        toast.success("Подбор выполнен");
+      } catch {
+        toast.error("Не удалось выполнить подбор");
       } finally {
         pickSubmitLockedRef.current = false;
         setPickingShipmentId(null);
