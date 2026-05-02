@@ -1894,6 +1894,11 @@ const ShippingPage = () => {
       }
       const line = selectedShipmentPickRows.find((x) => x.shipmentId === shipmentId);
       if (!line) return;
+      const latestSh = (data ?? []).find((s) => s.id === shipmentId);
+      if (!latestSh) {
+        toast.error("Строка отгрузки не найдена");
+        return;
+      }
       const draft = pickDraftByShipment[shipmentId];
       const locationId = (draft?.locationId || "").trim();
       if (!locationId) {
@@ -1908,6 +1913,16 @@ const ShippingPage = () => {
       const qty = Math.trunc(Number(draft?.qty) || 0);
       if (qty <= 0) {
         toast.error("Укажите корректное количество");
+        return;
+      }
+      const catalogSafe = Array.isArray(catalog) ? catalog : [];
+      const product = catalogSafe.find((p) => p.id === latestSh.productId) ?? null;
+      const balanceKey = balanceKeyFromOutboundShipment(latestSh, product);
+      const totalInv = getBalanceByKeyMap(movementDataSafe).get(balanceKey) ?? 0;
+      const reserveInv = reservedQtyByBalanceKey(data ?? [], catalogSafe).get(balanceKey) ?? 0;
+      const availableGlobal = totalInv - reserveInv;
+      if (availableGlobal <= 0 || qty > availableGlobal) {
+        toast.error("Недостаточно товара на складе для подбора");
         return;
       }
       if (qty > (selectedCell.available ?? 0)) {
@@ -1995,6 +2010,9 @@ const ShippingPage = () => {
       locationById,
       selectedDoc,
       appendOperationLog,
+      data,
+      catalog,
+      movementDataSafe,
     ],
   );
 
