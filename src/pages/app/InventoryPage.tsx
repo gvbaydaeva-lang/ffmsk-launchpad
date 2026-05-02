@@ -201,11 +201,8 @@ function computeStockProductGroups(
     } else if (storagePosQty && !recvPosQty) {
       statusLabel = "Полностью размещён";
       statusTone = "green";
-    } else if (storagePosQty && recvPosQty) {
-      statusLabel = "Частично размещён";
-      statusTone = "amber";
-    } else if (recvPosQty && !storagePosQty) {
-      statusLabel = "Частично размещён";
+    } else if (recvPosQty) {
+      statusLabel = "Требует размещения";
       statusTone = "amber";
     } else {
       statusLabel = "Нет остатка";
@@ -1361,7 +1358,6 @@ const InventoryPage = () => {
                       const bcParent = g.barcode.trim() ? g.barcode : "—";
                       const rep = g.rows.find((row) => row.locationKind === "storage") ?? g.rows[0];
                       const placedDisplayQty = Math.max(g.placementInQty, Math.abs(g.placementOutQty));
-                      const totalsMatch = g.movementTotalFromMovements === g.totalQty;
                       const toggleProductGroup = () => {
                         const willClose = expandedStockProductKeys.has(g.groupKey);
                         setExpandedStockProductKeys((prev) => {
@@ -1394,94 +1390,10 @@ const InventoryPage = () => {
                                 >
                                   {groupOpen ? "▼" : "▶"}
                                 </span>
-                                <div className="min-w-0 space-y-0.5">
+                                <div className="min-w-0">
                                   <div className="font-semibold leading-snug text-slate-900">{g.productName}</div>
                                   <div className="text-[10px] leading-snug text-slate-500">
                                     {artParent} · {bcParent}
-                                  </div>
-                                  <div className="mt-1 space-y-0.5 text-[10px] tabular-nums text-slate-600">
-                                    {g.inboundQty !== 0 ? (
-                                      <div>
-                                        Приход:{" "}
-                                        <span
-                                          className={
-                                            g.inboundQty > 0 ? "font-medium text-emerald-600" : "font-medium text-red-600"
-                                          }
-                                        >
-                                          {g.inboundQty > 0 ? "+" : ""}
-                                          {g.inboundQty.toLocaleString("ru-RU")}
-                                        </span>
-                                      </div>
-                                    ) : null}
-                                    {placedDisplayQty !== 0 ? (
-                                      <div>
-                                        Размещено:{" "}
-                                        <span className="font-medium text-emerald-600">
-                                          {placedDisplayQty.toLocaleString("ru-RU")}
-                                        </span>
-                                      </div>
-                                    ) : null}
-                                    {g.outboundQty !== 0 ? (
-                                      <div>
-                                        Отгружено:{" "}
-                                        <span
-                                          className={
-                                            g.outboundQty < 0 ? "font-medium text-red-600" : "font-medium text-emerald-600"
-                                          }
-                                        >
-                                          {g.outboundQty > 0 ? "+" : ""}
-                                          {g.outboundQty.toLocaleString("ru-RU")}
-                                        </span>
-                                      </div>
-                                    ) : null}
-                                    {g.adjustmentQty !== 0 ? (
-                                      <div>
-                                        Корректировки:{" "}
-                                        <span
-                                          className={
-                                            g.adjustmentQty > 0
-                                              ? "font-medium text-emerald-600"
-                                              : "font-medium text-red-600"
-                                          }
-                                        >
-                                          {g.adjustmentQty > 0 ? "+" : ""}
-                                          {g.adjustmentQty.toLocaleString("ru-RU")}
-                                        </span>
-                                      </div>
-                                    ) : null}
-                                    <div
-                                      className={cn(
-                                        "pt-0.5 font-medium",
-                                        totalsMatch ? "text-slate-600" : "text-red-600",
-                                      )}
-                                    >
-                                      Итог движения: {g.movementTotalFromMovements.toLocaleString("ru-RU")}
-                                    </div>
-                                    {!totalsMatch ? (
-                                      <div className="text-[10px] font-medium text-red-600">
-                                        Итог не совпадает с остатком
-                                      </div>
-                                    ) : null}
-                                    {g.statusLabel === "Полностью размещён" ? (
-                                      <div className="pt-0.5 text-[10px] font-medium text-emerald-800">
-                                        ✔ Товар полностью размещён на складе
-                                      </div>
-                                    ) : null}
-                                    {g.statusLabel === "Частично размещён" ? (
-                                      <div className="pt-0.5 text-[10px] font-medium text-amber-800">
-                                        ⚠ Товар частично размещён — есть остаток в зоне приёмки
-                                      </div>
-                                    ) : null}
-                                    {g.statusLabel === "Есть расхождения" ? (
-                                      <div className="pt-0.5 text-[10px] font-medium text-red-700">
-                                        ❗ Обнаружено расхождение — проверьте движения или выполните инвентаризацию
-                                      </div>
-                                    ) : null}
-                                    {g.statusLabel === "Нет остатка" ? (
-                                      <div className="pt-0.5 text-[10px] font-medium text-slate-500">
-                                        — Остаток отсутствует
-                                      </div>
-                                    ) : null}
                                   </div>
                                 </div>
                               </div>
@@ -1573,8 +1485,68 @@ const InventoryPage = () => {
                               })()}
                             </TableCell>
                           </TableRow>
-                          {groupOpen
-                            ? g.rows.map((r) => {
+                          {groupOpen ? (
+                            <>
+                              <TableRow className="border-b border-slate-100 bg-white">
+                                <TableCell colSpan={10} className="px-6 py-2 align-top" onClick={(e) => e.stopPropagation()}>
+                                  <p className="mb-1 text-xs font-semibold text-slate-800">Сводка по товару</p>
+                                  <div className="space-y-0.5 text-[10px] tabular-nums text-slate-600">
+                                    {g.inboundQty !== 0 ? (
+                                      <div>
+                                        Приход:{" "}
+                                        <span
+                                          className={
+                                            g.inboundQty > 0 ? "font-medium text-emerald-600" : "font-medium text-red-600"
+                                          }
+                                        >
+                                          {g.inboundQty > 0 ? "+" : ""}
+                                          {g.inboundQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {placedDisplayQty !== 0 ? (
+                                      <div>
+                                        Размещено:{" "}
+                                        <span className="font-medium text-emerald-600">
+                                          {placedDisplayQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {g.outboundQty !== 0 ? (
+                                      <div>
+                                        Отгружено:{" "}
+                                        <span
+                                          className={
+                                            g.outboundQty < 0 ? "font-medium text-red-600" : "font-medium text-emerald-600"
+                                          }
+                                        >
+                                          {g.outboundQty > 0 ? "+" : ""}
+                                          {g.outboundQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {g.adjustmentQty !== 0 ? (
+                                      <div>
+                                        Корректировки:{" "}
+                                        <span
+                                          className={
+                                            g.adjustmentQty > 0
+                                              ? "font-medium text-emerald-600"
+                                              : "font-medium text-red-600"
+                                          }
+                                        >
+                                          {g.adjustmentQty > 0 ? "+" : ""}
+                                          {g.adjustmentQty.toLocaleString("ru-RU")}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    <div className="pt-0.5 font-medium text-slate-600">
+                                      Итог движения: {g.movementTotalFromMovements.toLocaleString("ru-RU")}
+                                    </div>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                              {g.rows.map((r) => {
                                 const expanded = expandedStockLocationKeys.has(r.rowKey);
                                 const toggleStockLocationRow = () => {
                                   setExpandedStockLocationKeys((prev) => {
@@ -1791,8 +1763,9 @@ const InventoryPage = () => {
                                     ) : null}
                                   </React.Fragment>
                                 );
-                              })
-                            : null}
+                              })}
+                            </>
+                          ) : null}
                         </React.Fragment>
                       );
                     })
