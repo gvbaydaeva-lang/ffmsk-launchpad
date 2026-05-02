@@ -29,11 +29,22 @@ import {
 } from "@/hooks/useWmsMock";
 import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { activeReserveOutboundSampleIdsByBalanceKey, reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
-import { movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
+import {
+  movementLocationTotalsForWarehouseBalanceKey,
+  signedStockDeltaForMovement,
+} from "@/services/mockInventoryMovements";
 import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace, ProductCatalogItem } from "@/types/domain";
 import { WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID } from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+const INVENTORY_DISCREPANCY_REASONS = [
+  "Ошибка приёмки",
+  "Ошибка размещения",
+  "Потеря/брак",
+  "Пересорт",
+  "Другое",
+] as const;
 
 const sourceLabel: Record<InventoryMovement["source"], string> = {
   receiving: "Приёмка",
@@ -269,6 +280,9 @@ const InventoryPage = () => {
   const [placementLocationId, setPlacementLocationId] = React.useState<string>("");
   const [inventoryRow, setInventoryRow] = React.useState<StockByLocationRow | null>(null);
   const [inventoryFactQty, setInventoryFactQty] = React.useState("");
+  const [inventoryDiscrepancyReason, setInventoryDiscrepancyReason] = React.useState<
+    (typeof INVENTORY_DISCREPANCY_REASONS)[number]
+  >(INVENTORY_DISCREPANCY_REASONS[0]);
   const [stockPartnerId, setStockPartnerId] = React.useState<"all" | string>("all");
   const [stockProductSearch, setStockProductSearch] = React.useState("");
   const [stockHideZero, setStockHideZero] = React.useState(false);
@@ -455,16 +469,17 @@ const InventoryPage = () => {
       const mIso = (m.createdAt ?? "").trim();
       const mTs = Date.parse(mIso);
       const mIsoOk = Number.isFinite(mTs);
+      const locDelta = signedStockDeltaForMovement(m);
       if (!cur) {
         byKey.set(key, {
-          sum: m.qty,
+          sum: locDelta,
           sample: m,
           baseKey,
           locationId,
           lastMovementIso: mIsoOk ? mIso : null,
         });
       } else {
-        cur.sum += m.qty;
+        cur.sum += locDelta;
         const curTs = Date.parse(cur.lastMovementIso || "");
         if (mIsoOk && (!Number.isFinite(curTs) || mTs > curTs)) {
           cur.lastMovementIso = mIso;
@@ -613,6 +628,28 @@ const InventoryPage = () => {
   const resetInventoryModal = () => {
     setInventoryRow(null);
     setInventoryFactQty("");
+    setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
+  };
+
+  const onInventoryApplyClick = () => {
+    if (!inventoryRow) return;
+    const t = inventoryFactQty.trim();
+    const factParsed = t === "" ? NaN : Math.trunc(Number(inventoryFactQty));
+    if (!Number.isFinite(factParsed)) {
+      toast.error("Укажите целое число");
+      return;
+    }
+    const systemQty = Math.trunc(Number(inventoryRow.qty) || 0);
+    const difference = factParsed - systemQty;
+    if (difference === 0) return;
+    const abs = Math.abs(difference);
+    const signChar = difference > 0 ? "+" : "-";
+    const ok =
+      typeof globalThis.confirm === "function"
+        ? globalThis.confirm(`Будет выполнена корректировка: ${signChar}${abs} шт. Продолжить?`)
+        : true;
+    if (!ok) return;
+    void applyInventoryAdjustment();
   };
 
   const applyInventoryAdjustment = async () => {
@@ -647,13 +684,16 @@ const InventoryPage = () => {
       createdAt: ts,
       source: "inventory_adjustment",
       locationId: locId,
+      comment: inventoryDiscrepancyReason,
       ...(productId ? { productId } : {}),
     };
     try {
       if (difference > 0) {
         await addInventoryMovements([{ ...base, id: `${taskId}-in`, type: "INBOUND", qty: difference }]);
       } else {
-        await addInventoryMovements([{ ...base, id: `${taskId}-out`, type: "OUTBOUND", qty: difference }]);
+        await addInventoryMovements([
+          { ...base, id: `${taskId}-out`, type: "OUTBOUND", qty: Math.abs(difference) },
+        ]);
       }
       await queryClient.invalidateQueries({ queryKey: ["wms", "inventory-movements"] });
       toast.success("Корректировка по инвентаризации применена");
@@ -954,6 +994,7 @@ const InventoryPage = () => {
                               onClick={() => {
                                 setInventoryRow(r);
                                 setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
+                                setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
                               }}
                             >
                               Инвентаризация
@@ -1009,6 +1050,27 @@ const InventoryPage = () => {
                     disabled={isAppending}
                   />
                 </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="inventory-reason">Причина расхождения</Label>
+                  <Select
+                    value={inventoryDiscrepancyReason}
+                    onValueChange={(v) =>
+                      setInventoryDiscrepancyReason(v as (typeof INVENTORY_DISCREPANCY_REASONS)[number])
+                    }
+                    disabled={isAppending}
+                  >
+                    <SelectTrigger id="inventory-reason" className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INVENTORY_DISCREPANCY_REASONS.map((label) => (
+                        <SelectItem key={label} value={label}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 {(() => {
                   const t = inventoryFactQty.trim();
                   const factParsed = t === "" ? NaN : Math.trunc(Number(inventoryFactQty));
@@ -1042,7 +1104,7 @@ const InventoryPage = () => {
                     const systemQty = Math.trunc(Number(inventoryRow.qty) || 0);
                     return factParsed - systemQty === 0;
                   })()}
-                  onClick={() => void applyInventoryAdjustment()}
+                  onClick={() => onInventoryApplyClick()}
                 >
                   Применить
                 </Button>
@@ -1313,7 +1375,7 @@ const InventoryPage = () => {
                             ? (m.fromLocationId || "").trim() === (historyRow.locationId || "").trim()
                               ? "text-red-600"
                               : "text-emerald-700"
-                            : m.qty < 0
+                            : signedStockDeltaForMovement(m) < 0
                               ? "text-red-600"
                               : "text-emerald-700"
                         }`}
@@ -1325,8 +1387,10 @@ const InventoryPage = () => {
                           </>
                         ) : (
                           <>
-                            {m.qty > 0 ? "+" : ""}
-                            {m.qty}
+                            {(() => {
+                              const s = signedStockDeltaForMovement(m);
+                              return `${s > 0 ? "+" : ""}${s}`;
+                            })()}
                           </>
                         )}
                       </TableCell>

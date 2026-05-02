@@ -78,8 +78,9 @@ export function useInventoryMovements() {
       if (first) {
         const invAdj = first.source === "inventory_adjustment";
         const q = Math.trunc(Number(first.qty) || 0);
+        const reason = (first.comment ?? "").trim();
         const desc = invAdj
-          ? `Инвентаризация: ${first.type === "INBOUND" ? "приход" : "списание"} ${Math.abs(q)} шт. (${first.taskNumber || first.taskId})`
+          ? `Инвентаризация: ${first.type === "INBOUND" ? "приход" : "списание"} ${Math.abs(q)} шт.${reason ? ` Причина: ${reason}` : ""} (${first.taskNumber || first.taskId})`
           : `Остатки обновлены по заданию №${first.taskNumber || first.taskId}`;
         const row = persistOperationLog({
           type: invAdj ? "INVENTORY_ADJUSTMENT" : "INVENTORY_CHANGED",

@@ -352,12 +352,17 @@ export type InventoryMovement = {
   marketplace?: string;
   color?: string;
   size?: string;
-  /** INBOUND: положительный; OUTBOUND: отрицательный */
+  /**
+   * INBOUND — положительное число (приход).
+   * OUTBOUND — отрицательное (legacy) или положительное при source inventory_adjustment; вклад в остаток всегда «списание».
+   */
   qty: number;
   createdAt: string;
   source: "receiving" | "packing" | "shipping" | "placement" | "inventory_adjustment";
   /** Например, возврат в ячейку при отмене отгрузки — для отличия от «отменить подбор». */
   movementCause?: InventoryMovementCause;
+  /** Комментарий к движению (напр. причина расхождения при инвентаризации). */
+  comment?: string;
 };
 
 /** Сводка остатка по нормализованному ключу (для таблиц и проверок) */

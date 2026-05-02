@@ -3,6 +3,17 @@ import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 
 const STORAGE_KEY = "ffmsk.mock.inventoryMovements";
 
+/**
+ * Вклад движения INBOUND/OUTBOUND в остаток по ключу: приход +|q|, списание −|q|
+ * (legacy OUTBOUND с отрицательным qty сохраняется).
+ */
+export function signedStockDeltaForMovement(m: InventoryMovement): number {
+  const q = Math.trunc(Number(m.qty) || 0);
+  if (m.type === "INBOUND") return Math.abs(q);
+  if (m.type === "OUTBOUND") return -Math.abs(q);
+  return q;
+}
+
 /** Вклад в сумму по SKU-ключу (без ячейки). TRANSFER явно даёт −qty и +qty по тому же ключу (итого 0 на товар). */
 function forEachMovementBalanceKeyDelta(m: InventoryMovement, cb: (key: string, delta: number) => void): void {
   const key = makeInventoryBalanceKeyFromMovement(m);
@@ -13,7 +24,10 @@ function forEachMovementBalanceKeyDelta(m: InventoryMovement, cb: (key: string, 
     cb(key, q);
     return;
   }
-  cb(key, m.qty);
+  if (m.type === "INBOUND" || m.type === "OUTBOUND") {
+    cb(key, signedStockDeltaForMovement(m));
+    return;
+  }
 }
 
 /**
@@ -44,7 +58,10 @@ export function movementLocationTotalsForWarehouseBalanceKey(
       bump(m.locationId ?? "", q);
       continue;
     }
-    bump(m.locationId ?? "", m.qty);
+    if (m.type === "INBOUND" || m.type === "OUTBOUND") {
+      bump(m.locationId ?? "", signedStockDeltaForMovement(m));
+      continue;
+    }
   }
   return byLoc;
 }
@@ -80,7 +97,7 @@ export function getInventoryMovementsSync(): InventoryMovement[] {
 }
 
 /**
- * Проверка qty: INBOUND > 0, OUTBOUND < 0
+ * Проверка qty: INBOUND > 0; OUTBOUND — отрицательный (legacy) или положительный при инвентаризации.
  */
 export function addInventoryMovements(movements: InventoryMovement[]): InventoryMovement[] {
   const current = readStorage();
@@ -88,8 +105,15 @@ export function addInventoryMovements(movements: InventoryMovement[]): Inventory
     if (m.type === "INBOUND" && m.qty <= 0) {
       throw new Error("inbound_qty_must_be_positive");
     }
-    if (m.type === "OUTBOUND" && m.qty >= 0) {
-      throw new Error("outbound_qty_must_be_negative");
+    if (m.type === "OUTBOUND") {
+      const q = Math.trunc(Number(m.qty) || 0);
+      if (m.source === "inventory_adjustment") {
+        if (!Number.isFinite(q) || q <= 0) {
+          throw new Error("inventory_adjustment_outbound_qty_must_be_positive");
+        }
+      } else if (q >= 0) {
+        throw new Error("outbound_qty_must_be_negative");
+      }
     }
     if (m.type === "TRANSFER") {
       if (m.qty <= 0 || !Number.isFinite(m.qty) || Math.trunc(m.qty) !== m.qty) {
