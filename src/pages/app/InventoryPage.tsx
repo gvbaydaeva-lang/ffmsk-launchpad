@@ -307,18 +307,20 @@ const InventoryPage = () => {
     return rows;
   }, [stockByLocationRows, stockPartnerId, stockProductSearch, stockHideZero]);
 
-  /** Как в таблице «Складские остатки»: полный резерв по ключу показываем только у первой строки этого ключа в текущем фильтре */
+  /** Полный резерв по ключу — только у первой строки хранения (зона приёмки не участвует в «доступно для отгрузки»). */
   const stockReservePrimaryRowKey = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const r of stockByLocationFiltered) {
+      if (r.locationKind !== "storage") continue;
       if (!m.has(r.balanceKey)) m.set(r.balanceKey, r.rowKey);
     }
     return m;
   }, [stockByLocationFiltered]);
 
-  /** Диагностика UI: есть ли в текущем фильтре строка с отрицательным «доступно» (те же Всего/Резерв, что в таблице). */
+  /** Диагностика: отрицательное «доступно для отгрузки» только по ячейкам хранения. */
   const stockNegativeAvailablePresent = React.useMemo(() => {
     for (const r of stockByLocationFiltered) {
+      if (r.locationKind !== "storage") continue;
       const reserveQty =
         stockReservePrimaryRowKey.get(r.balanceKey) === r.rowKey
           ? (reservedByKey.get(r.balanceKey) ?? 0)
@@ -637,8 +639,7 @@ const InventoryPage = () => {
         <CardHeader className="border-b border-slate-100 px-4 py-3">
           <CardTitle className="text-base">Остатки по местам</CardTitle>
           <p className="mt-1 text-xs text-slate-500">
-            Разрез по ячейкам: «Всего» из движений по месту; резерв — из активных отгрузок (как на складе ниже); доступно =
-            всего − резерв (резерв показывается у одной строки ключа, как в таблице складских остатков).
+            Зона приёмки показывает принятый, но ещё не размещённый товар. Для отгрузки доступен только товар в ячейках хранения.
           </p>
         </CardHeader>
         <CardContent className="space-y-3 p-3 sm:p-4">
@@ -714,13 +715,15 @@ const InventoryPage = () => {
                     stockByLocationFiltered.map((r) => {
                       const artCell = r.article.trim() ? r.article : "—";
                       const bcCell = r.barcode.trim() ? r.barcode : "—";
-                      const reserveQty =
-                        stockReservePrimaryRowKey.get(r.balanceKey) === r.rowKey
+                      const isReceivingZone = r.locationKind === "receiving_zone";
+                      const reserveQty = isReceivingZone
+                        ? 0
+                        : stockReservePrimaryRowKey.get(r.balanceKey) === r.rowKey
                           ? (reservedByKey.get(r.balanceKey) ?? 0)
                           : 0;
-                      const available = r.qty - reserveQty;
-                      const rowMuted = available === 0;
-                      const shortage = available < 0;
+                      const available = isReceivingZone ? 0 : r.qty - reserveQty;
+                      const rowMuted = !isReceivingZone && available === 0;
+                      const shortage = !isReceivingZone && available < 0;
                       const fullReserveKey = reservedByKey.get(r.balanceKey) ?? 0;
                       const movementCount = shortage
                         ? countMovementsForStockCell(
@@ -775,7 +778,11 @@ const InventoryPage = () => {
                           >
                             <div className="flex max-w-[min(100%,14rem)] flex-col items-end gap-0.5">
                               <span>{available.toLocaleString("ru-RU")}</span>
-                              {shortage ? (
+                              {isReceivingZone ? (
+                                <span className="max-w-[12rem] text-right text-[10px] leading-snug text-slate-500">
+                                  Недоступно для отгрузки до размещения
+                                </span>
+                              ) : shortage ? (
                                 <div className="text-right text-[10px] leading-snug text-red-700">
                                   <div className="font-semibold text-red-600">Недостаточно остатка</div>
                                   <div className="text-slate-600">
