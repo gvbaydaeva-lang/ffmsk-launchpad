@@ -934,6 +934,7 @@ const InboundWarehouseRequestsPanel = () => {
                   {inboundList.map((row) => {
                     const isExpanded = expandedInboundIds.has(row.id);
                     const hasDetailRow =
+                      row.status === "new" ||
                       row.status === "receiving" ||
                       row.status === "received" ||
                       row.status === "placed" ||
@@ -1088,8 +1089,38 @@ const InboundWarehouseRequestsPanel = () => {
                                     {completeReceivingBusy(row.id) ? "Завершение…" : "Завершить приёмку"}
                                   </Button>
                                 </div>
+                              ) : row.status === "new" ? (
+                                <p className="text-sm text-slate-700">
+                                  Заявка создана. Можно начать или отменить приёмку.
+                                </p>
                               ) : null}
-                              {row.status !== "cancelled" ? (
+                              {row.status === "cancelled" ? (
+                                <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow className="bg-slate-50/90">
+                                        <TableHead className="text-xs font-semibold">Товар</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">План</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">Принято</TableHead>
+                                        <TableHead className="text-xs font-semibold">Факт</TableHead>
+                                        <TableHead className="text-right text-xs font-semibold">Факт / план</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {row.items.map((item) => (
+                                        <InboundReceivingQtyRow
+                                          key={item.id}
+                                          item={item}
+                                          productName={productDisplayName(item.productId)}
+                                          editable={false}
+                                          disabled
+                                          onSave={async () => {}}
+                                        />
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              ) : row.status === "new" ? null : (
                                 <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
                                   <Table>
                                     <TableHeader>
@@ -1116,32 +1147,6 @@ const InboundWarehouseRequestsPanel = () => {
                                             completeReceivingBusy(row.id)
                                           }
                                           onSave={(qty) => persistReceivedQty(row.id, item.id, qty)}
-                                        />
-                                      ))}
-                                    </TableBody>
-                                  </Table>
-                                </div>
-                              ) : (
-                                <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
-                                  <Table>
-                                    <TableHeader>
-                                      <TableRow className="bg-slate-50/90">
-                                        <TableHead className="text-xs font-semibold">Товар</TableHead>
-                                        <TableHead className="text-right text-xs font-semibold">План</TableHead>
-                                        <TableHead className="text-right text-xs font-semibold">Принято</TableHead>
-                                        <TableHead className="text-xs font-semibold">Факт</TableHead>
-                                        <TableHead className="text-right text-xs font-semibold">Факт / план</TableHead>
-                                      </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                      {row.items.map((item) => (
-                                        <InboundReceivingQtyRow
-                                          key={item.id}
-                                          item={item}
-                                          productName={productDisplayName(item.productId)}
-                                          editable={false}
-                                          disabled
-                                          onSave={async () => {}}
                                         />
                                       ))}
                                     </TableBody>
