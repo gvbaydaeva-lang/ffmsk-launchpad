@@ -912,7 +912,7 @@ const InventoryPage = () => {
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Партнёр</TableHead>
                     <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Ячейка</TableHead>
                     <TableHead className="whitespace-nowrap px-3 py-2 text-xs font-semibold text-slate-600">
-                      Последнее движение
+                      Последняя операция
                     </TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Всего</TableHead>
                     <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Зарезервировано</TableHead>
@@ -950,7 +950,8 @@ const InventoryPage = () => {
                           ? (reservedByKey.get(r.balanceKey) ?? 0)
                           : 0;
                       const available = isReceivingZone ? 0 : r.qty - reserveQty;
-                      const rowMuted = !isReceivingZone && available === 0;
+                      const rowMuted =
+                        (!isReceivingZone && available === 0) || (isReceivingZone && r.qty <= 0);
                       const shortage = !isReceivingZone && available < 0;
                       const fullReserveKey = reservedByKey.get(r.balanceKey) ?? 0;
                       const movementCount = shortage
@@ -975,9 +976,11 @@ const InventoryPage = () => {
                               <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900">
                                 Зона приёмки
                               </span>
-                              <span className="inline-flex items-center rounded-md border border-amber-400 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950 ring-1 ring-amber-300/70">
-                                Требует размещения
-                              </span>
+                              {r.qty > 0 ? (
+                                <span className="inline-flex items-center rounded-md border border-amber-400 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950 ring-1 ring-amber-300/70">
+                                  Требует размещения
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                         ) : (
@@ -1030,7 +1033,7 @@ const InventoryPage = () => {
                           >
                             <div className="flex max-w-[min(100%,14rem)] flex-col items-end gap-0.5">
                               <span>{available.toLocaleString("ru-RU")}</span>
-                              {isReceivingZone ? (
+                              {isReceivingZone && r.qty > 0 ? (
                                 <span className="max-w-[12rem] text-right text-xs leading-snug text-slate-500">
                                   Недоступно для отгрузки до размещения.
                                 </span>
@@ -1057,51 +1060,61 @@ const InventoryPage = () => {
                           <TableCell className="px-3 py-2 text-right align-middle" onClick={(e) => e.stopPropagation()}>
                             {(() => {
                               const busy = tableLoading || Boolean(error);
-                              const items: WmsRowActionItem[] = [
-                                {
-                                  id: "go-receiving",
-                                  label: "Перейти",
-                                  disabled: busy,
-                                  onSelect: () => {
-                                    navigate("/receiving");
-                                  },
+                              const invItem: WmsRowActionItem = {
+                                id: "inv",
+                                label: "Инвентаризация",
+                                disabled: busy,
+                                onSelect: () => {
+                                  setInventoryRow(r);
+                                  setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
+                                  setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
                                 },
-                                {
-                                  id: "find-ship",
-                                  label: "Найти",
-                                  disabled: busy || !stockRowShippingSearchTerm(r),
-                                  onSelect: () => {
-                                    const t = stockRowShippingSearchTerm(r);
-                                    if (!t) return;
-                                    navigate(`/shipping?search=${encodeURIComponent(t)}`);
-                                  },
-                                },
-                                {
-                                  id: "create-out",
-                                  label: "Создать",
-                                  disabled: busy,
-                                  onSelect: () => {
-                                    const q = new URLSearchParams();
-                                    q.set("createOutbound", "1");
-                                    const pid = findProductIdForStockRow(productsSafe, r);
-                                    if (pid) q.set("productId", pid);
-                                    else if (r.barcode.trim()) q.set("barcode", r.barcode.trim());
-                                    else if (r.article.trim()) q.set("article", r.article.trim());
-                                    else if (r.productName.trim()) q.set("productName", r.productName.trim());
-                                    navigate({ pathname: `/legal-entities/${r.legalEntityId}`, search: `?${q.toString()}` });
-                                  },
-                                },
-                                {
-                                  id: "inv",
-                                  label: "Инвентаризация",
-                                  disabled: busy,
-                                  onSelect: () => {
-                                    setInventoryRow(r);
-                                    setInventoryFactQty(String(Math.trunc(Number(r.qty) || 0)));
-                                    setInventoryDiscrepancyReason(INVENTORY_DISCREPANCY_REASONS[0]);
-                                  },
-                                },
-                              ];
+                              };
+                              const items: WmsRowActionItem[] = isReceivingZone
+                                ? r.qty > 0
+                                  ? [
+                                      {
+                                        id: "go-receiving",
+                                        label: "Перейти",
+                                        disabled: busy,
+                                        onSelect: () => {
+                                          navigate("/receiving");
+                                        },
+                                      },
+                                      invItem,
+                                    ]
+                                  : [invItem]
+                                : [
+                                    {
+                                      id: "find-ship",
+                                      label: "Найти",
+                                      disabled: busy || !stockRowShippingSearchTerm(r),
+                                      onSelect: () => {
+                                        const t = stockRowShippingSearchTerm(r);
+                                        if (!t) return;
+                                        navigate(`/shipping?search=${encodeURIComponent(t)}`);
+                                      },
+                                    },
+                                    {
+                                      id: "create-out",
+                                      label: "Создать",
+                                      disabled: busy,
+                                      onSelect: () => {
+                                        const q = new URLSearchParams();
+                                        q.set("createOutbound", "1");
+                                        const pid = findProductIdForStockRow(productsSafe, r);
+                                        if (pid) q.set("productId", pid);
+                                        else if (r.barcode.trim()) q.set("barcode", r.barcode.trim());
+                                        else if (r.article.trim()) q.set("article", r.article.trim());
+                                        else if (r.productName.trim()) q.set("productName", r.productName.trim());
+                                        navigate({
+                                          pathname: `/legal-entities/${r.legalEntityId}`,
+                                          search: `?${q.toString()}`,
+                                        });
+                                      },
+                                    },
+                                    invItem,
+                                  ];
                               return <WmsTableRowActions items={items} />;
                             })()}
                           </TableCell>
