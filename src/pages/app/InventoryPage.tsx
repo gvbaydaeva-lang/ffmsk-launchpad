@@ -1385,6 +1385,8 @@ const InventoryPage = () => {
                       const artParent = g.article.trim() ? g.article : "—";
                       const bcParent = g.barcode.trim() ? g.barcode : "—";
                       const rep = g.rows.find((row) => row.locationKind === "storage") ?? g.rows[0];
+                      const placedDisplayQty = Math.max(g.placementInQty, Math.abs(g.placementOutQty));
+                      const totalsMatch = g.movementTotalFromMovements === g.totalQty;
                       const toggleProductGroup = () => {
                         const willClose = expandedStockProductKeys.has(g.groupKey);
                         setExpandedStockProductKeys((prev) => {
@@ -1436,35 +1438,20 @@ const InventoryPage = () => {
                                         </span>
                                       </div>
                                     ) : null}
-                                    {g.placementOutQty !== 0 ? (
+                                    {placedDisplayQty !== 0 ? (
                                       <div>
-                                        Размещение:{" "}
-                                        <span
-                                          className={
-                                            g.placementOutQty > 0
-                                              ? "font-medium text-emerald-600"
-                                              : "font-medium text-red-600"
-                                          }
-                                        >
-                                          {g.placementOutQty > 0 ? "+" : ""}
-                                          {g.placementOutQty.toLocaleString("ru-RU")}
-                                        </span>
-                                      </div>
-                                    ) : null}
-                                    {g.placementInQty !== 0 ? (
-                                      <div>
-                                        Размещение:{" "}
+                                        Размещено:{" "}
                                         <span className="font-medium text-emerald-600">
-                                          +{g.placementInQty.toLocaleString("ru-RU")}
+                                          {placedDisplayQty.toLocaleString("ru-RU")}
                                         </span>
                                       </div>
                                     ) : null}
                                     {g.outboundQty !== 0 ? (
                                       <div>
-                                        Отгрузка:{" "}
+                                        Отгружено:{" "}
                                         <span
                                           className={
-                                            g.outboundQty > 0 ? "font-medium text-emerald-600" : "font-medium text-red-600"
+                                            g.outboundQty < 0 ? "font-medium text-red-600" : "font-medium text-emerald-600"
                                           }
                                         >
                                           {g.outboundQty > 0 ? "+" : ""}
@@ -1490,16 +1477,34 @@ const InventoryPage = () => {
                                     <div
                                       className={cn(
                                         "pt-0.5 font-medium",
-                                        g.movementTotalFromMovements === g.totalQty
-                                          ? "text-slate-600"
-                                          : "text-red-600",
+                                        totalsMatch ? "text-slate-600" : "text-red-600",
                                       )}
                                     >
-                                      Итого по движениям: {g.movementTotalFromMovements.toLocaleString("ru-RU")}
+                                      Итог движения: {g.movementTotalFromMovements.toLocaleString("ru-RU")}
                                     </div>
+                                    {!totalsMatch ? (
+                                      <div className="text-[10px] font-medium text-red-600">
+                                        Итог не совпадает с остатком
+                                      </div>
+                                    ) : null}
+                                    {g.statusLabel === "Полностью размещён" ? (
+                                      <div className="pt-0.5 text-[10px] font-medium text-emerald-800">
+                                        ✔ Товар полностью размещён на складе
+                                      </div>
+                                    ) : null}
+                                    {g.statusLabel === "Частично размещён" ? (
+                                      <div className="pt-0.5 text-[10px] font-medium text-amber-800">
+                                        ⚠ Товар частично размещён — есть остаток в зоне приёмки
+                                      </div>
+                                    ) : null}
                                     {g.statusLabel === "Есть расхождения" ? (
-                                      <div className="text-[10px] font-medium text-amber-800">
-                                        Проверьте движения: итог не сходится
+                                      <div className="pt-0.5 text-[10px] font-medium text-red-700">
+                                        ❗ Обнаружено расхождение — проверьте движения или выполните инвентаризацию
+                                      </div>
+                                    ) : null}
+                                    {g.statusLabel === "Нет остатка" ? (
+                                      <div className="pt-0.5 text-[10px] font-medium text-slate-500">
+                                        — Остаток отсутствует
                                       </div>
                                     ) : null}
                                   </div>
