@@ -371,6 +371,22 @@ function buildShippingCellPickLogDescription(
   return `${title}. Товар: ${n}; количество: ${q}; ячейка: ${loc}; № отгрузки: ${num}`;
 }
 
+/** Совпадает с отбором строк в reservedQtyByBalanceKey (активный резерв). */
+function isOutboundShipmentActiveReserveLineForPick(sh: OutboundShipment): boolean {
+  if (sh.status === "отгружено") return false;
+  const wf = sh.workflowStatus ?? "pending";
+  if (wf === "completed") return false;
+  return wf === "pending" || wf === "processing";
+}
+
+/** Единицы плана строки, ещё считающиеся «под резерв» этой строки: план − подобрано, только для активной строки. */
+function outboundLineRemainingReserveUnitsForPick(sh: OutboundShipment): number {
+  if (!isOutboundShipmentActiveReserveLineForPick(sh)) return 0;
+  const plan = Math.max(0, Math.trunc(Number(sh.plannedUnits ?? 0) || 0));
+  const picked = Math.max(0, Math.trunc(Number(outboundPickedQty(sh) ?? 0) || 0));
+  return Math.max(0, plan - picked);
+}
+
 function shippingGroupFullyPickedForPlan(shipments: OutboundShipment[] | undefined | null): boolean {
   const rows = Array.isArray(shipments) ? shipments : [];
   if (rows.length === 0) return false;
@@ -1920,8 +1936,9 @@ const ShippingPage = () => {
       const balanceKey = balanceKeyFromOutboundShipment(latestSh, product);
       const totalInv = getBalanceByKeyMap(movementDataSafe).get(balanceKey) ?? 0;
       const reserveInv = reservedQtyByBalanceKey(data ?? [], catalogSafe).get(balanceKey) ?? 0;
-      const availableGlobal = totalInv - reserveInv;
-      if (availableGlobal <= 0 || qty > availableGlobal) {
+      const currentLineReserve = outboundLineRemainingReserveUnitsForPick(latestSh);
+      const availableForThisLine = totalInv - reserveInv + currentLineReserve;
+      if (availableForThisLine <= 0 || qty > availableForThisLine) {
         toast.error("Недостаточно товара на складе для подбора");
         return;
       }
