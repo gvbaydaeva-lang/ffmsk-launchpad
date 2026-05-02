@@ -131,6 +131,7 @@ function InboundLinePlacementsBlock({
   partnerId,
   inventoryMovements,
   catalogItems,
+  placementBulkToken,
 }: {
   item: InboundWarehouseItem;
   productLine: InboundProductLine;
