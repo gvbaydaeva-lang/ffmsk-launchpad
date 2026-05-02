@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -27,6 +28,7 @@ import {
 } from "@/hooks/useWmsMock";
 import { makeInventoryBalanceKeyFromMovement } from "@/lib/inventoryBalanceKey";
 import { reservedQtyByBalanceKey } from "@/lib/inventoryReservedFromOutbound";
+import { movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
 import type { InventoryBalanceRow, InventoryMovement, Location, Marketplace } from "@/types/domain";
 import { WAREHOUSE_INBOUND_RECEIVING_LOCATION_ID } from "@/services/warehouseInboundApi";
 import { toast } from "sonner";
@@ -56,6 +58,20 @@ type InventoryRowWithLocation = InventoryBalanceRow & {
   locationName: string;
   /** ISO дата последнего движения по строке «товар + locationId», для сортировки и отображения */
   lastMovementIso: string | null;
+};
+
+/** Строка таблицы «остатки по ячейкам»: только визуализация getInventoryBalance + movementLocationTotalsForWarehouseBalanceKey */
+type StockByLocationRow = {
+  rowKey: string;
+  legalEntityId: string;
+  legalEntityName: string;
+  productName: string;
+  article: string;
+  barcode: string;
+  /** id ячейки или «—», если места нет в движении */
+  locationIdForDisplay: string;
+  locationNameForDisplay: string;
+  qty: number;
 };
 
 function mpDisplay(mp: string): string {
@@ -109,6 +125,9 @@ const InventoryPage = () => {
   } | null>(null);
   const [placementQty, setPlacementQty] = React.useState<string>("");
   const [placementLocationId, setPlacementLocationId] = React.useState<string>("");
+  const [stockPartnerId, setStockPartnerId] = React.useState<"all" | string>("all");
+  const [stockProductSearch, setStockProductSearch] = React.useState("");
+  const [stockHideZero, setStockHideZero] = React.useState(false);
   const movementDataSafe = React.useMemo(() => (Array.isArray(movementData) ? movementData : []), [movementData]);
   const locationsSafe = React.useMemo(() => (Array.isArray(locationsData) ? locationsData : []), [locationsData]);
   const productsSafe = React.useMemo(() => (Array.isArray(catalogRows) ? catalogRows : []), [catalogRows]);
@@ -143,6 +162,54 @@ const InventoryPage = () => {
   }, [locationsSafe]);
 
   const locationById = React.useMemo(() => new Map(locationsSafe.map((l) => [l.id, l])), [locationsSafe]);
+
+  const stockByLocationRows = React.useMemo<StockByLocationRow[]>(() => {
+    const movements = movementDataSafe;
+    const balances = Array.isArray(balanceRows) ? balanceRows : [];
+    const out: StockByLocationRow[] = [];
+    for (const br of balances) {
+      const wh = (br.warehouseName ?? "—").trim() || "—";
+      const byLoc = movementLocationTotalsForWarehouseBalanceKey(movements, wh, br.key);
+      for (const [rawLocId, qty] of byLoc) {
+        const lid = rawLocId === "__no_location__" ? "" : (rawLocId || "").trim();
+        const locName = lid ? (locationById.get(lid)?.name ?? "—") : "Без места";
+        out.push({
+          rowKey: `${br.key}::${rawLocId}`,
+          legalEntityId: br.legalEntityId,
+          legalEntityName: br.legalEntityName,
+          productName: br.name,
+          article: (br.article ?? br.sku ?? "").trim(),
+          barcode: (br.barcode ?? "").trim(),
+          locationIdForDisplay: lid || "—",
+          locationNameForDisplay: locName,
+          qty: Math.trunc(Number(qty) || 0),
+        });
+      }
+    }
+    out.sort(
+      (a, b) =>
+        a.legalEntityName.localeCompare(b.legalEntityName, "ru") ||
+        a.productName.localeCompare(b.productName, "ru") ||
+        `${a.locationIdForDisplay} ${a.locationNameForDisplay}`.localeCompare(
+          `${b.locationIdForDisplay} ${b.locationNameForDisplay}`,
+          "ru",
+        ),
+    );
+    return out;
+  }, [balanceRows, movementDataSafe, locationById]);
+
+  const stockByLocationFiltered = React.useMemo(() => {
+    let rows = stockByLocationRows;
+    if (stockPartnerId !== "all") rows = rows.filter((r) => r.legalEntityId === stockPartnerId);
+    const q = stockProductSearch.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((r) =>
+        `${r.productName} ${r.article} ${r.barcode}`.toLowerCase().includes(q),
+      );
+    }
+    if (stockHideZero) rows = rows.filter((r) => r.qty !== 0);
+    return rows;
+  }, [stockByLocationRows, stockPartnerId, stockProductSearch, stockHideZero]);
 
   const rowsWithLocation = React.useMemo<InventoryRowWithLocation[]>(() => {
     const rows = movementDataSafe;
@@ -448,6 +515,103 @@ const InventoryPage = () => {
           Остаток по движениям WMS; резерв — план в активных отгрузках (pending/processing); доступно = остаток − резерв.
         </p>
       </div>
+
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="border-b border-slate-100 px-4 py-3">
+          <CardTitle className="text-base">Остатки по местам</CardTitle>
+          <p className="mt-1 text-xs text-slate-500">
+            Разрез по ячейкам: суммы из движений через готовые функции баланса и остатков по месту (без отдельного пересчёта).
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3 p-3 sm:p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Select value={stockPartnerId} onValueChange={(v) => setStockPartnerId(v as "all" | string)}>
+              <SelectTrigger className="h-9 w-[200px] border-slate-200">
+                <SelectValue placeholder="Партнёр" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все партнёры</SelectItem>
+                {legalEntitiesSafe.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.shortName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="relative min-w-[200px] flex-1 max-w-md">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={stockProductSearch}
+                onChange={(e) => setStockProductSearch(e.target.value)}
+                placeholder="Поиск по товару, артикулу, штрихкоду"
+                className="h-9 border-slate-200 pl-9"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="stock-hide-zero"
+                checked={stockHideZero}
+                onCheckedChange={(v) => setStockHideZero(v === true)}
+              />
+              <Label htmlFor="stock-hide-zero" className="cursor-pointer text-sm font-normal text-slate-700">
+                Скрыть нулевые остатки
+              </Label>
+            </div>
+          </div>
+          {tableLoading ? (
+            <Skeleton className="h-32 w-full" />
+          ) : error ? (
+            <p className="text-sm text-destructive">Не удалось загрузить движения.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border border-slate-200">
+              <Table>
+                <TableHeader>
+                  <TableRow className="h-9 bg-slate-50/90 hover:bg-slate-50/90">
+                    <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Товар</TableHead>
+                    <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Артикул / штрихкод</TableHead>
+                    <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Партнёр</TableHead>
+                    <TableHead className="px-3 py-2 text-xs font-semibold text-slate-600">Ячейка</TableHead>
+                    <TableHead className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Количество</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stockByLocationFiltered.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-8 text-center text-sm text-slate-600">
+                        Нет остатков
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    stockByLocationFiltered.map((r) => {
+                      const art = r.article;
+                      const bc = r.barcode;
+                      const artBc =
+                        art && bc ? `${art} / ${bc}` : art ? art : bc ? bc : "—";
+                      return (
+                        <TableRow key={r.rowKey} className="text-sm">
+                          <TableCell className="max-w-[240px] px-3 py-2 font-medium text-slate-900">{r.productName}</TableCell>
+                          <TableCell className="max-w-[200px] whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs text-slate-700">
+                            {artBc}
+                          </TableCell>
+                          <TableCell className="max-w-[160px] truncate px-3 py-2 text-slate-700">{r.legalEntityName}</TableCell>
+                          <TableCell className="max-w-[280px] px-3 py-2 text-xs text-slate-700">
+                            <span className="font-mono text-[11px] text-slate-600">{r.locationIdForDisplay}</span>
+                            <span className="mx-1 text-slate-400">/</span>
+                            <span>{r.locationNameForDisplay}</span>
+                          </TableCell>
+                          <TableCell className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">
+                            {r.qty.toLocaleString("ru-RU")}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border-slate-200 bg-white shadow-sm">
         <CardHeader className="border-b border-slate-100 px-4 py-3">
