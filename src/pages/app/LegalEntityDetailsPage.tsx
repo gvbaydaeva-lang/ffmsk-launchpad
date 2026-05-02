@@ -28,6 +28,7 @@ import {
   useInboundSupplies,
   useInventoryMovements,
   useLegalEntities,
+  useLocations,
   useOperationLogs,
   useOutboundShipments,
   useProductCatalog,
@@ -35,10 +36,12 @@ import {
 } from "@/hooks/useWmsMock";
 import { persistInboundDurably } from "@/services/mockReceiving";
 import { persistOutboundDurably } from "@/services/mockOutbound";
-import { getBalanceByKeyMap } from "@/services/mockInventoryMovements";
+import { getBalanceByKeyMap, movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
 import type {
   InboundLineItem,
   InboundSupply,
+  InventoryMovement,
+  Location,
   Marketplace,
   OutboundShipment,
   ProductCatalogItem,
@@ -79,6 +82,7 @@ import {
   excelRowBg,
 } from "@/lib/excelTableStyles";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 const TEMPLATE_HEADERS = [
   "Категория товара",
@@ -444,6 +448,24 @@ function mpLabelShort(mp: Marketplace) {
   return mp === "wb" ? "WB" : mp === "ozon" ? "Ozon" : "Яндекс";
 }
 
+/** Сумма остатка только по ячейкам хранения (как «Остатки по местам» без зоны приёмки). */
+function sumStorageBalanceForBalanceKey(
+  movements: InventoryMovement[],
+  warehouseName: string,
+  balanceKey: string,
+  storageLocationIds: Set<string>,
+): number {
+  const wh = (warehouseName || "").trim() || "—";
+  const byLoc = movementLocationTotalsForWarehouseBalanceKey(movements, wh, balanceKey);
+  let sum = 0;
+  for (const [rawLocId, qty] of byLoc) {
+    const lid = rawLocId === "__no_location__" ? "" : (rawLocId || "").trim();
+    if (!lid || !storageLocationIds.has(lid)) continue;
+    sum += Math.trunc(Number(qty) || 0);
+  }
+  return sum;
+}
+
 const LegalEntityDetailsPage = () => {
   const { id = "" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -467,6 +489,7 @@ const LegalEntityDetailsPage = () => {
     updateOutboundDraft,
   } = useOutboundShipments();
   const { data: inventoryMovements = [] } = useInventoryMovements();
+  const { data: locationsData } = useLocations();
   const { data: catalog, addProduct, updateProduct, isAddingProduct, isUpdatingProduct } = useProductCatalog();
   const { mutateAsync: updateSettings, isPending: isSavingSettings } = useUpdateLegalEntitySettings();
   const queryClient = useQueryClient();
@@ -596,13 +619,26 @@ const LegalEntityDetailsPage = () => {
     [outbound, outboundDebugAll, outboundRows],
   );
 
-  /** WMS по строкам каталога для выбранного в форме склада (остаток по движениям, резерв, доступно). */
+  const locationsSafe = React.useMemo(
+    () => (Array.isArray(locationsData) ? locationsData : []) as Location[],
+    [locationsData],
+  );
+  const storageLocationIds = React.useMemo(
+    () => new Set(locationsSafe.filter((l) => l?.type === "storage").map((l) => l.id)),
+    [locationsSafe],
+  );
+
+  /** WMS по строкам каталога для выбранного в форме склада: остаток всего, в хранении, резерв, доступно для отгрузки. */
   const createOutboundProductWmsBreakdowns = React.useMemo(() => {
-    const map = new Map<string, { balanceQty: number; reserveQty: number; availableQty: number }>();
+    const map = new Map<
+      string,
+      { balanceQtyTotal: number; balanceQtyStorage: number; reserveQty: number; availableQty: number }
+    >();
     if (!entityIdNorm) return map;
     const wh = (outboundDraft.warehouse || "").trim() || "Склад Коледино";
     const balanceByKey = getBalanceByKeyMap(inventoryMovements);
     const reserveByKey = reservedQtyByBalanceKey(outbound ?? [], rows);
+    const movementsSafe = Array.isArray(inventoryMovements) ? inventoryMovements : [];
     for (const p of rows) {
       const balKey = makeInventoryBalanceKey({
         legalEntityId: entityIdNorm,
@@ -612,18 +648,29 @@ const LegalEntityDetailsPage = () => {
         color: (p.color || "").trim() || "—",
         size: (p.size || "").trim() || "—",
       });
-      const balanceQty = balanceByKey.get(balKey) ?? 0;
+      const balanceQtyTotal = balanceByKey.get(balKey) ?? 0;
+      const balanceQtyStorage = sumStorageBalanceForBalanceKey(movementsSafe, wh, balKey, storageLocationIds);
       const reserveQty = reserveByKey.get(balKey) ?? 0;
-      map.set(p.id, { balanceQty, reserveQty, availableQty: balanceQty - reserveQty });
+      map.set(p.id, {
+        balanceQtyTotal,
+        balanceQtyStorage,
+        reserveQty,
+        availableQty: balanceQtyStorage - reserveQty,
+      });
     }
     return map;
-  }, [entityIdNorm, outboundDraft.warehouse, inventoryMovements, outbound, rows]);
+  }, [entityIdNorm, outboundDraft.warehouse, inventoryMovements, outbound, rows, storageLocationIds]);
 
   const manualOutboundCreateStockPreview = React.useMemo(() => {
     const plan = Number(outboundDraft.quantity) || 0;
     if (!entity || !selectedOutboundProductId) {
       return {
-        breakdown: null as { balanceQty: number; reserveQty: number; availableQty: number } | null,
+        breakdown: null as {
+          balanceQtyTotal: number;
+          balanceQtyStorage: number;
+          reserveQty: number;
+          availableQty: number;
+        } | null,
         plan,
         shortage: 0,
         hasShortage: false,
@@ -635,7 +682,7 @@ const LegalEntityDetailsPage = () => {
       return { breakdown: null, plan, shortage: 0, hasShortage: false, shortageKind: null };
     }
     const shortage = plan > breakdown.availableQty ? plan - breakdown.availableQty : 0;
-    const shortageKind = shortage > 0 ? (breakdown.balanceQty <= 0 ? "empty" : "reserve") : null;
+    const shortageKind = shortage > 0 ? (breakdown.balanceQtyStorage <= 0 ? "empty" : "reserve") : null;
     return { breakdown, plan, shortage, hasShortage: shortage > 0, shortageKind };
   }, [entity, selectedOutboundProductId, outboundDraft.quantity, createOutboundProductWmsBreakdowns]);
 
@@ -3199,36 +3246,77 @@ const LegalEntityDetailsPage = () => {
                             <SelectContent className="max-h-[min(50vh,320px)]">
                               {filteredProducts.map((p) => {
                                 const b = createOutboundProductWmsBreakdowns.get(p.id);
-                                const o = b?.balanceQty ?? 0;
+                                const st = b?.balanceQtyStorage ?? 0;
+                                const tot = b?.balanceQtyTotal ?? 0;
                                 const r = b?.reserveQty ?? 0;
                                 const d = b?.availableQty ?? 0;
+                                const noShip = d <= 0;
                                 return (
-                                  <SelectItem key={p.id} value={p.id} className="whitespace-normal py-2 text-left text-xs">
-                                    {p.name} · {p.barcode} · остаток {o.toLocaleString("ru-RU")} · резерв {r.toLocaleString("ru-RU")} · доступно{" "}
-                                    {d.toLocaleString("ru-RU")}
+                                  <SelectItem
+                                    key={p.id}
+                                    value={p.id}
+                                    className={cn("whitespace-normal py-2 text-left text-xs", noShip && "opacity-65")}
+                                  >
+                                    <span className="block">
+                                      {p.name} · {p.barcode}
+                                    </span>
+                                    <span className="block text-[11px] text-slate-600">
+                                      В хранении {st.toLocaleString("ru-RU")} · резерв {r.toLocaleString("ru-RU")} · доступно{" "}
+                                      {d.toLocaleString("ru-RU")}
+                                      {tot !== st ? (
+                                        <> · всего по складу {tot.toLocaleString("ru-RU")}</>
+                                      ) : null}
+                                      {noShip ? (
+                                        <span className="font-medium text-amber-900"> — Недоступно для отгрузки</span>
+                                      ) : null}
+                                    </span>
                                   </SelectItem>
                                 );
                               })}
                             </SelectContent>
                           </Select>
                         </div>
-                        <div className="grid gap-1.5"><Label>Количество</Label><Input type="number" min={1} value={outboundDraft.quantity} onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))} /></div>
+                        <div className="grid gap-1.5">
+                          <Label>Количество</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={outboundDraft.quantity}
+                            onChange={(e) => setOutboundDraft((s) => ({ ...s, quantity: e.target.value }))}
+                          />
+                          {selectedOutboundProductId &&
+                          manualOutboundCreateStockPreview.breakdown &&
+                          Math.max(0, Math.trunc(Number(outboundDraft.quantity) || 0)) >
+                            manualOutboundCreateStockPreview.breakdown.availableQty ? (
+                            <p className="text-sm text-amber-800">Недостаточно доступного остатка для отгрузки</p>
+                          ) : null}
+                        </div>
                         <div className="grid gap-1.5"><Label>Маркетплейс</Label><Select value={outboundDraft.marketplace} onValueChange={(v) => setOutboundDraft((s) => ({ ...s, marketplace: v as "wb" | "ozon" | "yandex" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="wb">WB</SelectItem><SelectItem value="ozon">Ozon</SelectItem><SelectItem value="yandex">Яндекс</SelectItem></SelectContent></Select></div>
                         <div className="grid gap-1.5"><Label>Склад</Label><Input value={outboundDraft.warehouse} onChange={(e) => setOutboundDraft((s) => ({ ...s, warehouse: e.target.value }))} /></div>
                         {selectedOutboundProductId && manualOutboundCreateStockPreview.breakdown ? (
                           <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-800">
                             <div className="tabular-nums">План: {manualOutboundCreateStockPreview.plan.toLocaleString("ru-RU")}</div>
-                            <div className="tabular-nums">Остаток всего: {manualOutboundCreateStockPreview.breakdown.balanceQty.toLocaleString("ru-RU")}</div>
+                            <div className="tabular-nums">
+                              Остаток в хранении:{" "}
+                              {manualOutboundCreateStockPreview.breakdown.balanceQtyStorage.toLocaleString("ru-RU")}
+                            </div>
+                            <div className="tabular-nums text-slate-600">
+                              Всего по складу (вкл. приёмку):{" "}
+                              {manualOutboundCreateStockPreview.breakdown.balanceQtyTotal.toLocaleString("ru-RU")}
+                            </div>
                             <div className="tabular-nums">Резерв: {manualOutboundCreateStockPreview.breakdown.reserveQty.toLocaleString("ru-RU")}</div>
-                            <div className="tabular-nums">Доступно: {manualOutboundCreateStockPreview.breakdown.availableQty.toLocaleString("ru-RU")}</div>
+                            <div className="tabular-nums font-medium text-slate-900">
+                              Доступно для отгрузки:{" "}
+                              {manualOutboundCreateStockPreview.breakdown.availableQty.toLocaleString("ru-RU")}
+                            </div>
                             {manualOutboundCreateStockPreview.shortage > 0 && manualOutboundCreateStockPreview.shortageKind === "reserve" ? (
                               <p className="mt-2 font-medium text-red-600">
-                                Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт. Остаток есть, но он уже в резерве.
+                                Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт. В хранении есть товар, но доступно меньше плана (резервы).
                               </p>
                             ) : null}
                             {manualOutboundCreateStockPreview.shortage > 0 && manualOutboundCreateStockPreview.shortageKind === "empty" ? (
                               <p className="mt-2 font-medium text-red-600">
-                                Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт. Товара нет на остатке.
+                                Не хватает {manualOutboundCreateStockPreview.shortage.toLocaleString("ru-RU")} шт. Нет доступного остатка в ячейках хранения.
                               </p>
                             ) : null}
                           </div>
