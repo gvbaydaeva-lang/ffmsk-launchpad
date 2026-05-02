@@ -562,6 +562,19 @@ function stockRowShippingSearchTerm(r: StockByLocationRow): string {
   return (r.productName || "").trim();
 }
 
+/** Видимость дочерней строки места при раскрытии группы товара (только UI). */
+function stockByLocationChildRowVisible(
+  r: StockByLocationRow,
+  stockReservePrimaryRowKey: Map<string, string>,
+  reservedByKey: Map<string, number>,
+): boolean {
+  if (r.locationKind === "receiving_zone") return r.qty > 0;
+  const reserveQty =
+    stockReservePrimaryRowKey.get(r.balanceKey) === r.rowKey ? (reservedByKey.get(r.balanceKey) ?? 0) : 0;
+  const available = r.qty - reserveQty;
+  return r.qty !== 0 || available !== 0 || reserveQty !== 0;
+}
+
 function formatStockRowLocationLabel(r: StockByLocationRow, locationById: Map<string, Location>): string {
   if (r.locationKind === "receiving_zone") {
     return r.locationId
@@ -1546,7 +1559,11 @@ const InventoryPage = () => {
                                   </div>
                                 </TableCell>
                               </TableRow>
-                              {g.rows.map((r) => {
+                              {g.rows
+                                .filter((r) =>
+                                  stockByLocationChildRowVisible(r, stockReservePrimaryRowKey, reservedByKey),
+                                )
+                                .map((r) => {
                                 const expanded = expandedStockLocationKeys.has(r.rowKey);
                                 const toggleStockLocationRow = () => {
                                   setExpandedStockLocationKeys((prev) => {
@@ -1599,11 +1616,14 @@ const InventoryPage = () => {
                                       </div>
                                     </div>
                                   ) : (
-                                    <>
-                                      <span className="font-mono text-[11px] text-slate-600">{r.locationId}</span>
-                                      <span className="mx-1 text-slate-400">/</span>
-                                      <span>{r.locationStorageName}</span>
-                                    </>
+                                    <span className="text-slate-700">
+                                      {(() => {
+                                        const name =
+                                          (r.locationStorageName || "").trim() ||
+                                          (locationById.get(r.locationId)?.name ?? "").trim();
+                                        return name ? `Ячейка: ${name}` : "Ячейка";
+                                      })()}
+                                    </span>
                                   );
                                 return (
                                   <React.Fragment key={r.rowKey}>
