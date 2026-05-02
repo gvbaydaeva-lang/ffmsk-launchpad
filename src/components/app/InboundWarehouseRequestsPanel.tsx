@@ -18,8 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
-import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest } from "@/types/domain";
+import { useInventoryMovements, useLegalEntities, useLocations, useProductCatalog, useWarehouseInboundRequests } from "@/hooks/useWmsMock";
+import type { InboundWarehouseReceivingMode, InboundWarehouseItem, InboundWarehouseRequest, InventoryMovement, ProductCatalogItem } from "@/types/domain";
 import type { InboundPlacementInput } from "@/services/warehouseInboundApi";
 import WarehouseImportPreviewPanel from "@/components/app/WarehouseImportPreviewPanel";
 import {
@@ -28,6 +28,8 @@ import {
   WAREHOUSE_IMPORT_TEXTAREA_PLACEHOLDER,
 } from "@/components/app/WarehouseImportExcelDescription";
 import { inboundImportFileToPasteText } from "@/lib/inboundWarehouseFileImport";
+import { makeInventoryBalanceKey } from "@/lib/inventoryBalanceKey";
+import { movementLocationTotalsForWarehouseBalanceKey } from "@/services/mockInventoryMovements";
 import { downloadWarehouseImportTemplateXlsx } from "@/lib/warehouseImportTemplateXlsx";
 import {
   inspectWarehouseImportPaste,
@@ -79,6 +81,37 @@ function sumPlacementsQty(item: InboundWarehouseItem): number {
   return item.placements.reduce((s, p) => s + Math.max(0, Math.trunc(Number(p.qty) || 0)), 0);
 }
 
+/** Совпадает с `warehouseName` в движениях приёмки/размещения в `warehouseInboundApi`. */
+const INBOUND_STOCK_WAREHOUSE_NAME = "Зона приёмки";
+
+function recommendedStorageLocationForPlacement(
+  movements: InventoryMovement[],
+  storageLocations: { id: string; name: string }[],
+  product: ProductCatalogItem | undefined,
+  partnerId: string,
+): { id: string; name: string } | null {
+  if (!storageLocations.length) return null;
+  const key = makeInventoryBalanceKey({
+    legalEntityId: partnerId,
+    warehouseName: INBOUND_STOCK_WAREHOUSE_NAME,
+    barcode: (product?.barcode ?? "").trim() || "—",
+    article: (product?.supplierArticle ?? "").trim() || "—",
+    color: (product?.color ?? "").trim() || "—",
+    size: (product?.size ?? "").trim() || "—",
+  });
+  const byLoc = movementLocationTotalsForWarehouseBalanceKey(movements, INBOUND_STOCK_WAREHOUSE_NAME, key);
+  let bestWithStock: { id: string; name: string; qty: number } | null = null;
+  for (const loc of storageLocations) {
+    const qty = Math.max(0, Math.trunc(byLoc.get(loc.id) ?? 0));
+    if (qty <= 0) continue;
+    if (!bestWithStock || qty > bestWithStock.qty) {
+      bestWithStock = { id: loc.id, name: loc.name, qty };
+    }
+  }
+  if (bestWithStock) return { id: bestWithStock.id, name: bestWithStock.name };
+  return { id: storageLocations[0].id, name: storageLocations[0].name };
+}
+
 function isInboundPlacementFullyDistributed(row: InboundWarehouseRequest): boolean {
   return row.items.every((it) => {
     const rq = Math.max(0, Math.trunc(Number(it.receivedQty) || 0));
@@ -95,6 +128,9 @@ function InboundLinePlacementsBlock({
   onPersist,
   persistBusy,
   flowLocked,
+  partnerId,
+  inventoryMovements,
+  catalogItems,
 }: {
   item: InboundWarehouseItem;
   productLine: InboundProductLine;
@@ -105,6 +141,9 @@ function InboundLinePlacementsBlock({
   persistBusy: boolean;
   /** Глобальная блокировка панели (завершение приёмки/размещения и др.) */
   flowLocked?: boolean;
+  partnerId: string;
+  inventoryMovements: InventoryMovement[];
+  catalogItems: ProductCatalogItem[];
 }) {
   type DraftPl = { rowKey: string; id: string; locationId: string; qty: string };
   const [lines, setLines] = React.useState<DraftPl[]>([]);
@@ -154,6 +193,15 @@ function InboundLinePlacementsBlock({
 
   const locked = Boolean(flowLocked || persistBusy);
 
+  const productForKey = React.useMemo(
+    () => catalogItems.find((p) => p.id === item.productId),
+    [catalogItems, item.productId],
+  );
+  const recommendedLocation = React.useMemo(
+    () => recommendedStorageLocationForPlacement(inventoryMovements, storageLocations, productForKey, partnerId),
+    [inventoryMovements, storageLocations, productForKey, partnerId],
+  );
+
   if (readOnly) {
     return (
       <div className="rounded-md border border-slate-200 bg-white p-3">
@@ -197,6 +245,34 @@ function InboundLinePlacementsBlock({
           Принято: {receivedQty} · Распределено: {distributed} / {receivedQty}
         </span>
       </div>
+      {recommendedLocation && storageLocations.length > 0 ? (
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-sky-100 bg-sky-50/80 px-2 py-1.5">
+          <div className="min-w-0 text-xs leading-snug text-sky-950">
+            <span className="font-semibold text-sky-900">Рекомендуемая ячейка.</span>{" "}
+            <span>Рекомендуем: {recommendedLocation.name}</span>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 text-xs"
+            disabled={locked}
+            onClick={() => {
+              const rid = recommendedLocation.id;
+              setLines((prev) => {
+                const emptyIdx = prev.findIndex((x) => !(x.locationId || "").trim());
+                if (emptyIdx >= 0) {
+                  return prev.map((x, i) => (i === emptyIdx ? { ...x, locationId: rid } : x));
+                }
+                if (prev.length === 0) return prev;
+                return prev.map((x, i) => (i === 0 ? { ...x, locationId: rid } : x));
+              });
+            }}
+          >
+            Выбрать
+          </Button>
+        </div>
+      ) : null}
       <div className="space-y-2">
         {lines.map((ln) => (
           <div key={ln.rowKey} className="flex flex-wrap items-end gap-2">
@@ -354,6 +430,11 @@ const InboundWarehouseRequestsPanel = () => {
   const { data: entities } = useLegalEntities();
   const { data: catalog, isLoading: catalogLoading } = useProductCatalog();
   const { data: locationsData } = useLocations();
+  const { data: inventoryMovementsRaw } = useInventoryMovements();
+  const inventoryMovementsSafe = React.useMemo(
+    () => (Array.isArray(inventoryMovementsRaw) ? inventoryMovementsRaw : []),
+    [inventoryMovementsRaw],
+  );
   const {
     data: inboundList,
     isLoading: listLoading,
@@ -1276,6 +1357,9 @@ const InboundWarehouseRequestsPanel = () => {
                                       persistBusy={placementLineBusy(row.id, item.id)}
                                       flowLocked={inboundPanelBusy}
                                       onPersist={(pl) => persistPlacementForLine(row.id, item.id, pl)}
+                                      partnerId={row.partnerId}
+                                      inventoryMovements={inventoryMovementsSafe}
+                                      catalogItems={Array.isArray(catalog) ? catalog : []}
                                     />
                                   ))}
                                   {row.status === "received" ? (

@@ -291,6 +291,13 @@ function isShipmentFinalizeBlockedAlreadyDone(doc: ShipmentDoc | null | undefine
   return shipmentOutboundRowsAllShippedTerminal(doc);
 }
 
+/** Список заданий: сперва новые, затем в работе, затем завершённые; внутри — по дате создания (новые сверху). */
+function shippingDocListSortTier(ui: ShippingUiStatus): number {
+  if (ui === "pending") return 0;
+  if (isShippingTerminal(ui) || ui === "cancelled") return 2;
+  return 1;
+}
+
 function shippingWorkflowFromGroup(shipments: OutboundShipment[]): ShippingUiStatus {
   const perRow = shipments.map((s): ShippingUiStatus => {
     const wf = (s.workflowStatus ?? "pending") as string;
@@ -962,6 +969,11 @@ const ShippingPage = () => {
       if (viewMode === "archive") {
         return outboundArchiveSortKey(b.shipments) - outboundArchiveSortKey(a.shipments);
       }
+      const uiA = shippingWorkflowFromGroup(a.shipments ?? []);
+      const uiB = shippingWorkflowFromGroup(b.shipments ?? []);
+      const tierA = shippingDocListSortTier(uiA);
+      const tierB = shippingDocListSortTier(uiB);
+      if (tierA !== tierB) return tierA - tierB;
       return (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0);
     });
   }, [documentsBeforeQuickFilter, shippingQuickFilter, viewMode, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, data, catalog]);
@@ -1261,6 +1273,17 @@ const ShippingPage = () => {
       const remaining = Math.max(0, plan - fact);
       const name = (sh.importName || product?.name || "").trim() || "—";
       const barcode = (sh.importBarcode || product?.barcode || "").trim() || "—";
+      const storageOpts = byLocations.storage ?? [];
+      let bestPickLocId: string | null = null;
+      let bestPickAv = -1;
+      for (const o of storageOpts) {
+        const av = Math.max(0, Math.trunc(Number(o.available ?? 0) || 0));
+        if (av > bestPickAv) {
+          bestPickAv = av;
+          bestPickLocId = o.locationId;
+        }
+      }
+      const recommendedPickLocationId = bestPickAv > 0 ? bestPickLocId : null;
       return {
         shipmentId: sh.id,
         name,
@@ -1278,8 +1301,9 @@ const ShippingPage = () => {
         size: (sh.importSize || product?.size || "").trim() || "—",
         taskId: (sh.assignmentId || sh.id || "").trim() || sh.id,
         taskNumber: (sh.assignmentNo || sh.assignmentId || sh.id || "").trim() || sh.id,
-        storageOptions: byLocations.storage,
+        storageOptions: storageOpts,
         otherLocations: byLocations.other,
+        recommendedPickLocationId,
       };
     });
   }, [selectedDoc, catalog, data, movementDataSafe, locationById, storageLocationIds, receivingLocationIds, entities]);
@@ -3227,8 +3251,21 @@ const ShippingPage = () => {
                                             packedLine <= 0 &&
                                             !isShippingTerminal(uiStatus) &&
                                             uiStatus !== "cancelled";
+                                          const recPickId = line.recommendedPickLocationId ?? null;
+                                          const recPickLabel =
+                                            recPickId != null
+                                              ? (line.storageOptions.find((o) => o.locationId === recPickId)?.label ?? "").trim()
+                                              : "";
                                           return (
-                                            <div key={line.shipmentId} className="grid gap-2 rounded-md border border-slate-200 p-2 md:grid-cols-12 md:items-end">
+                                            <div
+                                              key={line.shipmentId}
+                                              className={cn(
+                                                "grid gap-2 rounded-md border border-slate-200 p-2 md:grid-cols-12 md:items-end",
+                                                recPickId &&
+                                                  draft.locationId === recPickId &&
+                                                  "border-sky-200 bg-sky-50/50",
+                                              )}
+                                            >
                                               <div className="md:col-span-4">
                                                 <div className="text-sm font-medium text-slate-900">{line.name}</div>
                                                 <div className="text-xs text-slate-600">
@@ -3242,6 +3279,12 @@ const ShippingPage = () => {
                                               </div>
                                               <div className="md:col-span-3">
                                                 <div className="mb-1 text-[11px] text-slate-600">Ячейка</div>
+                                                {recPickId && !pickingDone ? (
+                                                  <p className="mb-1 text-xs text-sky-900">
+                                                    <span className="font-medium">Рекомендуем</span>
+                                                    {recPickLabel ? `: ${recPickLabel}` : null}
+                                                  </p>
+                                                ) : null}
                                                 <Select
                                                   value={draft.locationId || undefined}
                                                   onValueChange={(value) =>
@@ -3258,12 +3301,23 @@ const ShippingPage = () => {
                                                     line.storageOptions.length === 0 || pickingDone || shippingDispatchActionsGloballyBusy
                                                   }
                                                 >
-                                                  <SelectTrigger className="h-8">
+                                                  <SelectTrigger
+                                                    className={cn(
+                                                      "h-8",
+                                                      recPickId && draft.locationId === recPickId && "border-sky-300 bg-sky-50/80",
+                                                    )}
+                                                  >
                                                     <SelectValue placeholder="Выберите ячейку" />
                                                   </SelectTrigger>
                                                   <SelectContent>
                                                     {line.storageOptions.map((opt) => (
-                                                      <SelectItem key={opt.locationId} value={opt.locationId}>
+                                                      <SelectItem
+                                                        key={opt.locationId}
+                                                        value={opt.locationId}
+                                                        className={cn(
+                                                          opt.locationId === recPickId && "bg-sky-50 focus:bg-sky-100",
+                                                        )}
+                                                      >
                                                         {opt.label} — {opt.available.toLocaleString("ru-RU")} шт
                                                       </SelectItem>
                                                     ))}
